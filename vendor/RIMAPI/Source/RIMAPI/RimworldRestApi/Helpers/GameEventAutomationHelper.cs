@@ -107,7 +107,11 @@ namespace RIMAPI.Helpers
             try
             {
                 var options = Traverse.Create(letter).Property("Choices").GetValue<IEnumerable<DiaOption>>();
-                return options?.Where(option => option != null && !option.disabled)
+                // A choice letter is not backed by Dialog_NodeTree. Only expose
+                // entries with an actual action; a link-only/close entry cannot
+                // be activated safely through the letter endpoint.
+                return options?.Where(option => option != null && !option.disabled
+                    && Traverse.Create(option).Field("action").GetValue<Action>() != null)
                     .Select(option => Traverse.Create(option).Field("text").GetValue<string>())
                     .Where(label => !string.IsNullOrWhiteSpace(label)).ToList() ?? new List<string>();
             }
@@ -126,6 +130,8 @@ namespace RIMAPI.Helpers
                 var letter = Find.LetterStack.LettersListForReading.OfType<ChoiceLetter>()
                     .SingleOrDefault(row => row.ID == request.LetterId);
                 if (letter == null) return ApiResult.Fail("Choice letter is no longer present.");
+                if (request.LetterText != null && letter.Text != request.LetterText)
+                    return ApiResult.Fail("The choice letter changed before the option was selected.");
                 var options = Traverse.Create(letter).Property("Choices").GetValue<IEnumerable<DiaOption>>()
                     ?.Where(option => option != null && !option.disabled
                         && Traverse.Create(option).Field("text").GetValue<string>() == request.OptionLabel).ToList();
@@ -169,7 +175,9 @@ namespace RIMAPI.Helpers
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                Exception cause = ex.GetBaseException();
+                Verse.Log.Error($"[RIMAPI] Quest acceptance failed: {ex}");
+                return ApiResult.Fail($"Quest acceptance failed: {cause.GetType().Name}: {cause.Message}");
             }
         }
 

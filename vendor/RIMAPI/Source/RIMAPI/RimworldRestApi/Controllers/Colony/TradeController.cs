@@ -62,5 +62,20 @@ namespace RIMAPI.Controllers
             var body = await context.Request.ReadBodyAsync<LiveTradeRequestDto>();
             await context.SendJsonResponse(LiveTradeAutomationHelper.Execute(body));
         }
+
+        [Get("/api/v1/trade/caravan/session")]
+        [EndpointMetadata("Inspect a real open caravan trade dialog and available recruits")]
+        public async Task GetCaravanTradeSession(HttpListenerContext context)
+        {
+            await context.SendJsonResponse(CaravanTradeSessionHelper.Preview());
+        }
+
+        [Post("/api/v1/trade/caravan/session/execute")]
+        [EndpointMetadata("Complete or close the observed caravan trade dialog")]
+        public async Task ExecuteCaravanTradeSession(HttpListenerContext context)
+        {
+            var body = await context.Request.ReadBodyAsync<ActiveCaravanTradeRequestDto>();
+            await context.SendJsonResponse(CaravanTradeSessionHelper.Execute(body));
+        }
     }
 }

@@ -60,6 +60,7 @@ namespace RIMAPI.Models
     {
         public string WindowType { get; set; }
         public string OptionLabel { get; set; }
+        public string DialogText { get; set; }
     }
 
     public class WindowNameRequestDto

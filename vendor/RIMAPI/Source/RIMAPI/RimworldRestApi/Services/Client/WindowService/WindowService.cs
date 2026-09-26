@@ -90,11 +90,16 @@ namespace RIMAPI.Services
                 if (request == null || string.IsNullOrWhiteSpace(request.WindowType)
                     || string.IsNullOrWhiteSpace(request.OptionLabel))
                     return ApiResult.Fail("Window type and option label are required.");
-                var windows = Find.WindowStack?.Windows?.OfType<Dialog_NodeTree>()
-                    .Where(w => w.GetType().Name == request.WindowType).ToList();
-                if (windows == null || windows.Count != 1)
-                    return ApiResult.Fail("The requested dialogue is no longer uniquely open.");
-                var node = Traverse.Create(windows[0]).Field("curNode").GetValue<DiaNode>();
+                // Several node-tree dialogs can be stacked. The player can only
+                // act on the topmost one; require its text to still match the
+                // observation that produced Laya's choice.
+                var window = Find.WindowStack?.Windows?.OfType<Dialog_NodeTree>()
+                    .LastOrDefault();
+                if (window == null || window.GetType().Name != request.WindowType)
+                    return ApiResult.Fail("The requested dialogue is no longer the active dialogue.");
+                var node = Traverse.Create(window).Field("curNode").GetValue<DiaNode>();
+                if (node == null || (request.DialogText != null && node.text != request.DialogText))
+                    return ApiResult.Fail("The dialogue changed before the option was selected.");
                 var choices = node?.options.Where(option => !option.disabled
                     && Traverse.Create(option).Field("text").GetValue<string>() == request.OptionLabel).ToList();
                 if (choices == null || choices.Count != 1)
@@ -104,7 +109,9 @@ namespace RIMAPI.Services
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                Exception cause = ex.GetBaseException();
+                Verse.Log.Error($"[RIMAPI] Dialogue choice failed: {ex}");
+                return ApiResult.Fail($"Dialogue choice failed: {cause.GetType().Name}: {cause.Message}");
             }
         }
 

@@ -135,4 +135,25 @@ namespace RIMAPI.Models
         public System.Collections.Generic.List<string> Sold { get; set; } = new System.Collections.Generic.List<string>();
         public System.Collections.Generic.List<string> Bought { get; set; } = new System.Collections.Generic.List<string>();
     }
+
+    public class ActiveCaravanTradeDto
+    {
+        public bool Active { get; set; }
+        public int SettlementId { get; set; }
+        public string SettlementName { get; set; }
+        public int ColonySilver { get; set; }
+        public int TraderSilver { get; set; }
+        public System.Collections.Generic.List<LiveTradePawnOfferDto> HumanlikeOffers { get; set; } = new System.Collections.Generic.List<LiveTradePawnOfferDto>();
+        public System.Collections.Generic.List<LiveTradeCategoryDto> SaleOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
+    }
+
+    public class ActiveCaravanTradeRequestDto
+    {
+        public int SettlementId { get; set; }
+        public int? PurchasePawnId { get; set; }
+        public string SaleCategory { get; set; }
+        public int MinimumSilverReserve { get; set; }
+        public int MaximumSpend { get; set; } = 2500;
+        public bool CloseWithoutTrade { get; set; }
+    }
 }

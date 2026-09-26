@@ -16,20 +16,12 @@ namespace RIMAPI.Helpers
         private class PendingRoute
         {
             public HashSet<int> PawnIds;
-            public HashSet<int> PrisonerIds;
             public int SettlementId;
             public int? SiteId;
             public bool Raid;
         }
 
-        private class PendingPrisonerSale
-        {
-            public HashSet<int> PrisonerIds;
-            public int SettlementId;
-        }
-
         private static readonly List<PendingRoute> PendingRoutes = new List<PendingRoute>();
-        private static readonly List<PendingPrisonerSale> PendingPrisonerSales = new List<PendingPrisonerSale>();
 
         public static void ProcessPendingRoutes()
         {
@@ -55,67 +47,11 @@ namespace RIMAPI.Helpers
                     ? (CaravanArrivalAction)new CaravanArrivalAction_AttackSettlement(settlement)
                     : new CaravanArrivalAction_Trade(settlement);
                 caravan.pather.StartPath(settlement.Tile, arrival, true);
-                if (!pending.Raid && pending.PrisonerIds != null && pending.PrisonerIds.Count > 0)
-                {
-                    PendingPrisonerSales.Add(new PendingPrisonerSale
-                    {
-                        PrisonerIds = new HashSet<int>(pending.PrisonerIds),
-                        SettlementId = pending.SettlementId
-                    });
-                }
+                // Leave the normal trade session open. The director must see
+                // its actual recruits and stock before deciding whether to
+                // sell a prisoner, purchase a person, or leave. Auto-selling
+                // here closed the window before that decision was possible.
                 PendingRoutes.RemoveAt(i);
-            }
-            ProcessPendingPrisonerSales();
-        }
-
-        private static void ProcessPendingPrisonerSales()
-        {
-            if (!TradeSession.Active || TradeSession.giftMode || TradeSession.deal == null
-                || TradeSession.playerNegotiator == null || !(TradeSession.trader is Settlement settlement))
-                return;
-
-            Caravan caravan = TradeSession.playerNegotiator.GetCaravan();
-            if (caravan == null) return;
-            PendingPrisonerSale pending = PendingPrisonerSales.FirstOrDefault(s => s.SettlementId == settlement.ID
-                && caravan.PawnsListForReading.Any(p => s.PrisonerIds.Contains(p.thingIDNumber)));
-            if (pending == null) return;
-
-            List<Tradeable> selected = TradeSession.deal.AllTradeables
-                .Where(t => t.TraderWillTrade && t.thingsColony.OfType<Pawn>()
-                    .Any(p => pending.PrisonerIds.Contains(p.thingIDNumber)))
-                .ToList();
-            if (selected.Count == 0)
-            {
-                Messages.Message("Laya: this settlement will not buy the selected prisoner.", MessageTypeDefOf.RejectInput, false);
-                PendingPrisonerSales.Remove(pending);
-                return;
-            }
-
-            foreach (Tradeable tradeable in selected)
-            {
-                int count = tradeable.thingsColony.OfType<Pawn>()
-                    .Count(p => pending.PrisonerIds.Contains(p.thingIDNumber));
-                tradeable.ForceToDestination(count);
-            }
-            TradeSession.deal.UpdateCurrencyCount();
-            if (!TradeSession.deal.DoesTraderHaveEnoughSilver())
-            {
-                foreach (Tradeable tradeable in selected) tradeable.ForceTo(0);
-                TradeSession.deal.UpdateCurrencyCount();
-                Messages.Message("Laya: the trader cannot afford the selected prisoner; no sale was made.", MessageTypeDefOf.RejectInput, false);
-                PendingPrisonerSales.Remove(pending);
-                return;
-            }
-
-            if (TradeSession.deal.TryExecute(out bool actuallyTraded) && actuallyTraded)
-            {
-                caravan.RecacheInventory();
-                Messages.Message("Laya: selected prisoner sold through the normal trade system at " + settlement.LabelCap + ".",
-                    MessageTypeDefOf.PositiveEvent, false);
-                PendingPrisonerSales.Remove(pending);
-                Dialog_Trade dialog = Find.WindowStack.WindowOfType<Dialog_Trade>();
-                dialog?.Close(false);
-                TradeSession.Close();
             }
         }
 
@@ -211,6 +147,8 @@ namespace RIMAPI.Helpers
                 List<Thing> items = CaravanFormingUtility.AllReachableColonyItems(map);
                 int totalFood = items.Where(IsTravelFood).Sum(t => t.stackCount);
                 int totalMedicine = items.Where(IsMedicine).Sum(t => t.stackCount);
+                int totalSilver = items.Where(t => t.def.defName == "Silver" && !t.IsForbidden(Faction.OfPlayer))
+                    .Sum(t => t.stackCount);
                 int takeFood = Math.Min(Math.Max(8, pawns.Count * 10), Math.Max(0, totalFood - request.MinimumFoodAtHome));
                 int takeMedicine = Math.Min(pawns.Count * 2, Math.Max(0, totalMedicine - request.MinimumMedicineAtHome));
                 if (takeFood < Math.Max(6, pawns.Count * 6))
@@ -219,6 +157,10 @@ namespace RIMAPI.Helpers
                 var transferables = new List<TransferableOneWay>();
                 int foodAdded = AddByPredicate(transferables, items, IsTravelFood, takeFood);
                 AddByPredicate(transferables, items, IsMedicine, takeMedicine);
+                int silverAdded = (request.PurchasePriorities?.Count ?? 0) > 0
+                    ? AddByPredicate(transferables, items,
+                        t => t.def.defName == "Silver" && !t.IsForbidden(Faction.OfPlayer),
+                        Math.Min(3000, Math.Max(0, totalSilver - 200))) : 0;
                 var reservedTravelStacks = new HashSet<Thing>(transferables.SelectMany(t => t.things));
 
                 float goodsValue = salePrisoners.Sum(p => p.MarketValue);
@@ -238,8 +180,8 @@ namespace RIMAPI.Helpers
                     goodsValue += thing.MarketValue * count;
                     goodsStacks++;
                 }
-                if (goodsValue < 250f)
-                    return ApiResult<StartTradeCaravanResponseDto>.Fail("No safe surplus trade goods worth at least 250 silver are ready.");
+                if (goodsValue < 250f && silverAdded < 800)
+                    return ApiResult<StartTradeCaravanResponseDto>.Fail("A caravan needs at least 250 silver of safe surplus goods or 800 silver for purchases.");
 
                 PlanetTile startingTile = CaravanExitMapUtility.BestExitTileToGoTo(destination.Tile, map);
                 if (!startingTile.Valid)
@@ -257,7 +199,6 @@ namespace RIMAPI.Helpers
                 PendingRoutes.Add(new PendingRoute
                 {
                     PawnIds = new HashSet<int>(caravanPawns.Select(p => p.thingIDNumber)),
-                    PrisonerIds = new HashSet<int>(salePrisoners.Select(p => p.thingIDNumber)),
                     SettlementId = destination.ID,
                     Raid = false
                 });
@@ -376,7 +317,6 @@ namespace RIMAPI.Helpers
                 PendingRoutes.Add(new PendingRoute
                 {
                     PawnIds = new HashSet<int>(pawns.Select(p => p.thingIDNumber)),
-                    PrisonerIds = new HashSet<int>(),
                     SettlementId = destination.ID,
                     Raid = true
                 });
@@ -450,7 +390,6 @@ namespace RIMAPI.Helpers
                 PendingRoutes.Add(new PendingRoute
                 {
                     PawnIds = new HashSet<int>(pawns.Select(p => p.thingIDNumber)),
-                    PrisonerIds = new HashSet<int>(),
                     SettlementId = -1,
                     SiteId = site.ID,
                     Raid = false,

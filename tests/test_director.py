@@ -498,6 +498,36 @@ class DirectorTests(unittest.TestCase):
         )
         self.assertTrue(result["applied"])
         self.assertEqual(map_state["income_strategy"], "art")
+        self.assertEqual(map_state["doctrine_history"][0]["change"], "initial")
+        director.execute_action(None, {"map": {"id": 1}, "game": {"tick": 75}}, map_state,
+                                "choose_colony_doctrine", {
+                                    "doctrine_selection": {"economy_product": "art"},
+                                    "doctrine_retained": True,
+                                })
+        self.assertEqual(len(map_state["doctrine_history"]), 1)
+        director.execute_action(None, {"map": {"id": 1}, "game": {"tick": 100}}, map_state,
+                                "choose_colony_doctrine", {
+                                    "doctrine_selection": {"economy_product": "crops"},
+                                })
+        self.assertEqual(map_state["doctrine_history"][-1]["change"], "Laya_revision")
+        self.assertEqual(map_state["doctrine_history"][-1]["from"]["economy_product"], "art")
+        self.assertEqual(map_state["doctrine_history"][-1]["to"]["economy_product"], "crops")
+
+    def test_saved_income_route_offers_its_first_real_order_only_until_started(self):
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 80}},
+                    "colonists": [], "animals": [], "wild_animals": [],
+                    "combat": {"colonists": [], "prisoners": []},
+                    "development": {"building_counts": {}, "zones": [], "things": [],
+                                    "item_counts": {}, "current_research": {},
+                                    "finished_research": [], "work_tables": []}}
+        map_state = {"anchor": {"x": 10, "z": 10}, "issued": {},
+                     "doctrine": {"schema_version": 2, "economy_product": "crops"},
+                     "income_strategy": "crops", "doctrine_tick": 1000}
+        first, _ = director.candidate_actions(None, copy.deepcopy(snapshot), map_state)
+        self.assertIn("income_crops", first)
+        map_state["income_plan_started"] = "crops"
+        subsequent, _ = director.candidate_actions(None, copy.deepcopy(snapshot), map_state)
+        self.assertNotIn("income_crops", subsequent)
 
     def test_failed_action_uses_bounded_exponential_backoff(self):
         state = {}
@@ -1272,6 +1302,32 @@ class DirectorTests(unittest.TestCase):
                    "palette": ["Marsh", "Soil"], "grid": encoded}
         self.assertEqual(director.find_dry_starter_site(terrain, {"x": 10, "z": 9}),
                          {"x": 10, "z": 9})
+
+    def test_starter_house_has_one_accessible_door_and_no_duplicate_walls(self):
+        layout = director.starter_base_blueprint(3)
+        doors = [row for row in layout["buildings"] if row["def_name"] == "Door"]
+        beds = [row for row in layout["buildings"] if row["def_name"] == "Bed"]
+        walls = [(row["rel_x"], row["rel_z"]) for row in layout["buildings"]
+                 if row["def_name"] == "Wall"]
+        self.assertEqual(len(doors), 1)
+        self.assertEqual(len(beds), 3)
+        self.assertEqual(len(walls), len(set(walls)))
+        self.assertNotIn((doors[0]["rel_x"], doors[0]["rel_z"]), walls)
+        self.assertNotIn((doors[0]["rel_x"], doors[0]["rel_z"] + 1), walls)
+
+    def test_starter_site_avoids_existing_plan_and_natural_edifice(self):
+        width = height = 30
+        terrain = {"width": width, "height": height, "palette": ["Soil"],
+                   "grid": [width * height, 0],
+                   "edifice_grid": [15 * width + 15, 0, 1, 1,
+                                    width * height - 15 * width - 16, 0]}
+        development = {"construction_projects": [{"position": {"x": 10, "z": 10},
+                                                     "size": {"x": 1, "z": 1}}]}
+        result = director.find_dry_starter_site(terrain, {"x": 10, "z": 10}, development)
+        self.assertIsNotNone(result)
+        for blocked_x, blocked_z in ((10, 10), (15, 15)):
+            self.assertFalse(result["x"] - 2 <= blocked_x <= result["x"] + 8
+                             and result["z"] - 2 <= blocked_z <= result["z"] + 8)
 
     def test_single_feasible_action_does_not_call_model(self):
         decision = director.choose_action(None, {}, ["create_stockpile"])
@@ -2180,6 +2236,37 @@ class DirectorTests(unittest.TestCase):
         choices, _ = director.candidate_actions(None, snapshot, state)
         self.assertIn("start_taming", choices)
 
+    def test_wild_human_is_separate_recruit_route_for_animals_seven_handler(self):
+        person = {"id": 91, "name": "Wild visitor", "gender": "Female", "age": 24,
+                  "health": 0.9, "downed": False, "position": {"x": 15, "z": 12}}
+        colonist = {"id": 1, "name": "Handler", "health": 1.0,
+                    "position": {"x": 10, "z": 10}, "skills": {"Animals": {"level": 6}},
+                    "work_priorities": {"Construction": {"priority": 2}}}
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 60}},
+                    "colonists": [colonist], "animals": [], "wild_animals": [],
+                    "wild_humans": [person], "combat": {},
+                    "development": {"building_counts": {"Bed": 1}, "zones": [],
+                                    "buildings": [{"id": 70, "def": "Bed", "position": {"x": 10, "z": 10}}],
+                                    "rooms": [{"contained_beds_ids": [70], "open_roof_count": 0,
+                                               "touches_map_edge": False}],
+                                    "item_counts": {}, "things": [], "plants": [], "work_tables": [],
+                                    "forbidden": [], "current_research": {"name": "none"}}}
+        map_state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        self.assertNotIn("tame_wild_human", director.candidate_actions(None, snapshot, map_state)[0])
+        colonist["skills"]["Animals"]["level"] = 7
+        choices, details = director.candidate_actions(None, snapshot, map_state)
+        self.assertIn("tame_wild_human", choices)
+        self.assertNotIn("start_taming", choices)
+        client = mock.Mock()
+        client.get.return_value = [{"id": 91, "downed": False}]
+        client.post.return_value = {"success": True}
+        with mock.patch.object(director, "prioritize", return_value={"applied": True}):
+            result = director.execute_action(client, snapshot, map_state, "tame_wild_human",
+                {**details, "wild_human_target": 91})
+        self.assertTrue(result["applied"])
+        client.post.assert_called_with("/api/v1/map/wild-human/tame",
+                                       body={"map_id": 1, "pawn_id": 91})
+
     def test_pen_blueprint_has_closed_fence_gate_and_marker(self):
         plan = director.animal_pen_blueprint(9, "WoodLog")
         cells = {(row["rel_x"], row["rel_z"]): row["def_name"] for row in plan["buildings"]}
@@ -2243,11 +2330,20 @@ class DirectorTests(unittest.TestCase):
                 {"name": "Builder", "downed": False, "capacities": {"moving": 0.6}},
                 {"name": "Patient", "downed": True, "capacities": {"moving": 0.1}},
             ],
+            "wild_humans": [{"id": 91}],
+            "combat": {"prisoners": [{"id": 12}]},
+            "development": {"trade_destinations": [{"can_trade_now": True}],
+                            "trade_opportunities": [{}], "quests": [{"id": 6}]},
         }
         context = colony_growth.trade_population_context(snapshot)
         self.assertEqual((context["population"], context["able_workers"], context["bedbound"]),
                          (3, 2, 1))
         self.assertNotIn("routes", context)
+        self.assertEqual(context["live_signals"], {
+            "wild_people_on_map": 1, "prisoners_held": 1,
+            "friendly_settlements_in_range": 1, "visiting_trade_contacts": 1,
+            "active_quests": 1,
+        })
         offer = {"name": "Applicant", "age": 24, "unit_price": 600,
                  "skills": ["Construction:9:Major"], "health_conditions": []}
         self.assertIn("Construction:9", colony_growth.brief_humanlike_offer_description(offer))
@@ -2411,6 +2507,45 @@ class DirectorTests(unittest.TestCase):
         direction_question = agent.calls[2]["doctrine_primary_direction"]["criteria"]
         self.assertTrue(direction_question)
         self.assertTrue(all(colony_strategy.DIRECTIONS[key]["domain"] == "prosperity" for key in direction_question))
+        self.assertEqual(agent.states[3]["chosen_so_far"]["primary_direction"], "industrial_manufacturing")
+        self.assertEqual(agent.states[-1]["chosen_so_far"]["endgame"], "ship_escape")
+
+    def test_existing_doctrine_can_be_explicitly_kept_without_reselecting_every_axis(self):
+        current = {"schema_version": 2, "primary_direction": "research_starflight",
+                   "economy_family": "manufacturing", "economy_product": "components",
+                   "diplomacy": "peaceful_trade", "endgame": "ship_escape"}
+        context = {"current": current, "active_mods": [{"package_id": "ludeon.rimworld"}]}
+        agent = self.FakeAgent(["keep"])
+        result = colony_strategy.choose_cascaded_doctrine(agent,
+            {"people": 3, "needs": {"food": 40, "sheltered_beds": 3}}, context)
+        self.assertTrue(result["retained"])
+        self.assertEqual(result["selection"], current)
+        self.assertEqual(len(agent.calls), 1)
+
+    def test_economic_outlook_distinguishes_inventory_from_real_sales(self):
+        context = {"item_counts": {"Duster": 4}, "building_counts": {"ElectricTailoringBench": 1},
+                   "trade_destinations": [{"settlement_id": 6}], "trade_ledger": []}
+        outlook = colony_strategy.economic_outlook({"economy_product": "tailoring"}, context)
+        self.assertEqual(outlook["stage"], "caravan_needed")
+        self.assertIn("safe caravan", outlook["horizon"])
+        self.assertEqual(outlook["candidate_stock"], {"Duster": 4})
+        self.assertEqual(outlook["recent_approx_sale_value"], 0)
+        context["trade_ledger"] = [{"sale_value": 420.0, "sold_units": 2}]
+        self.assertEqual(colony_strategy.economic_outlook(
+            {"economy_product": "tailoring"}, context)["recent_approx_sale_value"], 420.0)
+
+    def test_income_forecast_does_not_sell_food_reserves_or_call_purchases_sales(self):
+        context = {"item_counts": {"RawRice": 50}, "resources": {"food": 8},
+                   "population": 3, "trade_opportunities": [{"trader_id": "pawn:9"}],
+                   "trade_ledger": [{"bought_units": 1, "purchase_value": 300}],
+                   "zones": [{"plant_def": "Plant_Rice"}]}
+        outlook = colony_strategy.economic_outlook({"economy_product": "crops"}, context)
+        self.assertEqual(outlook["stage"], "reserve_short")
+        self.assertEqual(outlook["recent_completed_sales"], 0)
+        self.assertEqual(outlook["recent_approx_sale_value"], 0)
+        self.assertTrue(outlook["direct_production_plan"])
+        self.assertFalse(colony_strategy.economic_outlook(
+            {"economy_product": "quest_rewards"}, context)["direct_production_plan"])
 
     def test_doctrine_research_uses_only_live_startable_projects(self):
         doctrine = {"primary_direction": "industrial_manufacturing", "technology": "industrial", "economy_product": "components"}
@@ -2685,6 +2820,55 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(record["decision"]["choice"], "option_1")
         self.assertNotIn("defer", agent.calls[0]["live_dialogue"]["criteria"])
 
+    def test_stacked_dialogue_uses_top_visible_text_and_backs_off_api_failure(self):
+        client = mock.Mock()
+        client.get.return_value = [
+            {"window_type": "Dialog_NodeTree", "dialog_text": "Old offer", "force_pause": True,
+             "enabled_options": ["Accept", "Reject"]},
+            {"window_type": "Dialog_NodeTree", "dialog_text": "New offer", "force_pause": True,
+             "enabled_options": ["Help", "Decline"]},
+        ]
+        client.post.side_effect = director.bridge.RimApiError("API 500 dialogue changed")
+        snapshot = {"map": {"id": 1, "resources": {"food": 20}},
+                    "game": {"tick": 1200}, "colonists": [{"id": 1}]}
+        state = {}
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_window_cycle(client, self.FakeAgent(["option_0"]),
+                                               snapshot, state, pathlib.Path(folder) / "test.jsonl")
+            retried = director.run_window_cycle(client, self.FakeAgent(["option_0"]),
+                                               snapshot, state, pathlib.Path(folder) / "test.jsonl")
+        self.assertIn("API 500", record["result"]["error"])
+        self.assertIsNone(retried)
+        client.post.assert_called_once_with("/api/v1/ui/window/choose", body={
+            "window_type": "Dialog_NodeTree", "option_label": "Help", "dialog_text": "New offer"})
+
+    def test_caravan_trade_selects_actual_person_and_records_completed_sale(self):
+        client = mock.Mock()
+        client.get.return_value = {"active": True, "settlement_id": 52, "settlement_name": "Friends",
+                                   "colony_silver": 900, "trader_silver": 1200,
+                                   "sale_options": [], "humanlike_offers": [{
+                                       "pawn_id": 17, "name": "Builder", "unit_price": 700,
+                                       "health": 1.0, "age": 29, "gender": "Male",
+                                       "skills": ["Construction:10:Major"], "traits": [],
+                                       "health_conditions": [], "disabled_work": [],
+                                   }]}
+        client.post.return_value = {"executed": True, "bought_units": 1,
+                                    "approximate_purchase_value": 700,
+                                    "sold_units": 0, "approximate_sale_value": 0,
+                                    "trader_name": "Friends"}
+        snapshot = {"map": {"id": 1, "seed": "qa", "tile_id": 2,
+                            "resources": {"food": 40, "meals": 30}},
+                    "game": {"tick": 2000}, "colonists": [{"id": 1, "downed": False}],
+                    "development": {"item_counts": {"Silver": 900}}}
+        state = {}
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_caravan_trade_cycle(client, self.FakeAgent(["100", "17"]),
+                snapshot, state, pathlib.Path(folder) / "test.jsonl")
+        self.assertTrue(record["result"]["applied"])
+        self.assertEqual(record["decision"]["recruit"], "17")
+        self.assertEqual(client.post.call_args.kwargs["body"]["purchase_pawn_id"], 17)
+        self.assertEqual(next(iter(state["maps"].values()))["trade_ledger"][0]["bought_units"], 1)
+
     def test_choice_letter_presents_accept_and_reject_to_laya(self):
         class Client:
             def __init__(self):
@@ -2707,8 +2891,25 @@ class DirectorTests(unittest.TestCase):
             record = director.run_letter_cycle(client, self.FakeAgent(["option_0"]),
                                                snapshot, {}, pathlib.Path(folder) / "test.jsonl")
         self.assertEqual(client.posts, [("/api/v1/events/letter/choose", {
-            "letter_id": 17, "option_label": "Accept"})])
+            "letter_id": 17, "option_label": "Accept", "letter_text": "A refugee asks to stay."})])
         self.assertEqual(record["decision"]["choice"], "option_0")
+
+    def test_letter_housekeeping_buttons_are_not_offer_answers(self):
+        client = mock.Mock()
+        client.get.return_value = {"letters": [{
+            "id": 19, "arrival_tick": 1000, "label": "Joiner",
+            "text": "A wanderer asks to stay.",
+            "enabled_options": ["Close", "Jump to location", "Accept", "Reject"],
+        }]}
+        client.post.return_value = {"applied": True}
+        agent = self.FakeAgent(["option_0"])
+        snapshot = {"map": {"id": 1, "resources": {}},
+                    "game": {"tick": 1200}, "colonists": []}
+        with tempfile.TemporaryDirectory() as folder:
+            director.run_letter_cycle(client, agent, snapshot, {},
+                                      pathlib.Path(folder) / "test.jsonl")
+        self.assertEqual(agent.calls[0]["letter_response"]["criteria"]["option_0"], "Accept")
+        self.assertEqual(client.post.call_args.kwargs["body"]["option_label"], "Accept")
 
     def test_paralyzed_joiner_letter_exposes_labor_cost_without_forcing_answer(self):
         client = mock.Mock()

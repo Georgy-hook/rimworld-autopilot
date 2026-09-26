@@ -314,8 +314,12 @@ namespace RIMAPI.Services
                         }
                     }
 
+                    // A planned floor is a Blueprint/Frame too. It must not
+                    // block beds, lamps or workstations in the same room;
+                    // only an existing building or another *thing* plan does.
                     bool conflictsWithPlan = occupied.Any(cell => cell.InBounds(map) && cell.GetThingList(map).Any(t =>
-                        t is Building || t is Blueprint || t is Frame));
+                        t is Building || ((t is Blueprint || t is Frame)
+                            && t.def.entityDefToBuild is ThingDef)));
                     if (conflictsWithPlan)
                         continue;
 

@@ -300,6 +300,7 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     resource_summary = safe_get(client, "/api/v1/resources/summary", warnings, map_id=map_id)
     combat = safe_get(client, "/api/v1/combat/state", warnings, map_id=map_id) or {}
     raw_animals = safe_get(client, "/api/v1/map/animals", warnings, map_id=map_id) or []
+    raw_wild_humans = safe_get(client, "/api/v1/map/wild-humans", warnings, map_id=map_id) or []
     hostiles = combat.get("hostiles") if isinstance(combat, dict) else []
     fighters = combat.get("colonists") if isinstance(combat, dict) else []
     weapons = combat.get("available_weapons") if isinstance(combat, dict) else []
@@ -330,6 +331,15 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
             "resources": normalize_resource_summary(resource_summary),
         },
         "colonists": colonists,
+        "wild_humans": [{
+            "id": int(row["id"]), "name": str(row.get("name") or row["id"]),
+            "gender": str(row.get("gender") or "None"),
+            "age": int(first_number(row.get("age"))),
+            "health": round(first_number(row.get("health"), 1.0), 3),
+            "downed": bool(row.get("downed")),
+            "minimum_handling_skill": int(first_number(row.get("minimum_handling_skill"), 7)),
+            "position": row.get("position") or {},
+        } for row in raw_wild_humans if isinstance(row, dict) and row.get("id") is not None],
         "animals": [
             {
                 "id": int(row.get("id")),
