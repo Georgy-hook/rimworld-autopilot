@@ -151,6 +151,7 @@ namespace RIMAPI.Services
                 HasRangedWeapon = primary?.def?.IsRangedWeapon ?? false,
                 CurrentJob = pawn.CurJobDef?.defName,
                 CurrentJobTargetId = pawn.CurJob?.targetA.Thing?.thingIDNumber,
+                CurrentJobTargetIdB = pawn.CurJob?.targetB.Thing?.thingIDNumber,
                 LordJobType = pawn.GetLord()?.LordJob?.GetType().Name,
                 LordToilName = pawn.GetLord()?.CurLordToil?.GetType().Name,
                 DistanceToNearestOpponent = distance,

@@ -131,12 +131,19 @@ namespace RIMAPI.Helpers
                         && Traverse.Create(option).Field("text").GetValue<string>() == request.OptionLabel).ToList();
                 if (options == null || options.Count != 1)
                     return ApiResult.Fail("Requested enabled letter choice is no longer unique.");
-                Traverse.Create(options[0]).Method("Activate").GetValue();
+                // DiaOption.Activate assumes an owning Dialog_NodeTree when resolveTree is set.
+                // ChoiceLetter builds options without a dialog, so invoke its action directly.
+                Action action = Traverse.Create(options[0]).Field("action").GetValue<Action>();
+                if (action == null)
+                    return ApiResult.Fail("Selected letter choice has no direct action.");
+                action();
                 return ApiResult.Ok();
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                Exception cause = ex.GetBaseException();
+                Verse.Log.Error($"[RIMAPI] Letter choice failed: {ex}");
+                return ApiResult.Fail($"Letter choice failed: {cause.GetType().Name}: {cause.Message}");
             }
         }
 

@@ -49,7 +49,10 @@ namespace RIMAPI.Controllers
             var traderId = RequestParser.GetStringParameter(context, "trader_id");
             var reserve = RequestParser.GetIntParameter(context, "minimum_silver_reserve");
             var spend = RequestParser.GetIntParameter(context, "maximum_spend");
-            await context.SendJsonResponse(LiveTradeAutomationHelper.GetPreview(mapId, traderId, reserve, spend));
+            // Initial previews have no sale selected yet. Only the second preview
+            // supplies this optional filter to price a sale-funded purchase.
+            var saleCategory = context.Request.QueryString["sale_category"] ?? "";
+            await context.SendJsonResponse(LiveTradeAutomationHelper.GetPreview(mapId, traderId, reserve, spend, saleCategory));
         }
 
         [Post("/api/v1/trade/execute")]

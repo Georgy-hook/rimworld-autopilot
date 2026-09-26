@@ -35,6 +35,7 @@ namespace RIMAPI.Models
         public bool HasRangedWeapon { get; set; }
         public string CurrentJob { get; set; }
         public int? CurrentJobTargetId { get; set; }
+        public int? CurrentJobTargetIdB { get; set; }
         public string LordJobType { get; set; }
         public string LordToilName { get; set; }
         public float DistanceToNearestOpponent { get; set; }

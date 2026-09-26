@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import colony_growth as growth
+
 
 EVENT_FAMILIES: dict[str, dict[str, Any]] = {
     "combat": {"tokens": ("raid", "siege", "attack", "manhunter", "infestation", "mechcluster", "revenant", "sightstealer"), "urgency": 100},
@@ -193,7 +195,7 @@ def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snap
         traders = []
         for trader in (context.get("trade_opportunities") or [])[:4]:
             preview = trader.get("preview") or {}
-            traders.append({
+            row = {
                 "id": trader.get("id"), "name": trader.get("name"),
                 "silver": preview.get("colony_silver"),
                 "reserve": preview.get("minimum_silver_reserve"),
@@ -206,8 +208,17 @@ def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snap
                     f"{row.get('category')} {row.get('example')} x{row.get('maximum_units')} @ {float(row.get('unit_price') or 0):.1f} silver"
                     for row in (preview.get("purchase_options") or [])[:9]
                 ],
-            })
-        return {
+            }
+            humanlike = [
+                growth.brief_humanlike_offer_description(offer)
+                for offer in (preview.get("humanlike_offers") or [])[:4]
+            ]
+            if humanlike:
+                row["potential_recruits"] = humanlike
+            elif any(item.get("humanlike") for item in (trader.get("stock") or [])):
+                row["potential_recruits"] = "Trader has people. Selling surplus or choosing a smaller cash reserve may make one affordable."
+            traders.append(row)
+        model_context = {
             "event": {"family": "trade", "name": event.get("name"),
                       "trader_kind": event.get("trader_kind")},
             "colony": {"population": len(colonists), "food": resources.get("food"),
@@ -216,8 +227,14 @@ def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snap
                        "lowest_hunger": round(min(hunger), 2) if hunger else None,
                        "hostiles": len(snapshot.get("combat", {}).get("hostiles") or [])},
             "traders": traders,
-            "tradeoff": "Buying food or medicine improves survival but costs scarce silver; skipping preserves silver and the trader may depart.",
+            "tradeoff": "Sell only goods this trader accepts. Selling extra leather, drugs, crops or clothing can fund a recruit in the same deal, but keep food, warm clothing and enough armed defenders. The trader may depart.",
         }
+        if any(row.get("potential_recruits") for row in traders):
+            model_context["growth"] = {
+                key: value for key, value in growth.population_context(snapshot).items()
+                if key in {"population", "able_workers", "bedbound", "total_food", "ready_meals", "best_skills", "tradeoff"}
+            }
+        return model_context
     return {
         "event": event,
         "active_conditions": context.get("active_conditions") or [],

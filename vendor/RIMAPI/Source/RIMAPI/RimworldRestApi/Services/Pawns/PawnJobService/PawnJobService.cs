@@ -59,16 +59,10 @@ namespace RIMAPI.Services
 
                 if (request.TargetThingId.HasValue)
                 {
-                    Thing thing = null;
-                    foreach (Map map in Find.Maps)
-                    {
-                        thing = map.listerThings.AllThings
-                            .FirstOrDefault(t => t.thingIDNumber == request.TargetThingId.Value);
-                        if (thing != null) break;
-                    }
+                    Thing thing = FindSpawnedJobTarget(pawn.Map, request.TargetThingId.Value);
                     if (thing == null)
                     {
-                        return ApiResult.Fail($"Target thing not found: {request.TargetThingId}");
+                        return ApiResult.Fail($"Target thing not found on the worker's map: {request.TargetThingId}");
                     }
                     target = thing;
                 }
@@ -81,16 +75,10 @@ namespace RIMAPI.Services
                 Job job;
                 if (request.TargetThingIdB.HasValue)
                 {
-                    Thing thingB = null;
-                    foreach (Map map in Find.Maps)
-                    {
-                        thingB = map.listerThings.AllThings
-                            .FirstOrDefault(t => t.thingIDNumber == request.TargetThingIdB.Value);
-                        if (thingB != null) break;
-                    }
+                    Thing thingB = FindSpawnedJobTarget(pawn.Map, request.TargetThingIdB.Value);
                     if (thingB == null)
                     {
-                        return ApiResult.Fail($"Secondary target thing not found: {request.TargetThingIdB}");
+                        return ApiResult.Fail($"Secondary target thing not found on the worker's map: {request.TargetThingIdB}");
                     }
                     job = JobMaker.MakeJob(jobDef, target, thingB);
                 }
@@ -109,6 +97,18 @@ namespace RIMAPI.Services
             {
                 return ApiResult.Fail(ex.Message);
             }
+        }
+
+        private static Thing FindSpawnedJobTarget(Map map, int thingId)
+        {
+            if (map == null) return null;
+            // Pawns are indexed in mapPawns, not always in listerThings.AllThings.
+            Thing thing = map.listerThings.AllThings
+                .FirstOrDefault(candidate => candidate.thingIDNumber == thingId);
+            if (thing != null) return thing;
+            Pawn targetPawn = PawnHelper.FindPawnById(thingId);
+            return targetPawn != null && targetPawn.Spawned && targetPawn.Map == map
+                ? targetPawn : null;
         }
 
         public ApiResult AssignTendJob(MedicalTendRequestDto request)

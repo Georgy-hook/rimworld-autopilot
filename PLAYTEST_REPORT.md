@@ -141,3 +141,24 @@ Notes and main Laya failures:
 - At first, both ranged colonists were positioned by `focus_fire` with zero immediate attacks. Later, Laya chose `hold_cover`: Gennady moved while Four Eyes fired, and a subsequent `hold_cover` cycle reported both gunmen attacking the remaining squirrel. This confirms the new tactic can re-position a shooter without idling the other gun.
 - Both squirrels were neutralized. Gennady was scratched to roughly 67% health and received in-game treatment; Four Eyes and Miko remained unhurt in the observed snapshot. The engagement did **not** reproduce the exact two-gun wall obstruction from the earlier guinea-pig attack, so that case remains a targeted regression test rather than a live victory claim.
 - The `focus_fire` planner now reissues orders if an existing `AttackStatic` job has no actual line of sight, instead of treating a target inside weapon range as proof that the pawn can shoot.
+
+## Test 8 — 26 September 2026
+
+- Colony: Masaru, Freddie and Stumpy; fresh Cassandra start, seed `16622162`, tile `93098`. The run reached 10 Decembary 5500, game tick about 280,000 (roughly 4.7 in-game days). Observed between about 08:22 and 10:03 UTC with development pauses and controlled combat/trader replays. The paused QA save is `Laya Trade API QA Before 2026-09-26`.
+- End state at the saved checkpoint: four living colonists, but only Masaru and Freddie mobile. Jared and Hakuja joined after Laya accepted their transport-pod offers; both have paralytic abasia and cannot yet work. Stumpy died. This is population growth on paper, not a four-worker colony.
+
+| Colonist | Outcome | Last reported condition / context |
+| --- | --- | --- |
+| Stumpy | Died | Game letter states blood loss. She had severe bleeding after the squirrel engagement; rescue and tending orders were issued, but bleeding continued. |
+| Masaru | Alive at checkpoint | Mobile, about full health. |
+| Freddie | Alive at checkpoint | Mobile, wounded in the squirrel engagement, about 90% health. |
+| Jared | Alive at checkpoint | Joined through a transport-pod decision; bedbound with paralytic abasia. |
+| Hakuja | Alive at checkpoint | Joined through a transport-pod decision; bedbound with paralytic abasia. |
+
+Notes and main Laya failures:
+
+- When Laya was deliberately stopped during module replacement, it could not react to the initial squirrel attack. This is distinct from the real tactical issue: unarmed Freddie ran away from the rifleman, leading the squirrel out of firing range. A saved-combat replay after the guard/regroup fix showed Freddie moving back toward the shooter instead; Laya then fired and killed the squirrel, with Freddie still standing. This is one focused replay, not proof against every animal attack.
+- The newly working choice-letter API let Laya accept Jared and Hakuja, moving the headcount from three to five before Stumpy's death. The offers described paralysis, but the decision context did not explicitly distinguish headcount from available labor. This was corrected after the run, without forcing Laya to reject disabled recruits.
+- A visiting slaver offered three adults at affordable prices; Laya chose to review the trade, lowered the cash reserve to zero, then chose to buy nothing. A second slaver offered a six-year-old with extensive work restrictions and an older adult with pyromania and psychite dependency; Laya again declined. Both were genuine model choices. A separate manual API transaction successfully purchased one named person and increased headcount from four to five; that transaction was rolled back by loading the pre-purchase QA save and must **not** be credited to Laya.
+- Stumpy's care sequence exposed a remaining failure: a rescue bed was reused for another patient, and an accepted treatment order did not guarantee completed treatment before the doctor received another task. Bed occupancy/reservation and the compact bleeding-risk context were changed after this death. The new C# field and Python selection passed automated tests but still require a live medical replay.
+- At the checkpoint the colony had a small completed shelter and beds for the bedbound joiners, but several larger building blueprints remained unfinished. With only two available workers, labor capacity, food, shelter and medical care remain the main survival constraints.

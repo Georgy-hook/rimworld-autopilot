@@ -9,6 +9,7 @@ from unittest import mock
 
 import colony_combat
 import colony_events
+import colony_growth
 import colony_strategy
 
 
@@ -286,9 +287,11 @@ class DirectorTests(unittest.TestCase):
         def __init__(self, choices):
             self.choices = iter(choices)
             self.calls = []
+            self.states = []
 
         def predict(self, state, questions):
             self.calls.append(questions)
+            self.states.append(state)
             answers = {}
             for question_id, question in questions.items():
                 if question.get("type") == "choice":
@@ -914,6 +917,17 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(client.post.call_args.args[0], "/api/v1/pawn/medical/tend")
         self.assertEqual(client.post.call_args.kwargs["body"]["doctor_pawn_id"], 2)
 
+    def test_paralyzed_recruit_already_in_bed_is_not_rescued_again(self):
+        patient = {"id": 51, "name": "Recruited wanderer", "downed": True,
+                   "health": 1, "position": {"x": 10, "z": 10}}
+        bed = {"id": 77, "def": "Bed", "position": {"x": 10, "z": 10}}
+        snapshot = {"combat": {"colonists": [{"id": 51, "current_job": "LayDown",
+                                              "current_job_target_id": 77}]}}
+        self.assertTrue(director.patient_in_completed_bed(patient, snapshot, [bed]))
+        self.assertFalse(director.patient_in_completed_bed(
+            {**patient, "position": {"x": 12, "z": 10}},
+            {"combat": {"colonists": []}}, [bed]))
+
     def test_loose_rifle_is_offered_before_any_raid_or_doctrine(self):
         snapshot = {"game": {"tick": 500}, "map": {"id": 1, "resources": {"food": 10, "meals": 2}},
                     "colonists": [{"id": 1, "name": "Ada", "health": 1, "hunger": 0.9,
@@ -1068,6 +1082,26 @@ class DirectorTests(unittest.TestCase):
         self.assertIsNone(director.empty_indoor_sleeping_spot(
             {"buildings": [], "rooms": [far_room]}, {"x": 140, "z": 140}))
 
+    def test_nearby_ancient_danger_is_not_a_bedroom(self):
+        danger = {"id": 22, "role_label": "dining room", "touches_map_edge": False,
+                  "is_prison_cell": False, "is_doorway": False, "open_roof_count": 0,
+                  "contained_beds_ids": [], "cells_count": 4,
+                  "contained_thing_defs": ["AncientCryptosleepCasket", "Mech_Scyther"],
+                  "light_placement_cells": [{"x": 150, "z": 130}],
+                  "dark_cells_percent": 96,
+                  "cells": [{"x": 150, "z": z} for z in range(130, 134)]}
+        self.assertTrue(director.room_is_ancient_danger(danger))
+        self.assertIsNone(director.empty_indoor_sleeping_spot(
+            {"buildings": [], "rooms": [danger]}, {"x": 151, "z": 143}))
+
+    def test_roofed_ruin_outside_starter_house_is_not_a_bedroom(self):
+        nearby_ruin = {"touches_map_edge": False, "is_prison_cell": False,
+                       "is_doorway": False, "open_roof_count": 0,
+                       "contained_beds_ids": [], "cells_count": 4,
+                       "cells": [{"x": x, "z": z} for x in (150, 151) for z in (129, 130)]}
+        self.assertIsNone(director.empty_indoor_sleeping_spot(
+            {"buildings": [], "rooms": [nearby_ruin]}, {"x": 151, "z": 143}))
+
     def test_sleeping_spot_api_success_without_placement_is_not_reported_as_applied(self):
         client = mock.Mock()
         client.post.return_value = {"success": True}
@@ -1180,6 +1214,28 @@ class DirectorTests(unittest.TestCase):
         context = director.model_decision_context(snapshot)
         self.assertEqual(context["needs"]["pending_blueprints"], 46)
         self.assertEqual(context["needs"]["active_builders"], 0)
+
+    def test_construction_shortlist_ignores_sealed_danger_blueprints(self):
+        danger = {"contained_thing_defs": ["AncientCryptosleepCasket"],
+                  "cells": [{"x": 20, "z": 20}], "open_roof_count": 0}
+        snapshot = {
+            "game": {"tick": 12000}, "map": {"id": 1, "resources": {"food": 40}},
+            "colonists": [{"id": 1, "name": "Builder", "hunger": 0.8,
+                           "work_priorities": {"Construction": {"priority": 1, "disabled": False}}}],
+            "animals": [], "wild_animals": [], "combat": {},
+            "development": {"building_counts": {}, "zones": [], "item_counts": {"Steel": 100},
+                            "forbidden": [], "things": [], "plants": [], "work_tables": [],
+                            "rooms": [danger],
+                            "construction_projects": [
+                                {"thing_id": 1, "def_name": "Bed", "kind": "blueprint",
+                                 "position": {"x": 20, "z": 20}},
+                                {"thing_id": 2, "def_name": "Wall", "kind": "frame",
+                                 "position": {"x": 11, "z": 11}}]},
+        }
+        choices, details = director.candidate_actions(None, snapshot,
+                                                      {"anchor": {"x": 10, "z": 10}, "issued": {}})
+        self.assertIn("prioritize_construction_project", choices)
+        self.assertEqual([row["thing_id"] for row in details["construction_project_options"]], [2])
 
     def test_decodes_rle_terrain(self):
         width, height, cells = director.decode_terrain({
@@ -2179,6 +2235,23 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("stock", context["event"])
         self.assertLess(len(json.dumps(context)), 700)
 
+    def test_trade_population_context_counts_workers_not_only_heads(self):
+        snapshot = {
+            "map": {"resources": {"food": 45, "meals": 20}},
+            "colonists": [
+                {"name": "Shooter", "downed": False, "capacities": {"moving": 0.9}},
+                {"name": "Builder", "downed": False, "capacities": {"moving": 0.6}},
+                {"name": "Patient", "downed": True, "capacities": {"moving": 0.1}},
+            ],
+        }
+        context = colony_growth.trade_population_context(snapshot)
+        self.assertEqual((context["population"], context["able_workers"], context["bedbound"]),
+                         (3, 2, 1))
+        self.assertNotIn("routes", context)
+        offer = {"name": "Applicant", "age": 24, "unit_price": 600,
+                 "skills": ["Construction:9:Major"], "health_conditions": []}
+        self.assertIn("Construction:9", colony_growth.brief_humanlike_offer_description(offer))
+
     def test_verified_trade_decision_executes_real_transaction(self):
         client = mock.Mock()
         client.post.return_value = {"executed": True, "bought_units": 20}
@@ -2195,6 +2268,108 @@ class DirectorTests(unittest.TestCase):
             "map_id": 0, "trader_id": "pawn:9", "sale_categories": [],
             "purchase_priorities": ["medicine"], "minimum_silver_reserve": 300,
             "maximum_spend": 500})
+
+    def test_slaver_trade_can_sell_surplus_to_fund_specific_recruit(self):
+        initial = {
+            "colony_silver": 450, "minimum_silver_reserve": 300, "trader_silver": 1900,
+            "sale_options": [{"category": "leather", "example": "plainleather",
+                              "maximum_units": 75, "unit_price": 10}],
+            "purchase_options": [], "humanlike_offers": [],
+        }
+        funded = {
+            **initial, "planned_sale_value": 750,
+            "purchase_options": [{"category": "slaves", "example": "Ada",
+                                  "maximum_units": 1, "unit_price": 800}],
+            "humanlike_offers": [{"pawn_id": 45, "name": "Ada", "unit_price": 800,
+                                  "health": 0.97, "age": 29, "gender": "Female",
+                                  "skills": ["Plants:8:Major", "Medicine:6:Minor"],
+                                  "traits": [], "health_conditions": [], "disabled_work": []}],
+        }
+        class Client:
+            def __init__(self):
+                self.posts = []
+
+            def get(self, endpoint, **params):
+                self_outer.assertEqual(endpoint, "/api/v1/trade/preview")
+                return funded if params.get("sale_category") == "leather" else initial
+
+            def post(self, endpoint, **kwargs):
+                self.posts.append((endpoint, kwargs))
+                return {"executed": True}
+
+        self_outer = self
+        client = Client()
+        snapshot = {"map": {"id": 9, "seed": "slaver-qa", "resources": {"food": 75, "meals": 15}},
+                    "game": {"tick": 1200},
+                    "colonists": [{"id": 1, "skills": {"Plants": {"level": 1}}},
+                                  {"id": 2, "skills": {"Plants": {"level": 3}}}],
+                    "combat": {}, "development": {"item_counts": {"Silver": 450}}}
+        trader = {"id": "pawn:9", "name": "Slaver", "stock": [{"humanlike": True}],
+                  "preview": initial}
+        event = {"family": "trade", "signature": "trade:pawn:9", "urgency": 58}
+        context = {"trade_opportunities": [trader]}
+        agent = self.FakeAgent(["trade_now", "300", "slaves", "45", "1800"])
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(director.bridge, "collect_snapshot", return_value=snapshot), \
+                mock.patch.object(director, "collect_development", return_value=snapshot), \
+                mock.patch.object(director.bridge, "safe_get", return_value=context), \
+                mock.patch.object(director.events, "pending_events", return_value=[event]), \
+                mock.patch.object(director, "publish_event_overlay"):
+            record = director.run_event_cycle(client, agent, {"maps": {}},
+                                              pathlib.Path(folder) / "state.json",
+                                              pathlib.Path(folder) / "events.jsonl")
+        trade_posts = [kwargs["body"] for endpoint, kwargs in client.posts
+                       if endpoint == "/api/v1/trade/execute"]
+        self.assertEqual(len(trade_posts), 1)
+        self.assertEqual(trade_posts[0]["sale_categories"], ["leather"])
+        self.assertEqual(trade_posts[0]["purchase_priorities"], ["slaves"])
+        self.assertEqual(trade_posts[0]["purchase_pawn_id"], 45)
+        self.assertEqual(record["decision"]["purchase_pawn_id"], 45)
+        self.assertTrue(record["result"]["applied"])
+
+    def test_laya_can_spend_early_silver_on_real_slaver_offer(self):
+        preview = {
+            "colony_silver": 800, "minimum_silver_reserve": 0,
+            "trader_silver": 1000, "sale_options": [],
+            "purchase_options": [{"category": "slaves", "example": "Kees",
+                                  "maximum_units": 1, "unit_price": 616}],
+            "humanlike_offers": [{"pawn_id": 45, "name": "Kees", "unit_price": 616,
+                                  "health": 1, "age": 30, "gender": "Female",
+                                  "skills": [], "traits": [], "health_conditions": [],
+                                  "disabled_work": []}],
+        }
+        client = mock.Mock()
+        client.get.return_value = preview
+        client.post.return_value = {"executed": True}
+        snapshot = {
+            "map": {"id": 9, "seed": "early-slaver", "resources": {"food": 65, "meals": 12}},
+            "game": {"tick": 1200},
+            "colonists": [{"id": 1}, {"id": 2}, {"id": 3, "downed": True}],
+            "combat": {}, "development": {"item_counts": {"Silver": 800}},
+        }
+        event = {"family": "trade", "signature": "trade:pawn:9", "urgency": 58}
+        context = {"trade_opportunities": [{"id": "pawn:9", "name": "Slaver",
+                                            "stock": [{"humanlike": True}]}]}
+        agent = self.FakeAgent(["trade_now", "0", "slaves", "45", "1800"])
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(director.bridge, "collect_snapshot", return_value=snapshot), \
+                mock.patch.object(director, "collect_development", return_value=snapshot), \
+                mock.patch.object(director.bridge, "safe_get", return_value=context), \
+                mock.patch.object(director.events, "pending_events", return_value=[event]), \
+                mock.patch.object(director, "publish_event_overlay"):
+            record = director.run_event_cycle(client, agent, {"maps": {}},
+                                              pathlib.Path(folder) / "state.json",
+                                              pathlib.Path(folder) / "events.jsonl")
+        body = next(kwargs["body"] for endpoint, kwargs in
+                    ((call.args[0], call.kwargs) for call in client.post.call_args_list)
+                    if endpoint == "/api/v1/trade/execute")
+        self.assertEqual(body["minimum_silver_reserve"], 0)
+        self.assertEqual(body["purchase_pawn_id"], 45)
+        self.assertTrue(record["result"]["applied"])
+        purchase_state = next(state for state, question in zip(agent.states, agent.calls)
+                              if "purchase_priority" in question)
+        self.assertEqual(purchase_state["growth"]["able_workers"], 2)
+        self.assertEqual(purchase_state["growth"]["bedbound"], 1)
 
     def test_strategy_catalog_covers_core_and_every_official_expansion(self):
         expansions = {row.get("expansion") or "core" for row in colony_strategy.DIRECTIONS.values()}
@@ -2353,6 +2528,31 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(body["target_thing_id_b"], 99)
         self.assertEqual(record["plan"]["kind"], "rescue")
         self.assertTrue(record["result"]["applied"])
+        self.assertIn("not a completed treatment", agent.states[0]["triage"])
+
+    def test_post_combat_rescue_avoids_occupied_and_reserved_beds(self):
+        beds = [{"id": 99, "def": "Bed", "position": {"x": 10, "z": 10}},
+                {"id": 100, "def": "Bed", "position": {"x": 12, "z": 10}},
+                {"id": 101, "def": "Bed", "position": {"x": 14, "z": 10}}]
+        snapshot = {"combat": {"colonists": [
+            {"id": 1, "name": "Bedbound", "is_downed": True,
+             "current_job": "LayDown", "current_job_target_id": 99,
+             "position": {"x": 10, "z": 10}},
+            {"id": 2, "name": "Reserved patient", "is_downed": True,
+             "position": {"x": 30, "z": 30}},
+            {"id": 3, "name": "Bleeding patient", "is_downed": True,
+             "bleeding_rate": 4.5, "position": {"x": 35, "z": 30}},
+            {"id": 4, "name": "Rescuer", "current_job": "Rescue",
+             "current_job_target_id": 2, "current_job_target_id_b": 100,
+             "moving": 1, "manipulation": 1},
+            {"id": 5, "name": "Free helper", "moving": 1, "manipulation": 1,
+             "position": {"x": 32, "z": 30}},
+        ]}}
+        options = director.post_combat_care_options(snapshot, beds)
+        self.assertNotIn("rescue_1_5", options)
+        self.assertNotIn("rescue_2_5", options)
+        self.assertEqual(options["rescue_3_5"]["bed_id"], 101)
+        self.assertIn("Critical bleeding", options["rescue_3_5"]["summary"])
 
     def test_infection_risk_is_visible_even_with_full_health_and_no_bleeding(self):
         snapshot = {"combat": {"hostiles": [], "colonists": [
@@ -2509,6 +2709,27 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(client.posts, [("/api/v1/events/letter/choose", {
             "letter_id": 17, "option_label": "Accept"})])
         self.assertEqual(record["decision"]["choice"], "option_0")
+
+    def test_paralyzed_joiner_letter_exposes_labor_cost_without_forcing_answer(self):
+        client = mock.Mock()
+        client.get.return_value = {"letters": [{
+            "id": 18, "arrival_tick": 1000, "label": "Transport pod crash",
+            "text": "The joiner has paralytic abasia and will be unable to walk for many days.",
+            "enabled_options": ["Accept", "Reject"],
+        }]}
+        client.post.return_value = {"success": True}
+        snapshot = {"map": {"id": 1, "resources": {"food": 35}},
+                    "game": {"tick": 1200},
+                    "colonists": [{"id": 1, "downed": False}, {"id": 2, "downed": True}]}
+        agent = self.FakeAgent(["option_1"])
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_letter_cycle(client, agent, snapshot, {},
+                                               pathlib.Path(folder) / "test.jsonl")
+        self.assertEqual(record["decision"]["choice"], "option_1")
+        self.assertEqual(agent.states[0]["able_workers"], 1)
+        self.assertIn("cannot work", agent.states[0]["incoming_labor"])
+        self.assertEqual(set(agent.calls[0]["letter_response"]["criteria"]),
+                         {"option_0", "option_1", "defer"})
 
     def test_notification_letter_does_not_interrupt_colony_work(self):
         class Client:

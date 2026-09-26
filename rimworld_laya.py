@@ -950,9 +950,11 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
             isolated = not pawn.get("weapon_def") and has_shooters and support_gap > 12
             melee_options = {
                 ("guard_shooters" if has_shooters else "melee_hold_line"):
-                    (f"Regroup with armed allies {support_gap:.0f} cells away; if isolated and threatened, retreat first. "
-                     "Intercept only when near the shooters." if isolated else
-                     "Stay with nearby shooters and intercept enemies that close in; this risks close combat."),
+                    (f"Regroup toward the armed allies {support_gap:.0f} cells away without drawing pursuers "
+                     "out of firing range. Unarmed guards stay behind the shooters; armed guards can intercept."
+                     if isolated else
+                     "Stay beside the shooters; unarmed guards shelter behind them rather than charging. "
+                     "Armed guards may intercept close enemies."),
             }
             if has_shooters:
                 melee_options["screen_melee"] = (
