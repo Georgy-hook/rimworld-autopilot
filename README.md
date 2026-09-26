@@ -124,6 +124,8 @@ To build the Windows app, ZIP, and installer, install Inno Setup 6.7+ and run:
 .\Build-GUI.ps1
 ```
 
+The installer puts only the app, colony controller, required mod files, and license notices in Program Files. The ZIP keeps the documentation and mod source for people who want to inspect or build the project.
+
 The build also creates `dist/RimWorld-Autopilot-Installer.exe`, an identical copy of the full versioned installer. Attach that fixed-name file to every stable release so the [permanent download link](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest/download/RimWorld-Autopilot-Installer.exe) keeps working. See the [release checklist](docs/RELEASING.md).
 
 The installer uses the compiled RIMAPI assembly in `vendor/RIMAPI/1.6/Assemblies`. For a manual install or preview run, see [Install.ps1](Install.ps1), [Start-Preview.ps1](Start-Preview.ps1), and [Start-Autonomous.ps1](Start-Autonomous.ps1). Changes by version are in [release notes](RELEASE_NOTES.md).

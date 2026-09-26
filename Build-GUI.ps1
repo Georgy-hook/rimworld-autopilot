@@ -77,6 +77,23 @@ try {
     $archive = Join-Path $distribution "rimworld-autopilot-$version.zip"
     Compress-Archive -Path (Join-Path $releaseDirectory "*") -DestinationPath $archive -CompressionLevel Optimal -Force
 
+    # The source ZIP stays complete; Program Files gets only the playable runtime.
+    $installDirectory = Join-Path $distribution "$releaseName-install"
+    $resolvedInstall = [IO.Path]::GetFullPath($installDirectory)
+    if (-not $resolvedInstall.StartsWith($resolvedDistribution.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Install payload directory escaped the dist folder."
+    }
+    if (Test-Path -LiteralPath $installDirectory) {
+        Remove-Item -LiteralPath $installDirectory -Recurse -Force
+    }
+    & $builder (Join-Path $projectRoot "install_payload.py") $projectRoot $installDirectory
+    if ($LASTEXITCODE -ne 0) { throw "Install payload build failed." }
+    foreach ($unwanted in @("README.md", "RELEASE_NOTES.md", "PLAYTEST_REPORT.md", "docs", "tools", "assets", "laya_gui", "Source")) {
+        if (Test-Path -LiteralPath (Join-Path $installDirectory $unwanted)) {
+            throw "Source-only item entered the install payload: $unwanted"
+        }
+    }
+
     $innoCompiler = $innoCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $innoCompiler) {
         throw "Inno Setup 6.7+ is required. Install JRSoftware.InnoSetup with winget."

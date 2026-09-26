@@ -63,9 +63,42 @@ Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:Add
 [InstallDelete]
 Type: files; Name: "{app}\RimWorld-Autopilot-Setup.exe"
 Type: files; Name: "{app}\Laya-Setup.exe"
+; Remove files installed by older broad payloads without touching configuration,
+; model environments, logs, or user preferences.
+Type: filesandordirs; Name: "{app}\assets"
+Type: filesandordirs; Name: "{app}\docs"
+Type: filesandordirs; Name: "{app}\laya_gui"
+Type: filesandordirs; Name: "{app}\tools"
+Type: filesandordirs; Name: "{app}\vendor\RIMAPI\Source"
+Type: filesandordirs; Name: "{app}\vendor\RIMAPI\1.5"
+Type: files; Name: "{app}\vendor\RIMAPI\UPSTREAM-README.md"
+Type: files; Name: "{app}\vendor\RIMAPI\1.6\Assemblies\RIMAPI.pdb"
+Type: files; Name: "{app}\ARCHITECTURE.md"
+Type: files; Name: "{app}\Build-GUI.ps1"
+Type: files; Name: "{app}\CONTRIBUTING.md"
+Type: files; Name: "{app}\CUSTOM-RIMAPI.md"
+Type: files; Name: "{app}\DIRECTION_AUDIT.md"
+Type: files; Name: "{app}\GUI.md"
+Type: files; Name: "{app}\Install.ps1"
+Type: files; Name: "{app}\PLAYTEST_REPORT.md"
+Type: files; Name: "{app}\README.md"
+Type: files; Name: "{app}\RELEASE_NOTES.md"
+Type: files; Name: "{app}\RIMAPI_UPSTREAM_COMMIT"
+Type: files; Name: "{app}\SECURITY.md"
+Type: files; Name: "{app}\Start-Autonomous.ps1"
+Type: files; Name: "{app}\Start-Preview.ps1"
+Type: files; Name: "{app}\VERSION"
+Type: files; Name: "{app}\autopilot_control.py"
+Type: files; Name: "{app}\autopilot_setup.py"
+Type: files; Name: "{app}\design-qa.md"
+Type: files; Name: "{app}\install_payload.py"
+Type: files; Name: "{app}\laya_control.py"
+Type: files; Name: "{app}\laya_setup.py"
+Type: files; Name: "{app}\requirements-build.txt"
+Type: files; Name: "{app}\requirements-promo.txt"
 
 [Files]
-Source: "..\dist\RimWorld-Autopilot-{#AppVersion}\*"; DestDir: "{app}"; Excludes: "RimWorld-Autopilot-Setup.exe,rimworld-autopilot.json,autopilot-preferences.json,laya-control.json,laya-preferences.json"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\RimWorld-Autopilot-{#AppVersion}-install\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist\RimWorld-Autopilot-Setup.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 
 [Icons]
