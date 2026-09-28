@@ -43,5 +43,5 @@ $config = [ordered]@{
 }
 $config | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $projectDir "rimworld-autopilot.json") -Encoding UTF8
 
-Write-Host "Installed RimWorld Autopilot 0.0.5."
+Write-Host "Installed RimWorld Autopilot 0.0.6."
 Write-Host "Enable Harmony and RIMAPI - RimWorld Autopilot in RimWorld, restart the game, load a copied save, then run Start-Autonomous.ps1."

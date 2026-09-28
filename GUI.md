@@ -1,6 +1,6 @@
 # GUI architecture
 
-The 0.0.5 RimWorld Autopilot control center is intentionally separate from the colony controller. `autopilot_control.py` is the public launcher (`laya_control.py` remains compatible); the implementation lives in `laya_gui/`:
+The 0.0.6 RimWorld Autopilot control center is intentionally separate from the colony controller. `autopilot_control.py` is the public launcher (`laya_control.py` remains compatible); the implementation lives in `laya_gui/`:
 
 - `app.py` composes the six user pages and animated navigation shell;
 - `theme.py` owns semantic dark-theme tokens, typography, shadows, focus-visible buttons, rounded scrollbars, scrollable pages and reusable cards;
@@ -40,7 +40,7 @@ All calls into the Laya decision model pass through one guard. Questions with ex
 
 ## Installer and uninstaller
 
-`installer/RimWorld-Autopilot.iss` produces the public `RimWorld-Autopilot-0.0.5-Setup.exe`. It uses Inno Setup's modern dynamic Windows 11 style, follows the system light/dark preference, displays project-local portrait artwork, requests administrator rights for the Program Files destination and registers the normal Windows uninstaller. It:
+`installer/RimWorld-Autopilot.iss` produces the `RimWorld-Autopilot-0.0.6-Setup.exe` candidate. It uses Inno Setup's modern dynamic Windows 11 style, follows the system light/dark preference, displays project-local portrait artwork, requests administrator rights for the Program Files destination and registers the normal Windows uninstaller. It:
 
 1. chooses the Program Files destination and optional desktop shortcut;
 2. copies the application, bilingual UI and complete local artwork set;
@@ -52,4 +52,4 @@ All calls into the Laya decision model pass through one guard. Questions with ex
 
 The installer does not request an API key, start RimWorld, alter saves or enable mods without the player. `unins000.exe` is registered in Windows Installed apps and removes files installed by Setup and its shortcuts. Writable LocalAppData and the game mod are preserved deliberately to avoid destructive surprise. The assistant also generates `.venv` and `rimworld-autopilot.json` in the selected application directory after Setup has registered its file list; the uninstaller does not track these, so they may remain and should be reviewed before manual removal.
 
-`Build-GUI.ps1` reproduces the two internal unsigned Windows binaries, assembles `dist/rimworld-autopilot-0.0.5.zip`, converts the ImageGen emblem into the multi-resolution Windows icon and compiles the standard installer. Build-only dependencies are isolated in `.build-venv` and declared in `requirements-build.txt`; Inno Setup 6.7+ is the only external build prerequisite.
+`Build-GUI.ps1` reproduces the two internal unsigned Windows binaries, assembles `dist/rimworld-autopilot-0.0.6.zip`, converts the ImageGen emblem into the multi-resolution Windows icon and compiles the standard installer. Build-only dependencies are isolated in `.build-venv` and declared in `requirements-build.txt`; Inno Setup 6.7+ is the only external build prerequisite.

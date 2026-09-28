@@ -219,7 +219,7 @@ namespace RIMAPI.Services
                 }
 
                 WorkGiverDef giverDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail(
-                    patient.RaceProps?.Animal == true ? "DoctorFeedAnimals" : "FeedPatient"
+                    patient.RaceProps?.Animal == true ? "DoctorFeedAnimals" : "DoctorFeedHumanlikes"
                 );
                 WorkGiver_Scanner scanner = giverDef?.Worker as WorkGiver_Scanner;
                 Job job = scanner?.JobOnThing(feeder, patient, true);

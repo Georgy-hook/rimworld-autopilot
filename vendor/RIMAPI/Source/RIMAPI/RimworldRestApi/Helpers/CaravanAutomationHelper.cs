@@ -23,6 +23,18 @@ namespace RIMAPI.Helpers
 
         private static readonly List<PendingRoute> PendingRoutes = new List<PendingRoute>();
 
+        private static bool IsReadyDefender(Pawn pawn)
+        {
+            if (pawn == null || pawn.Downed || pawn.InMentalState
+                || pawn.health.summaryHealth.SummaryHealthPercent < 0.80f
+                || pawn.equipment?.Primary == null)
+                return false;
+            var shooting = pawn.skills?.GetSkill(SkillDefOf.Shooting);
+            var melee = pawn.skills?.GetSkill(SkillDefOf.Melee);
+            return (shooting != null && !shooting.TotallyDisabled)
+                || (melee != null && !melee.TotallyDisabled);
+        }
+
         public static void ProcessPendingRoutes()
         {
             if (Current.Game == null || Find.WorldObjects == null) return;
@@ -118,9 +130,10 @@ namespace RIMAPI.Helpers
                 var healthy = map.mapPawns.FreeColonistsSpawned
                     .Where(p => !p.Downed && !p.InMentalState && p.health.summaryHealth.SummaryHealthPercent >= 0.80f)
                     .ToList();
-                int available = healthy.Count - Math.Max(2, request.MinimumHomeDefenders);
+                var fighters = healthy.Where(IsReadyDefender).ToList();
+                int available = fighters.Count - Math.Max(2, request.MinimumHomeDefenders);
                 if (available <= 0)
-                    return ApiResult<StartTradeCaravanResponseDto>.Fail("Not enough healthy colonists to keep the requested defenders at home.");
+                    return ApiResult<StartTradeCaravanResponseDto>.Fail("Not enough healthy, armed fighters to keep the requested defenders at home.");
 
                 var destination = Find.WorldObjects.Settlements.FirstOrDefault(s => s.ID == request.DestinationSettlementId);
                 if (destination == null)
@@ -130,7 +143,7 @@ namespace RIMAPI.Helpers
                     || !destination.Visitable || !destination.CanTradeNow)
                     return ApiResult<StartTradeCaravanResponseDto>.Fail("The selected settlement is not currently a safe trading destination.");
 
-                var pawns = healthy
+                var pawns = fighters
                     .OrderByDescending(p => p.skills.GetSkill(SkillDefOf.Social).Level * 3 + p.skills.GetSkill(SkillDefOf.Shooting).Level)
                     .Take(Math.Min(2, available))
                     .ToList();
@@ -290,7 +303,7 @@ namespace RIMAPI.Helpers
                 if (!destination.Faction.HostileTo(Faction.OfPlayer) && !request.AllowStartingWar)
                     return ApiResult<StartTradeCaravanResponseDto>.Fail("This target is not hostile and the plan did not explicitly accept starting a war.");
                 var healthy = map.mapPawns.FreeColonistsSpawned
-                    .Where(p => !p.Downed && !p.InMentalState && p.health.summaryHealth.SummaryHealthPercent >= 0.85f)
+                    .Where(p => IsReadyDefender(p) && p.health.summaryHealth.SummaryHealthPercent >= 0.85f)
                     .OrderByDescending(p => p.skills.GetSkill(SkillDefOf.Shooting).Level + p.skills.GetSkill(SkillDefOf.Melee).Level)
                     .ToList();
                 int sendCount = Math.Min(5, healthy.Count - Math.Max(2, request.MinimumHomeDefenders));
@@ -357,7 +370,7 @@ namespace RIMAPI.Helpers
                     return ApiResult<StartTradeCaravanResponseDto>.Fail("The quest does not expose a reachable rescue site.");
 
                 var healthy = map.mapPawns.FreeColonistsSpawned
-                    .Where(p => !p.Downed && !p.InMentalState && p.health.summaryHealth.SummaryHealthPercent >= 0.82f)
+                    .Where(p => IsReadyDefender(p) && p.health.summaryHealth.SummaryHealthPercent >= 0.82f)
                     .OrderByDescending(p => (p.skills?.GetSkill(SkillDefOf.Shooting)?.Level ?? 0)
                         + (p.skills?.GetSkill(SkillDefOf.Melee)?.Level ?? 0))
                     .ToList();

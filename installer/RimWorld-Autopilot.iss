@@ -1,5 +1,5 @@
 #define AppName "RimWorld Autopilot"
-#define AppVersion "0.0.5"
+#define AppVersion "0.0.6"
 #define AppExeName "RimWorld-Autopilot.exe"
 
 [Setup]

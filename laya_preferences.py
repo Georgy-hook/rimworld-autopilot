@@ -142,6 +142,10 @@ def load_preferences_from_value(data: dict[str, Any]) -> dict[str, Any]:
 
 def priority_key_for_action(action: str) -> str:
     name = str(action).lower()
+    if name in {"build_passive_cooler", "build_room_campfire", "build_room_heater",
+                "connect_room_heater_power",
+                "prioritize_thermal_project"}:
+        return "survival"
     if any(token in name for token in ("food", "cook", "growing", "harvest", "hunt", "freezer", "sowing")):
         return "food"
     if any(token in name for token in ("animal", "taming", "breed")):

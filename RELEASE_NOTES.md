@@ -1,3 +1,13 @@
+# 0.0.6 — release candidate under verification
+
+This candidate is not published. The remaining live gates are listed in `docs/RELEASE_READINESS_0.0.6.md`.
+
+- Laya now identifies a pile of animal carcasses without a processing station, can choose a free Butcher spot beside the actual pile, and adds an active forever butchering bill in the same action. A controlled 3× replay showed Laya choosing it and two carcasses turning into 78 raw meat.
+- A fresh-colony replay exposed a colonist sealed behind completed walls while food was nearby. Laya can choose to open the blocked path; the affected colonist then reached food and recovered.
+- The director resolves stonecutting recipes from the completed workbench instead of assuming a nonexistent recipe ID.
+- A vanished combat job target no longer puts the entire decision cycle into error backoff. Token-budget probes are bounded before calling the tokenizer.
+- Earlier 0.0.6 work also expands live food and fuel planning, construction-capacity checks, medical context and the available colony choices. The release-readiness document separates tested outcomes from open regressions.
+
 # 0.0.5 — Better shelter, live trade and responsive defense
 
 - Added indoor-bed reassignment: when completed roofed beds are available, Laya can move colonists out of outdoor beds and sleeping spots. New real beds are planned inside finished rooms rather than scattered outside.
