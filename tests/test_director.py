@@ -694,6 +694,7 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("rescue_arrival", colony_events.response_options(pending[0], {}))
         quest["ever_accepted"] = True
         self.assertNotIn("accept_quest", colony_events.response_options(quest | {"family": "quest"}, {}))
+        self.assertEqual(colony_events.pending_events({"active_quests": [quest]}, set()), [])
 
         rescue = {"source": "quest", "id": 2, "quest_def": "OpportunitySite_PrisonerWillingToJoin",
                   "name": "Rescue a recruit", "ever_accepted": True,
@@ -702,6 +703,16 @@ class DirectorTests(unittest.TestCase):
         rescue["family"] = "kidnap_rescue"
         self.assertIn("prepare_rescue_mission", colony_events.response_options(
             rescue, {"active_quests": [rescue]}))
+        self.assertEqual(len(colony_events.pending_events({"active_quests": [rescue]}, set())), 1)
+
+    def test_accepted_work_sites_do_not_starve_colony_decisions(self):
+        context = {"active_quests": [
+            {"id": number, "quest_def": "OpportunitySite_WorkSite",
+             "name": f"Work site {number}", "ever_accepted": True,
+             "state": "Ongoing", "look_targets": [{"world_object_id": 100 + number}]}
+            for number in range(10)
+        ]}
+        self.assertEqual(colony_events.pending_events(context, set()), [])
 
     def test_unsupported_timed_monument_quest_is_not_accepted(self):
         event = {"source": "quest", "quest_def": "BuildMonument_Basic",
@@ -734,7 +745,7 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(colony_events.matching_rescue_quests(lee, context), [])
         self.assertIsNone(director._event_quest(context, lee))
         pending = colony_events.pending_events(context, set())
-        self.assertTrue(any(row["source"] == "quest" for row in pending))
+        self.assertFalse(any(row["source"] == "quest" for row in pending))
         self.assertFalse(any(row["source"] == "kidnapped" for row in pending))
         context["active_quests"].append({"id": 2, "quest_def": "PrisonerRescue",
                                           "name": "Rescue Lee", "description": "Lee is held captive.",
@@ -1206,7 +1217,7 @@ class DirectorTests(unittest.TestCase):
                 "item_counts": {}, "forbidden": [], "corpses": [], "plants": [{
                     "thing_id": 7, "def_name": "Plant_Berry", "label": "berry bush",
                     "harvestable_now": True, "harvest_yield": 10, "harvested_thing_def": "RawBerries",
-                    "position": {"x": 30, "z": 20},
+                    "position": {"x": 80, "z": 10},
                 }],
             },
         }
@@ -1240,6 +1251,7 @@ class DirectorTests(unittest.TestCase):
         medical["development"]["work_tables"] = []
         medical["development"]["current_research"] = {"name": "Electricity"}
         medical["development"]["weather"] = {"growth_season_now": True}
+        medical["development"]["plants"][0]["position"] = {"x": 30, "z": 20}
         medical["colonists"][0].update(hunger=0.8, health=0.55, bleeding_rate=0.12, downed=False)
         doctor = {"id": 2, "name": "Doctor", "health": 1.0, "hunger": 0.8,
                   "position": {"x": 12, "z": 10}}

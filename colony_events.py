@@ -142,6 +142,13 @@ def pending_events(context: dict[str, Any], handled: set[str]) -> list[dict[str,
             if not isinstance(raw, dict):
                 continue
             row = {"source": source, **raw}
+            # Accepted ordinary quests are already in progress. Their world
+            # sites may remain listed for days, but accept/defer is no longer
+            # a meaningful decision and would starve colony work each time
+            # the handled-event window expires. Accepted rescue quests retain
+            # a separate mission-preparation workflow below.
+            if source == "quest" and row.get("ever_accepted") and classify_event(row) == "quest":
+                continue
             signature = event_signature(row)
             if signature in handled:
                 continue

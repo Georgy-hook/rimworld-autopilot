@@ -3155,7 +3155,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             one_time.append("harvest_food_crops_early")
     if food_emergency:
         anchor = map_state.get("anchor") or {"x": 125, "z": 125}
-        radius_squared = 60 ** 2
+        # At zero stored food, do not wait for a ripe field when edible wild
+        # plants and safe small game sit just beyond the normal search ring.
+        # Keep the expansion bounded so starving workers do not cross the map.
+        radius_squared = (90 if int(resources.get("food") or 0) == 0 else 60) ** 2
         wild_food_groups: dict[str, dict[str, Any]] = {}
         for plant in dev.get("plants", []):
             if str(plant.get("def_name") or "") in cultivated_food_defs:
