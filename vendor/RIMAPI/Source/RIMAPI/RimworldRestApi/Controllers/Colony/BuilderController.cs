@@ -41,6 +41,15 @@ namespace RIMAPI.Controllers
             await context.SendJsonResponse(result);
         }
 
+        [Post("/api/v1/builder/site-options")]
+        [EndpointMetadata("Find valid sites for one loaded building using RimWorld's own placement rules without changing the map")]
+        public async Task GetBuildingSiteOptions(HttpListenerContext context)
+        {
+            var body = await context.Request.ReadBodyAsync<BuildingSiteOptionsRequestDto>();
+            var result = _builderService.GetBuildingSiteOptions(body);
+            await context.SendJsonResponse(result);
+        }
+
         [Post("/api/v1/builder/check-zone")]
         public async Task CheckZone(HttpListenerContext context)
         {

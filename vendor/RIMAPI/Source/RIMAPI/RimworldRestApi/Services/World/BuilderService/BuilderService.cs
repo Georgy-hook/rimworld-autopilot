@@ -48,19 +48,20 @@ namespace RIMAPI.Services
             }
         }
 
-        public ApiResult PrioritizeConstruction(PrioritizeConstructionRequestDto request)
+        public ApiResult<PrioritizeConstructionResultDto> PrioritizeConstruction(PrioritizeConstructionRequestDto request)
         {
             try
             {
+                if (request == null) return ApiResult<PrioritizeConstructionResultDto>.Fail("Construction request is required.");
                 var map = MapHelper.GetMapByID(request.MapId);
-                if (map == null) return ApiResult.Fail($"Map {request.MapId} not found.");
+                if (map == null) return ApiResult<PrioritizeConstructionResultDto>.Fail($"Map {request.MapId} not found.");
                 var project = map.listerThings.AllThings.FirstOrDefault(t =>
                     t.thingIDNumber == request.ProjectThingId && (t is Blueprint || t is Frame));
-                if (project == null) return ApiResult.Fail("Construction project not found.");
+                if (project == null) return ConstructionNotApplied("Construction project no longer exists.");
                 var pawn = map.mapPawns.FreeColonists.FirstOrDefault(p => p.thingIDNumber == request.PawnId);
-                if (pawn == null || pawn.Dead || pawn.Downed) return ApiResult.Fail("Selected builder is unavailable.");
+                if (pawn == null || pawn.Dead || pawn.Downed) return ConstructionNotApplied("Selected builder is unavailable.");
                 if (pawn.WorkTypeIsDisabled(WorkTypeDefOf.Construction))
-                    return ApiResult.Fail("Selected pawn cannot do Construction.");
+                    return ConstructionNotApplied("Selected pawn cannot do Construction.");
 
                 Job job = null;
                 if (project is Frame)
@@ -78,14 +79,23 @@ namespace RIMAPI.Services
                     var deliver = DefDatabase<WorkGiverDef>.GetNamedSilentFail("ConstructDeliverResourcesToBlueprints")?.Worker as WorkGiver_Scanner;
                     job = deliver?.JobOnThing(pawn, project, true);
                 }
-                if (job == null) return ApiResult.Fail("The project is blocked, lacks reachable material, or exceeds the builder's skill.");
-                if (!pawn.jobs.TryTakeOrderedJob(job)) return ApiResult.Fail("Selected builder could not accept the construction job.");
-                return ApiResult.Ok();
+                if (job == null) return ConstructionNotApplied("The project is blocked, lacks reachable material, or exceeds the builder's skill.");
+                if (!pawn.jobs.TryTakeOrderedJob(job)) return ConstructionNotApplied("Selected builder could not accept the construction job.");
+                return ApiResult<PrioritizeConstructionResultDto>.Ok(new PrioritizeConstructionResultDto { Applied = true });
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                return ApiResult<PrioritizeConstructionResultDto>.Fail(ex.Message);
             }
+        }
+
+        private static ApiResult<PrioritizeConstructionResultDto> ConstructionNotApplied(string reason)
+        {
+            return ApiResult<PrioritizeConstructionResultDto>.Ok(new PrioritizeConstructionResultDto
+            {
+                Applied = false,
+                Reason = reason,
+            });
         }
 
         public ApiResult<BlueprintDto> CopyArea(CopyAreaRequestDto request)
@@ -242,11 +252,109 @@ namespace RIMAPI.Services
             }
         }
 
+        public ApiResult<BuildingSiteOptionsDto> GetBuildingSiteOptions(BuildingSiteOptionsRequestDto request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.DefName))
+                return ApiResult<BuildingSiteOptionsDto>.Fail("A building def_name is required.");
+            var map = MapHelper.GetMapByID(request.MapId);
+            if (map == null)
+                return ApiResult<BuildingSiteOptionsDto>.Fail($"Map {request.MapId} not found.");
+            var def = DefDatabase<ThingDef>.GetNamedSilentFail(request.DefName);
+            if (def != null && (def.category != ThingCategory.Building || def.designationCategory == null)) def = null;
+            var terrain = def == null ? DefDatabase<TerrainDef>.GetNamedSilentFail(request.DefName) : null;
+            if (def == null && (terrain == null || terrain.designationCategory == null))
+                return ApiResult<BuildingSiteOptionsDto>.Fail($"{request.DefName} is not a loaded player construction def.");
+            var result = new BuildingSiteOptionsDto { DefName = request.DefName, StuffDefName = request.StuffDefName };
+            bool researchLocked = def != null
+                ? def.researchPrerequisites != null && def.researchPrerequisites.Any(project => project != null && !project.IsFinished)
+                : terrain.researchPrerequisites != null && terrain.researchPrerequisites.Any(project => project != null && !project.IsFinished);
+            if (researchLocked)
+            {
+                result.Reason = "Required research is not finished.";
+                return ApiResult<BuildingSiteOptionsDto>.Ok(result);
+            }
+            ThingDef stuff = null;
+            if (def != null && def.costStuffCount > 0)
+            {
+                stuff = DefDatabase<ThingDef>.GetNamedSilentFail(request.StuffDefName);
+                if (stuff?.stuffProps?.categories == null || def.stuffCategories == null
+                    || !stuff.stuffProps.categories.Any(def.stuffCategories.Contains))
+                {
+                    result.Reason = "A compatible construction material is required.";
+                    return ApiResult<BuildingSiteOptionsDto>.Ok(result);
+                }
+            }
+            int nearX = Mathf.Clamp(request.Near?.X ?? map.Size.x / 2, 0, map.Size.x - 1);
+            int nearZ = Mathf.Clamp(request.Near?.Z ?? map.Size.z / 2, 0, map.Size.z - 1);
+            int radius = Mathf.Clamp(request.Radius, 1, 250);
+            int limit = Mathf.Clamp(request.Limit, 1, 12);
+            bool instantSpot = def != null && IsInstantBuildingSpot(def);
+            var rejectionCounts = new Dictionary<string, int>();
+            var cells = new List<IntVec3>();
+            for (int z = Mathf.Max(0, nearZ - radius); z <= Mathf.Min(map.Size.z - 1, nearZ + radius); z++)
+                for (int x = Mathf.Max(0, nearX - radius); x <= Mathf.Min(map.Size.x - 1, nearX + radius); x++)
+                    cells.Add(new IntVec3(x, 0, z));
+            foreach (var cell in cells.OrderBy(pos => (pos.x - nearX) * (pos.x - nearX) + (pos.z - nearZ) * (pos.z - nearZ)))
+            {
+                for (int rotation = 0; rotation < (terrain == null ? 4 : 1); rotation++)
+                {
+                    var rot = new Rot4(rotation);
+                    try
+                    {
+                        bool accepted;
+                        if (instantSpot)
+                        {
+                            var rect = GenAdj.OccupiedRect(cell, rot, def.Size);
+                            accepted = rect.All(pos => pos.InBounds(map) && !pos.GetThingList(map).Any(thing =>
+                                thing is Building || thing is Blueprint || thing is Frame));
+                        }
+                        else
+                        {
+                            var report = terrain == null
+                                ? GenConstruct.CanPlaceBlueprintAt(def, cell, rot, map, false, null)
+                                : GenConstruct.CanPlaceBlueprintAt(terrain, cell, rot, map, false, null);
+                            accepted = report.Accepted;
+                            if (!accepted && !string.IsNullOrEmpty(report.Reason))
+                            {
+                                rejectionCounts.TryGetValue(report.Reason, out int previous);
+                                rejectionCounts[report.Reason] = previous + 1;
+                            }
+                        }
+                        if (!accepted) continue;
+                        result.Sites.Add(new BuildingSiteOptionDto
+                        {
+                            Position = new PositionDto { X = cell.x, Y = 0, Z = cell.z },
+                            Rotation = rotation,
+                            Distance = Math.Abs(cell.x - nearX) + Math.Abs(cell.z - nearZ),
+                        });
+                        break;
+                    }
+                    catch (Exception error)
+                    {
+                        rejectionCounts.TryGetValue(error.Message, out int previous);
+                        rejectionCounts[error.Message] = previous + 1;
+                    }
+                }
+                if (result.Sites.Count >= limit) break;
+            }
+            if (result.Sites.Count == 0)
+                result.Reason = rejectionCounts.OrderByDescending(row => row.Value)
+                    .Select(row => row.Key).FirstOrDefault() ?? "No valid site was found in the search radius.";
+            return ApiResult<BuildingSiteOptionsDto>.Ok(result);
+        }
+
+        private static bool IsInstantBuildingSpot(ThingDef def)
+        {
+            return def.defName == "SleepingSpot" || def.defName == "AnimalSleepingSpot"
+                || def.defName == "ButcherSpot";
+        }
+
         public ApiResult PlaceBlueprints(PasteAreaRequestDto request)
         {
             try
             {
-                if (request.Blueprint == null) return ApiResult.Fail("Blueprint is null");
+                if (request?.Blueprint == null || request.Position == null)
+                    return ApiResult.Fail("Blueprint and position are required.");
 
                 var map = MapHelper.GetMapByID(request.MapId);
                 if (map == null) return ApiResult.Fail($"Map {request.MapId} not found.");
@@ -254,51 +362,65 @@ namespace RIMAPI.Services
                 int anchorX = request.Position.X;
                 int anchorZ = request.Position.Z;
                 int count = 0;
+                var warnings = new List<string>();
+                int requested = (request.Blueprint.Floors?.Count ?? 0) + (request.Blueprint.Buildings?.Count ?? 0);
+                if (requested == 0) return ApiResult.Fail("Blueprint contains no buildings or floors.");
 
                 // 1. Place Floor Blueprints
-                foreach (var floorDto in request.Blueprint.Floors)
+                foreach (var floorDto in request.Blueprint.Floors ?? new List<SavedTerrainDto>())
                 {
-                    IntVec3 pos = new IntVec3(anchorX + floorDto.RelX, 0, anchorZ + floorDto.RelZ);
-                    if (pos.InBounds(map))
+                    try
                     {
+                        IntVec3 pos = new IntVec3(anchorX + floorDto.RelX, 0, anchorZ + floorDto.RelZ);
+                        if (!pos.InBounds(map)) { warnings.Add($"{floorDto.DefName}: outside map."); continue; }
                         TerrainDef terrainDef = DefDatabase<TerrainDef>.GetNamedSilentFail(floorDto.DefName);
-                        if (terrainDef != null)
-                        {
-                            // PlaceBlueprintForBuild works for TerrainDefs too
-                            GenConstruct.PlaceBlueprintForBuild(terrainDef, pos, map, Rot4.North, Faction.OfPlayer, null);
-                            count++;
-                        }
+                        if (terrainDef == null) { warnings.Add($"{floorDto.DefName}: unknown floor."); continue; }
+                        var report = GenConstruct.CanPlaceBlueprintAt(terrainDef, pos, Rot4.North, map, false, null);
+                        if (!report.Accepted) { warnings.Add($"{floorDto.DefName}: {report.Reason}"); continue; }
+                        GenConstruct.PlaceBlueprintForBuild(terrainDef, pos, map, Rot4.North, Faction.OfPlayer, null);
+                        if (pos.GetThingList(map).Any(t => t is Blueprint && t.def.entityDefToBuild == terrainDef)) count++;
+                        else warnings.Add($"{floorDto.DefName}: no floor blueprint was created.");
                     }
+                    catch (Exception error) { warnings.Add($"{floorDto?.DefName}: {error.Message}"); }
                 }
 
                 // 2. Place Building Blueprints
-                foreach (var buildDto in request.Blueprint.Buildings)
+                foreach (var buildDto in request.Blueprint.Buildings ?? new List<SavedBuildingDto>())
                 {
+                    try
+                    {
                     IntVec3 pos = new IntVec3(anchorX + buildDto.RelX, 0, anchorZ + buildDto.RelZ);
 
-                    if (!pos.InBounds(map)) continue;
+                    if (!pos.InBounds(map)) { warnings.Add($"{buildDto.DefName}: outside map."); continue; }
 
                     // Resolve Definitions
                     ThingDef thingDef = DefDatabase<ThingDef>.GetNamedSilentFail(buildDto.DefName);
-                    if (thingDef == null) continue;
+                    if (thingDef == null || thingDef.category != ThingCategory.Building || thingDef.designationCategory == null)
+                    { warnings.Add($"{buildDto.DefName}: unknown or non-player building."); continue; }
+                    if (thingDef.researchPrerequisites != null
+                        && thingDef.researchPrerequisites.Any(project => project != null && !project.IsFinished))
+                    { warnings.Add($"{buildDto.DefName}: research is not finished."); continue; }
 
                     ThingDef stuffDef = null;
                     if (!string.IsNullOrEmpty(buildDto.StuffDefName))
                     {
                         stuffDef = DefDatabase<ThingDef>.GetNamedSilentFail(buildDto.StuffDefName);
                     }
+                    if (thingDef.costStuffCount > 0 && (stuffDef?.stuffProps?.categories == null
+                        || thingDef.stuffCategories == null
+                        || !stuffDef.stuffProps.categories.Any(thingDef.stuffCategories.Contains)))
+                    { warnings.Add($"{buildDto.DefName}: compatible stuff is required."); continue; }
 
                     Rot4 rotation = new Rot4(buildDto.Rotation);
                     CellRect occupied = GenAdj.OccupiedRect(pos, rotation, thingDef.Size);
-                    bool isInstantSpot = thingDef.defName == "SleepingSpot"
-                        || thingDef.defName == "AnimalSleepingSpot"
-                        || thingDef.defName == "ButcherSpot";
+                    if (occupied.Any(cell => !cell.InBounds(map)))
+                    { warnings.Add($"{buildDto.DefName}: footprint extends outside map."); continue; }
+                    bool isInstantSpot = IsInstantBuildingSpot(thingDef);
                     Thing existingThing = occupied
-                        .Where(cell => cell.InBounds(map))
                         .SelectMany(cell => cell.GetThingList(map))
                         .FirstOrDefault(t =>
-                        t.def == thingDef
-                        || ((t is Blueprint || t is Frame) && t.def.entityDefToBuild == thingDef));
+                        t.Position == pos && (t.def == thingDef
+                        || ((t is Blueprint || t is Frame) && t.def.entityDefToBuild == thingDef)));
                     if (existingThing != null)
                     {
                         if (isInstantSpot && (existingThing is Blueprint || existingThing is Frame))
@@ -310,6 +432,7 @@ namespace RIMAPI.Services
                         {
                             if (isInstantSpot && existingThing.Faction != Faction.OfPlayer)
                                 existingThing.SetFaction(Faction.OfPlayer);
+                            count++;
                             continue;
                         }
                     }
@@ -321,7 +444,7 @@ namespace RIMAPI.Services
                         t is Building || ((t is Blueprint || t is Frame)
                             && t.def.entityDefToBuild is ThingDef)));
                     if (conflictsWithPlan)
-                        continue;
+                    { warnings.Add($"{buildDto.DefName}: footprint overlaps another building or plan."); continue; }
 
                     // These are architect "spots", not construction projects in vanilla.
                     // Spawning only these zero-cost markers avoids invalid frames and
@@ -336,7 +459,9 @@ namespace RIMAPI.Services
                     }
 
                     // Create Blueprint
-                    // Note: GenConstruct handles checking if it can be placed, checking affordance, etc.
+                    var placement = GenConstruct.CanPlaceBlueprintAt(thingDef, pos, rotation, map, false, null);
+                    if (!placement.Accepted)
+                    { warnings.Add($"{buildDto.DefName}: {placement.Reason}"); continue; }
                     Precept_ThingStyle styleSource = null;
                     if (ModsConfig.IdeologyActive && Faction.OfPlayer?.ideos?.PrimaryIdeo != null)
                     {
@@ -353,10 +478,14 @@ namespace RIMAPI.Services
                         stuffDef,
                         styleSource
                     );
-                    count++;
+                    if (pos.GetThingList(map).Any(t => t is Blueprint && t.def.entityDefToBuild == thingDef)) count++;
+                    else warnings.Add($"{buildDto.DefName}: no building blueprint was created.");
+                    }
+                    catch (Exception error) { warnings.Add($"{buildDto?.DefName}: {error.Message}"); }
                 }
 
-                return ApiResult.Ok();
+                if (count == 0) return ApiResult.Fail(string.Join("; ", warnings.Take(8)));
+                return warnings.Count == 0 ? ApiResult.Ok() : ApiResult.Partial(warnings);
             }
             catch (Exception ex)
             {

@@ -65,6 +65,37 @@ namespace RIMAPI.Models
         public int PawnId { get; set; }
     }
 
+    public class PrioritizeConstructionResultDto
+    {
+        public bool Applied { get; set; }
+        public string Reason { get; set; }
+    }
+
+    public class BuildingSiteOptionsRequestDto
+    {
+        public int MapId { get; set; }
+        public string DefName { get; set; }
+        public string StuffDefName { get; set; }
+        public PositionDto Near { get; set; }
+        public int Radius { get; set; } = 40;
+        public int Limit { get; set; } = 8;
+    }
+
+    public class BuildingSiteOptionDto
+    {
+        public PositionDto Position { get; set; }
+        public int Rotation { get; set; }
+        public int Distance { get; set; }
+    }
+
+    public class BuildingSiteOptionsDto
+    {
+        public string DefName { get; set; }
+        public string StuffDefName { get; set; }
+        public string Reason { get; set; }
+        public List<BuildingSiteOptionDto> Sites { get; set; } = new List<BuildingSiteOptionDto>();
+    }
+
     // --- The Blueprint Data Structure ---
     public class BlueprintDto
     {
