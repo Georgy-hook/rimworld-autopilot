@@ -375,6 +375,26 @@ def position(x: int, z: int) -> dict[str, int]:
     return {"x": int(x), "y": 0, "z": int(z)}
 
 
+def campfire_safe_placement(cells: list[dict[str, Any]], structures: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Keep an indoor flame at least three cells from known combustible structures."""
+    combustible = []
+    for structure in structures:
+        label = str(structure.get("label") or "").lower()
+        stuff = str(structure.get("stuff_def_name") or structure.get("stuff") or "").lower()
+        if not any(material in label or material in stuff
+                   for material in ("wooden", "woodlog", "cloth", "leather", "straw", "hay")):
+            continue
+        point = structure.get("position") or {}
+        if point.get("x") is not None and point.get("z") is not None:
+            combustible.append((int(point["x"]), int(point["z"])))
+    for cell in cells:
+        x, z = int(cell.get("x") or 0), int(cell.get("z") or 0)
+        if all(max(abs(x - wood_x), abs(z - wood_z)) > 2
+               for wood_x, wood_z in combustible):
+            return cell
+    return None
+
+
 def building(def_name: str, x: int, z: int, *, stuff: str | None = None, rotation: int = 0) -> dict[str, Any]:
     result: dict[str, Any] = {"def_name": def_name, "rel_x": x, "rel_z": z, "rotation": rotation}
     if stuff:
@@ -3745,9 +3765,12 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                                     if str(project.get("def_name") or "") in {"Campfire", "Heater"}
                                     and (int((project.get("position") or {}).get("x") or -1),
                                          int((project.get("position") or {}).get("z") or -1)) in cells]
-                placement = next((cell for cell in room.get("light_placement_cells") or []
-                                  if (int(cell.get("x") or 0), int(cell.get("z") or 0))
-                                  not in occupied_project_cells), None)
+                free_cells = [cell for cell in room.get("light_placement_cells") or []
+                              if (int(cell.get("x") or 0), int(cell.get("z") or 0))
+                              not in occupied_project_cells]
+                placement = next(iter(free_cells), None)
+                campfire_cell = campfire_safe_placement(
+                    free_cells, (dev.get("buildings") or []) + (dev.get("construction_projects") or []))
                 room_id = int(room.get("id") or 0)
                 existing_heater = next((project.get("position") for project in thermal_projects
                                         if project.get("def_name") == "Heater"), None)
@@ -3788,12 +3811,14 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                     "room_id": room_id, "role": str(room.get("role_label") or "bedroom"),
                     "temperature": round(float(room.get("temperature") or 0.0)),
                     "patients": patients, "beds": len(room.get("contained_beds_ids") or []),
-                    "placement": placement,
+                    "placement": campfire_cell or placement,
+                    "campfire_safe": campfire_cell is not None,
                 }
                 warm_room_options[str(room_id)] = room_option
                 if can_wire_heater:
                     heater_room_options[str(room_id)] = {
-                        **room_option, "route": route, "conduit_cost": len(route),
+                        **room_option, "placement": placement,
+                        "route": route, "conduit_cost": len(route),
                     }
             if power_connection_options:
                 details["power_connection_options"] = power_connection_options
@@ -3814,9 +3839,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                     float(pair[1]["temperature"]),
                 )))
                 if warm_room_options:
-                    details["warm_room_options"] = warm_room_options
-                    dev["warm_room_options"] = warm_room_options
-                    if campfire_ready:
+                    safe_campfire_rooms = {key: row for key, row in warm_room_options.items()
+                                           if row["campfire_safe"]}
+                    if campfire_ready and safe_campfire_rooms:
+                        details["warm_room_options"] = safe_campfire_rooms
+                        dev["warm_room_options"] = safe_campfire_rooms
                         one_time.append("build_room_campfire")
                     if heater_room_options:
                         details["heater_room_options"] = heater_room_options
@@ -7078,6 +7105,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         source = "Campfire" if choice == "build_room_campfire" else "Heater"
         target = room.get("target") or room.get("placement")
         if choice == "build_room_campfire":
+            if campfire_safe_placement([target], (snapshot["development"].get("buildings") or [])
+                                       + (snapshot["development"].get("construction_projects") or [])) is None:
+                return {"applied": False, "reason": "Campfire is too close to a combustible structure"}
             origin = position(int(target["x"]), int(target["z"]))
             # A free cell can still have a blocked interaction spot at the
             # default rotation. Ask RimWorld's placement checker for the

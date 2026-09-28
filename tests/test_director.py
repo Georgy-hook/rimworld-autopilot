@@ -80,6 +80,23 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("cannot finish wooden walls", director.action_description(
             "prioritize_construction", snapshot))
 
+    def test_indoor_campfire_avoids_wooden_walls(self):
+        wall = {"def": "Wall", "label": "wooden wall", "position": {"x": 11, "z": 10}}
+        near = {"x": 10, "z": 10}
+        far = {"x": 14, "z": 14}
+        self.assertEqual(director.campfire_safe_placement([near, far], [wall]), far)
+        self.assertIsNone(director.campfire_safe_placement([near], [wall]))
+        client = mock.Mock()
+        snapshot = {"map": {"id": 0}, "game": {"tick": 10},
+                    "development": {"buildings": [wall], "construction_projects": []}}
+        details = {"warm_room_options": {"1": {"room_id": 1, "placement": near}},
+                   "warm_room": "1"}
+        result = director.execute_action(client, snapshot, {"anchor": near, "issued": {}},
+                                         "build_room_campfire", details)
+        self.assertFalse(result["applied"])
+        self.assertIn("combustible", result["reason"])
+        client.post.assert_not_called()
+
     def test_hypothermia_offers_indoor_heat_and_finishes_only_patient_room_project(self):
         room = {
             "id": 9, "role_label": "barracks", "temperature": -8,
@@ -125,6 +142,12 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("build_room_campfire", choices)
         self.assertIn("build_room_heater", choices)
         self.assertEqual(list(details["warm_room_options"]), ["9"])
+        wooden_room = copy.deepcopy(snapshot)
+        wooden_room["development"]["buildings"].append({
+            "def": "Wall", "label": "wooden wall", "position": {"x": 14, "z": 13}})
+        wooden_choices, _ = director.candidate_actions(None, wooden_room, state)
+        self.assertNotIn("build_room_campfire", wooden_choices)
+        self.assertIn("build_room_heater", wooden_choices)
         self.assertEqual(director.action_domain("build_room_campfire"), "care")
         self.assertTrue(any("Hypothermia" in risk for risk in
                             director.model_decision_context(snapshot)["risks"]))
