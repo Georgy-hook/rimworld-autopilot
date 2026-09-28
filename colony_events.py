@@ -62,7 +62,6 @@ RESPONSE_OPTIONS: dict[str, dict[str, str]] = {
         "skip_trade": "Skip a trader that cannot buy the colony's surplus or offer a useful purchase at a safe price.",
     },
     "arrival": {
-        "rescue_arrival": "Pass a downed non-hostile arrival to the colony's live rescue choices; this event acknowledgement alone does not order a rescue.",
         "evaluate_recruit": "Review the join opportunity; an actual joiner letter is answered separately with food, housing and skills context.",
         "observe_event": "Do not attack or capture a neutral arrival without a deliberate reason.",
     },
@@ -98,6 +97,14 @@ RESPONSE_OPTIONS: dict[str, dict[str, str]] = {
 
 
 def classify_event(row: dict[str, Any]) -> str:
+    # A quest description can mention joiners, refugees, raiders or fires.
+    # Those words describe its stakes; the quest still needs an accept/defer
+    # decision. Only a dedicated rescue quest uses the expedition workflow.
+    quest_def = str(row.get("quest_def") or "").lower()
+    if row.get("source") == "quest" or quest_def:
+        if any(token in quest_def for token in ("rescue", "ransom", "kidnap", "prisonerwillingtojoin")):
+            return "kidnap_rescue"
+        return "quest"
     text = " ".join(str(row.get(key) or "") for key in ("incident_def", "def_name", "label", "category", "description", "quest_def", "name")).lower().replace(" ", "")
     for family, spec in EVENT_FAMILIES.items():
         if any(token in text for token in spec["tokens"]):
@@ -181,6 +188,22 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
             options.pop("prepare_rescue_mission", None)
         if not has_site:
             options.pop("prepare_rescue_mission", None)
+        readiness = context.get("rescue_readiness") or {}
+        if readiness and not readiness.get("ready"):
+            options.pop("prepare_rescue_mission", None)
+            options["defer_rescue"] = (
+                "Prepare travel supplies before departure: "
+                f"{int(readiness.get('travel_food') or 0)}/{int(readiness.get('minimum_travel_food') or 0)} "
+                "pemmican or survival meals, "
+                f"{int(readiness.get('medicine') or 0)}/{int(readiness.get('minimum_medicine') or 0)} medicine."
+            )
+    if family == "quest" and event.get("ever_accepted"):
+        options.pop("accept_quest", None)
+    if family == "quest" and str(event.get("quest_def") or "").startswith("BuildMonument"):
+        # Accepting commits the colony to a timed monument blueprint, but the
+        # current API/director has no way to place that quest-specific plan.
+        options.pop("accept_quest", None)
+        options["defer_quest"] = "No supported action can place this quest's exact monument blueprint yet."
     return options or {"observe_event": "No verified safe action is currently exposed."}
 
 
@@ -243,6 +266,7 @@ def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snap
         "kidnapped_pawns": context.get("kidnapped_pawns") or [],
         "trade_opportunities": context.get("trade_opportunities") or [],
         "fire_situation": context.get("fire_situation") or {},
+        "rescue_readiness": context.get("rescue_readiness") or {},
         "colony": {
             "population": len(snapshot.get("colonists", [])),
             "resources": snapshot.get("map", {}).get("resources", {}),

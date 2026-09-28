@@ -22,6 +22,7 @@ DEFAULT_PRIORITIES = {
 DEFAULT_PREFERENCES: dict[str, Any] = {
     "schema_version": 2,
     "language": "ru",
+    "victory_required": True,
     "technical_logging": False,
     "overlay": {
         "enabled": True,
@@ -93,6 +94,7 @@ def load_preferences(path: Path | None = None) -> dict[str, Any]:
         result["observer"]["enabled"] = bool(loaded["observer"].get("enabled", False))
     result["language"] = "en" if result.get("language") == "en" else "ru"
     result["technical_logging"] = bool(result.get("technical_logging"))
+    result["victory_required"] = bool(result.get("victory_required"))
     result["personal_note"] = str(result.get("personal_note") or "")[:1200]
     return result
 
@@ -136,6 +138,7 @@ def load_preferences_from_value(data: dict[str, Any]) -> dict[str, Any]:
             result["observer"]["enabled"] = bool(data["observer"].get("enabled", False))
     result["language"] = "en" if result.get("language") == "en" else "ru"
     result["technical_logging"] = bool(result.get("technical_logging"))
+    result["victory_required"] = bool(result.get("victory_required"))
     result["personal_note"] = str(result.get("personal_note") or "")[:1200]
     return result
 
@@ -179,6 +182,7 @@ def model_context(preferences: dict[str, Any]) -> dict[str, Any]:
     return {
         "priority_weights_0_to_100": dict(preferences.get("priorities") or {}),
         "personal_guidance": str(preferences.get("personal_note") or ""),
+        "victory_required": bool(preferences.get("victory_required")),
         "safety_preferences": dict(preferences.get("safety") or {}),
         "instruction": "Treat these as player preferences, not permission to violate feasibility, emergency or safety gates.",
     }

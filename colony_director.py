@@ -138,11 +138,12 @@ ACTION_DESCRIPTIONS = {
     "plan_human_reproduction": "Choose an existing romantic couple and a reproductive approach only when food, housing and safety can support a child.",
     "process_mechanoids": "Research/build machining and add a bill to dismantle mechanoid corpses for useful materials.",
     "prepare_trade_caravan": "Prepare a guarded trade expedition to a friendly settlement, keeping enough defenders, food and medicine at home.",
+    "prepare_trade_rations": "Unblock the chosen sale route: research pemmican, then cook enough travel rations at a real campfire or stove before sending a caravan.",
     "configure_income_production": "Configure the chosen workshop with a repeatable sale-goods bill while preserving survival reserves.",
     "prioritize_construction": "Give Construction priority 1 to the healthiest best builder so issued blueprints are completed.",
     "prioritize_construction_project": "Let Laya choose one exact unfinished blueprint/frame and a suitable builder, then issue a normal forced construction job.",
-    "prioritize_firefighting": "Assign a capable colonist to Firefighter priority 1 while live flames threaten the Home area. Repeat for other colonists until the active fire has a response.",
-    "prioritize_research": "Give Research priority 1 to the healthiest best researcher so the starflight route advances.",
+    "prioritize_firefighting": "Assign Firefighter priority 1 to every capable healthy colonist in one response while live flames threaten the Home area.",
+    "prioritize_research": "Reserve one healthy researcher for the selected project: give Research priority 1 and move their ordinary priority-1 jobs to priority 2 while emergency duties stay available.",
     "prioritize_cooking": "Give Cooking priority 1 to a capable healthy cook while prepared meals are scarce.",
     "prioritize_growing": "Give Growing priority 1 to a capable healthy grower so crops are planted and harvested.",
     "harvest_local_plants": "Let Laya choose one real nearby mature wild plant type, then designate only those exact plants for harvesting.",
@@ -262,6 +263,7 @@ ACTION_LABELS = {
     "plan_human_reproduction": "планирование ребёнка",
     "process_mechanoids": "разбор механоидов",
     "prepare_trade_caravan": "торговая вылазка",
+    "prepare_trade_rations": "пеммикан для торговли",
     "configure_income_production": "производство на продажу",
     "prioritize_construction": "строительство",
     "prioritize_construction_project": "приоритет конкретной постройки",
@@ -323,6 +325,7 @@ ACTION_LABELS_EN = {
     "tame_wild_human": "Tame wild person",
     "build_animal_pen": "Build animal pen",
     "process_mechanoids": "Process mechanoids", "prepare_trade_caravan": "Trade caravan",
+    "prepare_trade_rations": "Prepare trade rations",
     "prioritize_construction": "Prioritize construction", "prioritize_research": "Prioritize research",
     "prioritize_growing": "Prioritize growing", "prioritize_hauling": "Prioritize hauling",
     "prioritize_hunting": "Prioritize hunting", "prioritize_handling": "Prioritize animal handling",
@@ -443,23 +446,36 @@ def cemetery_blueprint(grave_count: int = 8) -> dict[str, Any]:
     return blueprint(items, columns * 2 - 1, rows * 3 - 1)
 
 
-def prison_blueprint() -> dict[str, Any]:
+def prison_blueprint(stuff: str = "WoodLog") -> dict[str, Any]:
     """A legitimate enclosed two-bed prison; beds are marked for prisoners after construction."""
     items: list[dict[str, Any]] = []
     for x in range(7):
         if x != 3:
-            items.append(building("Wall", x, 0, stuff="WoodLog"))
-        items.append(building("Wall", x, 6, stuff="WoodLog"))
+            items.append(building("Wall", x, 0, stuff=stuff))
+        items.append(building("Wall", x, 6, stuff=stuff))
     for z in range(1, 6):
-        items.append(building("Wall", 0, z, stuff="WoodLog"))
-        items.append(building("Wall", 6, z, stuff="WoodLog"))
+        items.append(building("Wall", 0, z, stuff=stuff))
+        items.append(building("Wall", 6, z, stuff=stuff))
     items.extend([
-        building("Door", 3, 0, stuff="WoodLog"),
+        building("Door", 3, 0, stuff=stuff),
         building("SleepingSpot", 2, 3),
         building("SleepingSpot", 4, 3),
-        building("TorchLamp", 3, 5),
     ])
     return blueprint(items, 7, 7)
+
+
+def prison_material(item_counts: dict[str, Any]) -> str | None:
+    """The 23 walls and one door need about 140 units of one material."""
+    for stuff in ("WoodLog", "Steel"):
+        if int(item_counts.get(stuff) or 0) >= 140:
+            return stuff
+    return None
+
+
+def installable_sculpture(thing: dict[str, Any]) -> bool:
+    """Only a finished, spawned minified sculpture has an installable thing ID."""
+    return (str(thing.get("def_name") or "") == "MinifiedThing"
+            and "sculpture" in str(thing.get("inner_def_name") or "").lower())
 
 
 def hospital_blueprint() -> dict[str, Any]:
@@ -982,9 +998,9 @@ def map_state_for_snapshot(state: dict[str, Any], snapshot: dict[str, Any]) -> d
     """Keep orders tied to one actual playthrough, not just a reusable world seed.
 
     RimWorld can create another colony with the same map seed and map index.
-    Loading an older save also rewinds the tick clock.  In either case old
-    issued markers, doctrine and base coordinates are no longer evidence of
-    work in the currently loaded colony.
+    Loading an older save also rewinds the tick clock. Old issued orders and
+    base coordinates are no longer evidence of work in the loaded colony.
+    A doctrine chosen before the restored tick still belongs to this colony.
     """
     map_info = snapshot.get("map") or {}
     key = ":".join(str(map_info[field]) if map_info.get(field) is not None else "unknown"
@@ -998,7 +1014,15 @@ def map_state_for_snapshot(state: dict[str, Any], snapshot: dict[str, Any]) -> d
     restarted = previous_tick is not None and tick + 100 < int(previous_tick)
     replaced_roster = bool(present and known and not present.intersection(known))
     if restarted or replaced_roster:
+        prior = current
         current = {"issued": {}}
+        if restarted and not replaced_roster and prior.get("doctrine"):
+            doctrine_tick = int(prior.get("doctrine_tick") or 0)
+            if doctrine_tick > 0 and doctrine_tick <= tick:
+                current["doctrine"] = prior["doctrine"]
+                current["doctrine_tick"] = doctrine_tick
+                if prior.get("income_strategy"):
+                    current["income_strategy"] = prior["income_strategy"]
         maps[key] = current
     current.setdefault("first_seen_tick", tick)
     current["last_seen_tick"] = tick
@@ -1668,7 +1692,7 @@ def available_sale_categories(snapshot: dict[str, Any]) -> list[str]:
         categories = " ".join(map(str, row.get("categories") or []))
         if name in {"Flake", "Yayo", "SmokeleafJoint"}: found.add("drugs")
         if "Apparel" in categories: found.add("apparel")
-        if "Sculpture" in name: found.add("art")
+        if name.startswith("Sculpture") or installable_sculpture(row): found.add("art")
         if any(token in name for token in ("Wool", "Leather", "Milk")): found.add("animal_products")
         if name == "Chemfuel": found.add("chemfuel")
         if name in {"Gold", "Jade"}: found.add("precious")
@@ -2304,12 +2328,21 @@ def firefighter_priority_options(snapshot: dict[str, Any]) -> list[dict[str, Any
             and int(pawn["work_priorities"]["Firefighter"].get("priority") or 0) != 1]
 
 
-def focus_active_fire_choices(actions: list[str]) -> list[str]:
+def focus_active_fire_choices(actions: list[str], home_fire: bool = False) -> list[str]:
     """Respond to a verified nearby fire before routine colony work."""
     if "prioritize_firefighting" in actions:
         return ["prioritize_firefighting"]
     if "expand_home_area" in actions:
         return ["expand_home_area"]
+    if home_fire:
+        # With firefighters already assigned, let them work. A research switch
+        # or new construction order spends the scarce decision window while
+        # wooden rooms burn. Rescue and treatment remain available.
+        emergency = {"rescue_downed_colonist", "tend_colonist", "prioritize_rescue",
+                     "prioritize_doctor", "prepare_emergency_medical_bed",
+                     "open_blocked_food_path", "feed_hungry_colonist", "hold_survival"}
+        focused = [action for action in actions if action in emergency]
+        return focused if focused else ["hold_survival"]
     return actions
 
 
@@ -2321,6 +2354,10 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     edits cannot produce food before a starving pawn collapses, so they are not
     feasible *for this decision window*. They return when reserves recover.
     """
+    if (int((snapshot.get("development") or {}).get("butchery_gap") or 0) > 0
+            and "build_butcher_spot" in actions):
+        actions = [action for action in actions
+                   if action not in {"designate_safe_hunting", "prioritize_hunting"}]
     resources = (snapshot.get("map") or {}).get("resources") or {}
     people = snapshot.get("colonists") or []
     runway = estimated_food_runway_days(resources, len(people))
@@ -2331,11 +2368,11 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
              or int(crop.get("harvestable_plants") or 0) > 0)
         for crop in crops if isinstance(crop, dict)
     )
-    # A newly planted field cannot replace several days of meals. Start
-    # looking for wild food or prey while there is still time to collect it.
-    # A five-day reserve warrants visible food options but is not an immediate
-    # crisis that must hide all construction, research and colony planning.
-    urgency_window = 2.5 if near_ready_crop else 5.0
+    # Food choices and their runway stay visible several days in advance, but
+    # hard-filtering all development at a four-day reserve traps the colony in
+    # gathering work. Reserve that filter for a near-term shortage. A nearly
+    # ripe field gives a little more time unless cooking fuel is missing.
+    urgency_window = 1.5 if near_ready_crop else 2.5
     fuel_gap = needs_cooking_fuel_reserve(snapshot)
     # Nearly ripe crops do not solve an empty wood reserve for the campfire.
     # Preserve a wider, still model-chosen food/fuel window in that case.
@@ -2363,6 +2400,11 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "prioritize_thermal_project", "build_passive_cooler",
         "expand_home_area", "hold_survival",
     }
+    # A newly arrived worker can add to food production only if they can rest
+    # safely. One indoor bed is quick to finish while several days of food
+    # remain; keep it visible beside gathering and cooking choices.
+    if runway > 2.0 and not fuel_gap:
+        related.update({"build_basic_beds", "build_sleeping_spots", "assign_real_bed"})
     if int((snapshot.get("development") or {}).get("butchery_gap") or 0) > 0 and "build_butcher_spot" in actions:
         # A new kill only enlarges the inaccessible carcass pile. Hunting is
         # still available outside this immediate food decision window.
@@ -2419,6 +2461,23 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
             action for action in actions if action not in related
         ]
     return focused or actions
+
+
+def focus_misaligned_research_choice(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
+    """Spend one safe decision to repair a fresh detour from the saved course."""
+    if ("advance_doctrine_research" not in actions
+            or not (snapshot.get("development") or {}).get("research_misalignment")
+            or (snapshot.get("map") or {}).get("enemies")
+            or any(fire.get("in_home") for fire in
+                   ((snapshot.get("development") or {}).get("fire_situation") or {}).get("fires") or [])):
+        return actions
+    people = snapshot.get("colonists") or []
+    runway = estimated_food_runway_days((snapshot.get("map") or {}).get("resources") or {}, len(people))
+    if (runway is not None and runway < 1.5) or any(
+            pawn.get("downed") or bridge.first_number(pawn.get("bleeding_rate"), 0.0) > 0.05
+            for pawn in people):
+        return actions
+    return ["advance_doctrine_research"]
 
 
 def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -2653,6 +2712,13 @@ def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
                                  for row in dev.get("construction_projects") or [])
     if research_bench_missing and not research_bench_pending and dev.get("research_bench_options"):
         risks.append("No completed research bench or bench blueprint exists. Research is blocked until the first affordable bench is built.")
+    if (not research_bench_missing
+            and str((dev.get("current_research") or {}).get("name") or "none").lower() != "none"
+            and not researcher_is_dedicated(snapshot)):
+        risks.append("A research project and bench exist, but no worker has protected research time. Research priority 1 alone can lose to other priority-1 jobs; reserve one worker without removing emergency duties.")
+    if dev.get("research_misalignment"):
+        item = dev["research_misalignment"]
+        risks.append(f"The new {item.get('current')} project has only {item.get('progress_percent')}% progress and does not support the chosen income or victory route; Laya can redirect it to a live aligned project.")
     if (snapshot.get("map") or {}).get("enemies", 0):
         risks.append("Hostiles can injure or kidnap colonists; combat consumes food and rest.")
     fires = (dev.get("fire_situation") or {}).get("fires") or []
@@ -3049,6 +3115,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     # With several days of stocked meals, growing rice can mature while Laya
     # chooses foraging, hunting, construction or other work instead.
     if ((food_runway is not None and food_runway < 2.5)
+            and int(resources.get("raw_food") or 0) < max(40, len(snapshot["colonists"]) * 8)
             and can_work("PlantCutting")
             and not issued_recently(map_state, "early_crop_harvest", tick, retry_ticks=12000)):
         crop_groups: dict[str, dict[str, Any]] = {}
@@ -3497,13 +3564,25 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     chosen_endgame = str(current_doctrine.get("endgame") or "ship_escape")
     if ship_ready and chosen_endgame == "ship_escape" and counts.get("Ship_ComputerCore", 0) == 0 and "ship" not in map_state["issued"]:
         one_time.append("build_ship")
-    if current.lower() == "none" and has_research_bench:
+    if has_research_bench:
+        research_tree = dev.get("research_tree") or []
         doctrine_research = strategy.doctrine_research_candidates(
-            current_doctrine, dev.get("research_tree") or []
+            current_doctrine, research_tree
         ) if current_doctrine else {}
-        if doctrine_research:
+        all_aligned_research = strategy.doctrine_research_candidates(
+            current_doctrine, research_tree, limit=max(12, len(research_tree))
+        ) if current_doctrine else {}
+        current_progress = bridge.first_number((dev.get("current_research") or {}).get("progress_percent"), 0.0)
+        redirect_unaligned = (current.lower() != "none" and current not in all_aligned_research
+                              and current_progress < 0.25 and bool(doctrine_research))
+        if doctrine_research and (current.lower() == "none" or redirect_unaligned):
             details["doctrine_research_options"] = doctrine_research
             dev["doctrine_research_options"] = doctrine_research
+            if redirect_unaligned:
+                dev["research_misalignment"] = {
+                    "current": current, "progress_percent": round(current_progress * 100, 1),
+                    "reason": "The just-selected project does not advance the saved economy or victory course.",
+                }
             one_time.append("advance_doctrine_research")
         # The live research catalogue below remains available even if no
         # project matches the saved doctrine. Never silently substitute a
@@ -3737,10 +3816,25 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     mountain_rect = mining_bedroom_rect(dev.get("ores") or {}, anchor)
     chosen_material = str(current_doctrine.get("material") or "")
     chosen_material_available = int(item_counts.get(chosen_material) or 0) if chosen_material else 0
+    income_blocked = bool(
+        current_doctrine
+        and str(current_doctrine.get("economy_product") or "") not in strategy.DIRECT_INCOME_PLANS
+        and str(map_state.get("income_strategy") or current_doctrine.get("economy_product") or "")
+            not in strategy.DIRECT_INCOME_PLANS
+        and tick - int(map_state.get("doctrine_tick") or -999999) >= 90000
+    )
+    victory_required = bool((dev.get("user_preferences") or laya_preferences.load_preferences()).get("victory_required"))
+    victory_missing = victory_required and str(current_doctrine.get("endgame") or "") == "enduring_colony"
     doctrine_due = (
         not current_doctrine
         or int(current_doctrine.get("schema_version") or 1) < 2
         or tick - int(map_state.get("doctrine_tick") or -999999) >= 3600000
+        or income_blocked
+        or (victory_missing and tick - int(map_state.get("doctrine_tick") or -999999) >= 30000)
+        or (tick - int(map_state.get("doctrine_tick") or -999999) >= 30000
+            and (strategy.DIRECTIONS.get(str(current_doctrine.get("primary_direction"))) or {}).get("domain") == "endgame"
+            and strategy.course_alignment(current_doctrine) !=
+                "Direction and ending are not visibly in conflict.")
         or (tick - int(map_state.get("doctrine_tick") or -999999) >= 300000
             and strategy.course_alignment(current_doctrine) !=
                 "Direction and ending are not visibly in conflict.")
@@ -3751,6 +3845,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if doctrine_due or doctrine_starved:
         doctrine_context = {
             "current": current_doctrine,
+            "income_blocked": income_blocked,
+            "victory_required": victory_required,
             "course_alignment": strategy.course_alignment(current_doctrine),
             "material_options": material_options,
             "mountain_possible": mountain_rect is not None,
@@ -3900,10 +3996,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["architecture_program_options"] = architecture_programs
         one_time.append("plan_architecture")
 
-    sculptures = [
-        row for row in dev.get("things", [])
-        if "sculpture" in str(row.get("inner_def_name") or row.get("def_name") or "").lower()
-    ]
+    sculptures = [row for row in dev.get("things", []) if installable_sculpture(row)]
     valued_rooms = [
         room for room in dev.get("rooms", [])
         if not room.get("touches_map_edge") and room.get("cells")
@@ -4022,13 +4115,14 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                  and int(resources.get("food") or 0) >= len(snapshot["colonists"]) * 12))
         and not (snapshot.get("map") or {}).get("enemies")
     )
+    prison_stuff = prison_material(item_counts)
     if ((capture_needs_room or safe_to_prepare_growth) and not prison_ready and not prison_pending
-            and can_work("Construction") and int(item_counts.get("WoodLog") or 0) >= 140
+            and can_work("Construction") and prison_stuff
             and not issued_recently(map_state, "prison_blueprint", tick, retry_ticks=90000)):
         dev["population_growth_context"] = {
             "population": len(snapshot["colonists"]), "ready_meals": int(resources.get("meals") or 0),
             "roofed_real_beds": sheltered_real_bed_count(dev, anchor) or 0,
-            "prison_ready": False, "wood_cost": 140,
+            "prison_ready": False, "material": prison_stuff, "material_cost": 140,
         }
         one_time.append("build_prison")
     hospital_a = {"x": int(anchor["x"]) + 25, "z": int(anchor["z"])}
@@ -4188,6 +4282,12 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["wild_human_options"] = wild_human_options
         one_time.append("tame_wild_human")
     combat_rows = snapshot.get("combat", {}).get("colonists", [])
+    colony_recovering = any(
+        pawn.get("downed") or bridge.first_number(pawn.get("health"), 1.0) < 0.8
+        or bridge.first_number(pawn.get("bleeding_rate")) > 0.05
+        for pawn in snapshot["colonists"]
+    )
+    emergency_hunt_needed = int(resources.get("food") or 0) < max(8, len(snapshot["colonists"]) * 4)
     healthy_armed = [
         row for row in combat_rows
         if row.get("has_ranged_weapon") and not row.get("is_downed") and float(row.get("health") or 0.0) >= 0.8
@@ -4212,9 +4312,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             and float(animal.get("harm_revenge_chance") or 0.0) <= 0.05
             and float(animal.get("combat_power") or 0.0) <= 100
         )
-        if safe_small_game and healthy_armed:
+        if safe_small_game and healthy_armed and (not colony_recovering or emergency_hunt_needed):
             hunt_options.append(animal)
-        elif healthy_armed:
+        elif not safe_small_game and healthy_armed and not colony_recovering:
             risky_hunt_options.append(animal)
     hunt_options.sort(key=lambda a: (
         "thrumbo" in str(a.get("def") or "").lower(),
@@ -4349,8 +4449,24 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             one_time.append("build_income_infrastructure")
     if income_strategy in strategy_tables and any(
         str(table.get("thing_def") or "") in strategy_tables[income_strategy] for table in dev.get("work_tables", [])
+    ) and (income_strategy != "travel_food" or {"Pemmican", "PackagedSurvivalMeal"} & finished
     ) and not issued_recently(map_state, f"income_bills:{income_strategy}", tick, retry_ticks=30000):
         one_time.append("configure_income_production")
+    travel_rations = int(item_counts.get("Pemmican") or 0) + int(item_counts.get("MealSurvivalPack") or 0)
+    if (income_strategy in strategy.DIRECT_INCOME_PLANS
+            and dev.get("trade_destinations") and not dev.get("trade_opportunities")
+            and travel_rations < max(26, len(snapshot["colonists"]) * 5 + 16)):
+        current_project = str((dev.get("current_research") or {}).get("name") or "none").lower()
+        if "Pemmican" in finished:
+            has_campfire = any(str(table.get("thing_def") or "") in {"Campfire", "FueledStove", "ElectricStove"}
+                               for table in dev.get("work_tables") or [])
+            if has_campfire and not issued_recently(map_state, "trade_rations_bill", tick, retry_ticks=60000):
+                one_time.append("prepare_trade_rations")
+        elif current_project == "none" and has_research_bench and any(
+                row.get("name") == "Pemmican" and row.get("can_start_now")
+                for row in dev.get("research_tree") or []):
+            if not issued_recently(map_state, "trade_rations_research", tick, retry_ticks=30000):
+                one_time.append("prepare_trade_rations")
 
     ideology = dev.get("ideology") or {}
     ritual_buildings = ideology.get("ritual_buildings") or []
@@ -4605,8 +4721,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     ):
         if can_work("Construction") and not issued_recently(map_state, "priority:Construction", tick, retry_ticks=60000):
             maintenance.append("prioritize_construction")
-    if current.lower() != "none" and has_research_bench:
-        if can_work("Research") and not issued_recently(map_state, "priority:Research", tick, retry_ticks=60000):
+    if current.lower() != "none" and has_research_bench and not researcher_is_dedicated(snapshot):
+        if research_staffing_plan(snapshot) and not issued_recently(map_state, "priority:Research", tick, retry_ticks=12000):
             maintenance.append("prioritize_research")
     if has_cooking_station and meals < max(8, len(snapshot["colonists"]) * 4):
         if can_work("Cooking") and not issued_recently(map_state, "priority:Cooking", tick, retry_ticks=60000):
@@ -4620,7 +4736,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if can_work("Cleaning") and not issued_recently(map_state, "priority:Cleaning", tick, retry_ticks=60000):
         maintenance.append("prioritize_cleaning")
     if snapshot["map"].get("animals", 0) > 0:
-        if can_work("Hunting") and not issued_recently(map_state, "priority:Hunting", tick, retry_ticks=60000):
+        if (not colony_recovering and can_work("Hunting")
+                and not issued_recently(map_state, "priority:Hunting", tick, retry_ticks=60000)):
             maintenance.append("prioritize_hunting")
         if can_work("Handling") and not issued_recently(map_state, "priority:Handling", tick, retry_ticks=60000):
             maintenance.append("prioritize_handling")
@@ -4691,7 +4808,13 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["tree_options"] = tree_groups
         one_time.append("harvest_nearby_trees")
     research_options = live_research_options(snapshot) if has_research_bench else {}
-    if research_options and not issued_recently(map_state, "research_change", tick, retry_ticks=30000):
+    # Once Laya has a concrete doctrine or caravan prerequisite, an unfiltered
+    # catalogue can override it with unrelated technology. Keep the broad
+    # catalogue only when no aligned, startable step is available.
+    aligned_research_ready = ("advance_doctrine_research" in one_time
+                              or "prepare_trade_rations" in one_time)
+    if (research_options and not aligned_research_ready
+            and not issued_recently(map_state, "research_change", tick, retry_ticks=30000)):
         dev["live_research_options"] = research_options
         one_time.append("select_research")
     work_options = live_work_options(snapshot)
@@ -4703,8 +4826,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         actionable = [action for action in actionable if not requires_builder_now(action)]
     actionable = defer_discretionary_work_until_shelter(snapshot, map_state, actionable)
     actionable = defer_new_construction_when_backlogged(snapshot, actionable)
-    actionable = focus_active_fire_choices(actionable)
+    actionable = focus_active_fire_choices(actionable, bool(home_fires))
     actionable = focus_imminent_food_choices(snapshot, actionable)
+    actionable = focus_misaligned_research_choice(snapshot, actionable)
     if dev.get("blocked_food_emergency") and "open_blocked_food_path" in actionable:
         # A pawn surrounded by completed walls cannot walk to food, escape a
         # raid or be rescued. Eating the nearest meal is not an executable
@@ -5224,9 +5348,15 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
             "criteria": dict(dev["architecture_program_options"]),
         }
     elif action == "advance_doctrine_research" and dev.get("doctrine_research_options"):
+        misalignment = dev.get("research_misalignment") or {}
+        instructions = (f"The current {misalignment.get('current')} project has only "
+                        f"{misalignment.get('progress_percent')}% progress and misses the saved goal. "
+                        "Choose a live project aligned with income or victory."
+                        if misalignment else
+                        "Choose one currently startable project that best advances the saved doctrine. Only live ResearchProjectDefs are listed.")
         q["doctrine_research_target"] = {
             "type": "choice",
-            "instructions": "Choose one currently startable project that best advances the saved doctrine. Only live ResearchProjectDefs are listed.",
+            "instructions": instructions,
             "criteria": dict(dev["doctrine_research_options"]),
         }
     elif action == "improve_room_lighting" and dev.get("dark_room_options"):
@@ -6156,6 +6286,76 @@ def place_checked_building(client: bridge.RimApiClient, map_id: int, plan: dict[
         return {"applied": False, "building": name, "reason": str(error)}
 
 
+RESEARCH_PROTECTED_WORK = frozenset({
+    "Research", "Firefighter", "Patient", "PatientBedRest", "Doctor", "BasicWorker", "Warden", "Childcare",
+})
+
+
+def research_routine_priority_one(pawn: dict[str, Any]) -> list[str]:
+    return [work for work, setting in (pawn.get("work_priorities") or {}).items()
+            if work not in RESEARCH_PROTECTED_WORK and isinstance(setting, dict)
+            and not setting.get("disabled") and int(setting.get("priority") or 0) == 1]
+
+
+def researcher_is_dedicated(snapshot: dict[str, Any]) -> bool:
+    return any(
+        not pawn.get("downed") and not pawn.get("in_mental_state")
+        and not ((pawn.get("work_priorities") or {}).get("Research") or {}).get("disabled")
+        and int(((pawn.get("work_priorities") or {}).get("Research") or {}).get("priority") or 0) == 1
+        and not research_routine_priority_one(pawn)
+        for pawn in snapshot.get("colonists") or []
+    )
+
+
+def research_staffing_plan(snapshot: dict[str, Any]) -> tuple[dict[str, Any], list[str]] | None:
+    """Prefer a spare researcher over the colony's only cook or grower."""
+    pawns = snapshot.get("colonists") or []
+    food = int(((snapshot.get("map") or {}).get("resources") or {}).get("food") or 0)
+    meals = int(((snapshot.get("map") or {}).get("resources") or {}).get("meals") or 0)
+    workers = [pawn for pawn in pawns if not pawn.get("downed") and not pawn.get("in_mental_state")
+               and not ((pawn.get("work_priorities") or {}).get("Research") or {}).get("disabled")
+               and "Research" in (pawn.get("work_priorities") or {})]
+    if not workers:
+        return None
+    cooks = [pawn for pawn in pawns if int(((pawn.get("work_priorities") or {}).get("Cooking") or {}).get("priority") or 0) > 0]
+    growers = [pawn for pawn in pawns if int(((pawn.get("work_priorities") or {}).get("Growing") or {}).get("priority") or 0) > 0]
+
+    def score(pawn: dict[str, Any]) -> float:
+        priorities = pawn.get("work_priorities") or {}
+        intellect = (pawn.get("skills") or {}).get("Intellectual") or {}
+        value = float(intellect.get("level") or 0) + 2 * float(intellect.get("passion") or 0)
+        value -= 0.4 * len(research_routine_priority_one(pawn))
+        if len(cooks) == 1 and cooks[0].get("id") == pawn.get("id") and meals < max(18, 8 * len(pawns)):
+            value -= 20
+        if len(growers) == 1 and growers[0].get("id") == pawn.get("id") and food < 50 * len(pawns):
+            value -= 10
+        return value
+
+    worker = max(workers, key=lambda pawn: (score(pawn), -int(pawn.get("id") or 0)))
+    return worker, research_routine_priority_one(worker)
+
+
+def dedicate_researcher(client: bridge.RimApiClient, snapshot: dict[str, Any]) -> dict[str, Any]:
+    plan = research_staffing_plan(snapshot)
+    if plan is None:
+        return {"applied": False, "reason": "No available researcher"}
+    worker, defer_jobs = plan
+    changes = []
+    research_priority = int(((worker.get("work_priorities") or {}).get("Research") or {}).get("priority") or 0)
+    if research_priority != 1:
+        changes.append(("Research", 1, client.post("/api/v1/colonist/work-priority", body={
+            "id": worker["id"], "work": "Research", "priority": 1,
+        })))
+    for work in defer_jobs:
+        changes.append((work, 2, client.post("/api/v1/colonist/work-priority", body={
+            "id": worker["id"], "work": work, "priority": 2,
+        })))
+    return {"applied": bool(changes), "colonist": worker.get("name"), "pawn_id": worker.get("id"),
+            "reserved_for": "Research", "adjustments": [
+                {"work": work, "priority": priority, "response": response}
+                for work, priority, response in changes]}
+
+
 def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str, pawn_id: int | None = None) -> Any:
     target = next(
         (p for p in snapshot["colonists"] if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)),
@@ -6240,6 +6440,14 @@ def ensure_bill(client: bridge.RimApiClient, table: dict[str, Any], recipe: str,
             "unpause_when_you_have": max(1, target_count // 3),
         },
     )
+
+
+def researched_travel_ration_recipe(client: bridge.RimApiClient, table: dict[str, Any]) -> str | None:
+    """Use the live table catalogue; RimWorld calls pemmican Make_Pemmican."""
+    recipes = client.get("/api/v1/buildings/recipes", building_id=int(table["id"]), only_researched=True)
+    available = {str(row.get("def_name") or "") for row in (recipes or []) if isinstance(row, dict)}
+    return next((name for name in ("Make_Pemmican", "Make_PemmicanBulk", "CookMealSurvivalPack")
+                 if name in available), None)
 
 
 def stonecutting_recipe(client: bridge.RimApiClient, table: dict[str, Any], stone_type: str) -> str:
@@ -6802,15 +7010,18 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["crematorium"] = tick
         return {"applied": True, "phase": "build", "stuff": stuff, "response": result}
     if choice == "build_prison":
+        stuff = prison_material(snapshot["development"].get("item_counts") or {})
+        if not stuff:
+            return {"applied": False, "reason": "Prison needs 140 wood or steel; stock changed before placement"}
         terrain = client.get("/api/v1/map/terrain", map_id=map_id)
         site = choose_prison_site(terrain, anchor, snapshot["development"], map_state)
         if site is None:
             issued["prison_blueprint"] = tick
             return {"applied": False, "reason": "No clear dry seven-cell site for an enclosed prison"}
-        result = post_blueprint(client, map_id, site, prison_blueprint())
+        result = post_blueprint(client, map_id, site, prison_blueprint(stuff))
         map_state["prison_site"] = site
         issued["prison_blueprint"] = tick
-        return {"applied": True, "site": site, "blueprint": result,
+        return {"applied": True, "site": site, "material": stuff, "blueprint": result,
                 "construction": prioritize(client, snapshot, "Construction")}
     if choice == "build_hospital":
         result = post_blueprint(client, map_id, anchor, hospital_blueprint(), dx=25, dz=0)
@@ -6848,7 +7059,21 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         target = room.get("target") or room.get("placement")
         if choice == "build_room_campfire":
             origin = position(int(target["x"]), int(target["z"]))
-            layout = blueprint([building("Campfire", 0, 0)], 1, 1)
+            # A free cell can still have a blocked interaction spot at the
+            # default rotation. Ask RimWorld's placement checker for the
+            # exact live cell and use the rotation it accepts.
+            checked = client.post("/api/v1/builder/site-options", body={
+                "map_id": map_id, "def_name": "Campfire", "near": origin,
+                "radius": 1, "limit": 12,
+            })
+            valid = next((site for site in checked.get("sites") or []
+                          if (site.get("position") or {}).get("x") == origin["x"]
+                          and (site.get("position") or {}).get("z") == origin["z"]), None)
+            if valid is None:
+                issued[f"heating_room:{room['room_id']}"] = tick
+                return {"applied": False, "reason": "The room's campfire cell has no valid interaction rotation",
+                        "target": origin, "placement_check": checked.get("reason")}
+            layout = blueprint([building("Campfire", 0, 0, rotation=int(valid["rotation"]))], 1, 1)
         else:
             route = room.get("route")
             if route is None or (choice == "connect_room_heater_power" and not route):
@@ -7423,8 +7648,13 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             bench = post_blueprint(client, map_id, anchor, workshop_blueprint("HandTailoringBench", stuff="WoodLog"), dx=16, dz=12)
             return {"applied": True, "strategy": income_strategy, "responses": [grow, bench]}
         if income_strategy == "art":
+            existing = next((row for row in snapshot["development"].get("work_tables", [])
+                             if row.get("thing_def") == "TableSculpting"), None)
+            if existing:
+                return {"applied": True, "strategy": income_strategy,
+                        "phase": "existing_workshop", "workshop_id": existing.get("id")}
             response = post_blueprint(client, map_id, anchor, workshop_blueprint("TableSculpting", stuff="WoodLog"), dx=16, dz=16)
-            return {"applied": True, "strategy": income_strategy, "response": response}
+            return {"applied": True, "strategy": income_strategy, "phase": "build_workshop", "response": response}
         if income_strategy == "livestock":
             return {"applied": True, "strategy": income_strategy, "response": prioritize(client, snapshot, "Handling")}
         if income_strategy == "biofuel":
@@ -7499,6 +7729,29 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             return {"applied": False, "reason": f"No separate infrastructure is required for {income_strategy}"}
         issued[f"income_infrastructure:{income_strategy}"] = tick
         return {"applied": True, "strategy": income_strategy, "response": response}
+    if choice == "prepare_trade_rations":
+        finished_now = set(dev.get("finished_research") or [])
+        if "Pemmican" not in finished_now:
+            current_project = str((dev.get("current_research") or {}).get("name") or "none").lower()
+            if current_project != "none":
+                return {"applied": False, "reason": f"Finish {current_project} before switching to Pemmican"}
+            response = select_research_if_available(client, "Pemmican")
+            if response.get("success") or response.get("applied"):
+                issued["trade_rations_research"] = tick
+            return {"applied": bool(response.get("success") or response.get("applied")),
+                    "phase": "research", "response": response}
+        table = next((row for row in dev.get("work_tables") or []
+                      if str(row.get("thing_def") or "") in {"Campfire", "FueledStove", "ElectricStove"}), None)
+        if table is None:
+            return {"applied": False, "reason": "No completed campfire or stove for travel rations"}
+        recipe = researched_travel_ration_recipe(client, table)
+        if not recipe:
+            return {"applied": False, "reason": "No researched travel-ration recipe on this table"}
+        target = max(50, len(snapshot["colonists"]) * 5 + 16)
+        response = ensure_bill(client, table, recipe, target)
+        issued["trade_rations_bill"] = tick
+        return {"applied": bool(response.get("success") or response.get("applied")),
+                "phase": "bill", "recipe": recipe, "target_count": target, "response": response}
     if choice == "configure_income_production":
         income_strategy = str(map_state.get("income_strategy") or "")
         recipe_by_strategy = {
@@ -7507,7 +7760,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "art": ("TableSculpting", "Make_SculptureSmall", 8),
             "biofuel": ("BiofuelRefinery", "Make_ChemfuelFromOrganics", 150),
             "brewing": ("Brewery", "Make_Wort", 50),
-            "travel_food": ("FueledStove", "CookMealSurvivalPack", 30),
+            "travel_food": ("FueledStove", "", 50),
         }
         table_def, recipe, target = recipe_by_strategy[income_strategy]
         table = next(
@@ -7520,6 +7773,10 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             table = next((row for row in snapshot["development"]["work_tables"] if row.get("thing_def") == "ElectricStove"), None)
         if table is None:
             return {"applied": False, "reason": f"No completed workshop for {income_strategy}"}
+        if income_strategy == "travel_food":
+            recipe = researched_travel_ration_recipe(client, table)
+            if not recipe:
+                return {"applied": False, "reason": "No researched travel-ration recipe on this table"}
         response = ensure_bill(client, table, recipe, target)
         issued[f"income_bills:{income_strategy}"] = tick
         return {"applied": True, "strategy": income_strategy, "response": response}
@@ -7688,13 +7945,16 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         available_ids = set(details.get("firefighter_worker_ids") or [])
         eligible = [pawn for pawn in snapshot["colonists"] if pawn.get("id") in available_ids
                     and int(((pawn.get("work_priorities") or {}).get("Firefighter") or {}).get("priority") or 0) != 1]
-        firefighter = bridge.choose_worker(eligible, "Firefighter")
-        if firefighter is None:
+        if not eligible:
             return {"applied": False, "reason": "No capable colonist still needs Firefighter priority 1"}
-        result = prioritize(client, snapshot, "Firefighter", int(firefighter["id"]))
-        if result.get("applied"):
-            issued[f"firefighter:{int(firefighter['id'])}"] = tick
-        return result
+        responses = []
+        for firefighter in eligible:
+            result = prioritize(client, snapshot, "Firefighter", int(firefighter["id"]))
+            responses.append(result)
+            if result.get("applied"):
+                issued[f"firefighter:{int(firefighter['id'])}"] = tick
+        return {"applied": any(result.get("applied") for result in responses),
+                "assigned_ids": [int(pawn["id"]) for pawn in eligible], "responses": responses}
     if choice == "set_work_priority":
         work = str(details.get("work_type") or "")
         pawn_id = int(details.get("worker_pawn") or 0)
@@ -7736,8 +7996,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                else "construction_project_priority"] = tick
         return {"applied": True, "project_id": int(project_id), "builder_id": int(worker_id), "responses": [priority, response]}
     if choice == "prioritize_research":
-        result = prioritize(client, snapshot, "Research")
-        issued["priority:Research"] = tick
+        result = dedicate_researcher(client, snapshot)
+        if result.get("applied"):
+            issued["priority:Research"] = tick
         return result
     if choice == "prioritize_cooking":
         result = prioritize(client, snapshot, "Cooking")
@@ -7904,7 +8165,15 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         plant_ids = list(map(int, (selected.get("ids") or [])[:batch]))
         if not plant_ids:
             return {"applied": False, "reason": "Selected crops have already been marked for early harvest"}
-        result = client.post("/api/v1/map/plants/harvest", body={"map_id": map_id, "plant_ids": plant_ids})
+        try:
+            result = client.post("/api/v1/map/plants/harvest", body={"map_id": map_id, "plant_ids": plant_ids})
+        except bridge.RimApiError as exc:
+            if "No selected mature plants could be designated" not in str(exc):
+                raise
+            issued["early_crop_harvest"] = tick
+            for plant_id in plant_ids:
+                issued[f"early_crop:{plant_id}"] = tick
+            return {"applied": False, "reason": "Selected mature crops were already marked or harvested"}
         issued["early_crop_harvest"] = tick
         for plant_id in plant_ids:
             issued[f"early_crop:{plant_id}"] = tick
@@ -8328,6 +8597,15 @@ def run_event_cycle(
     map_state = map_state_for_snapshot(state, snapshot)
     context = bridge.safe_get(client, "/api/v1/events/context", snapshot.setdefault("warnings", []), map_id=snapshot["map"]["id"]) or {}
     context["fire_situation"] = snapshot["development"].get("fire_situation") or {}
+    stock = snapshot["development"].get("item_counts") or {}
+    travel_food = int(stock.get("Pemmican") or 0) + int(stock.get("MealSurvivalPack") or 0)
+    travel_medicine = sum(int(amount or 0) for name, amount in stock.items() if str(name).startswith("Medicine"))
+    reserve = max(20, len(snapshot.get("colonists") or []) * 5)
+    context["rescue_readiness"] = {
+        "travel_food": travel_food, "minimum_travel_food": reserve + 16,
+        "medicine": travel_medicine, "minimum_medicine": 10,
+        "ready": travel_food >= reserve + 16 and travel_medicine >= 10,
+    }
     context["trade_opportunities"] = [row for row in context.get("trade_opportunities") or []
         if not row.get("orbital") or (row.get("has_powered_comms_console")
                                       and row.get("has_powered_orbital_beacon"))]
@@ -8609,6 +8887,21 @@ def downed_raider_leave_description(downed: list[dict[str, Any]]) -> str:
             "A survivor can stand up and attack again; no prison labor is spent now.")
 
 
+def recurring_entity_hostile(hostile: dict[str, Any]) -> bool:
+    """Shamblers are not ordinary recruits and can rise again without bleeding."""
+    kind = str(hostile.get("kind_def") or "").lower()
+    faction = str(hostile.get("faction") or "").lower()
+    conditions = " ".join(map(str, hostile.get("health_conditions") or [])).lower()
+    return "shambler" in kind or "shambler" in conditions or faction == "entities"
+
+
+def recurring_entity_unresolved(snapshot: dict[str, Any]) -> bool:
+    return any(row.get("is_downed") and not row.get("is_dead")
+               and recurring_entity_hostile(row)
+               and bridge.first_number(row.get("bleeding_rate")) <= 0.05
+               for row in (snapshot.get("combat") or {}).get("hostiles") or [])
+
+
 def run_downed_raider_cycle(
     client: bridge.RimApiClient,
     agent: Any,
@@ -8630,23 +8923,36 @@ def run_downed_raider_cycle(
     prison_a = position(prison_site["x"], prison_site["z"])
     prison_b = position(prison_site["x"] + 6, prison_site["z"] + 6)
     prison_beds = ready_prison_beds(snapshot["development"], prison_site)
-    criteria: dict[str, str] = {
+    recurring = [hostile for hostile in downed if recurring_entity_hostile(hostile)
+                 and bridge.first_number(hostile.get("bleeding_rate")) <= 0.05]
+    healthy_fighters = [pawn for pawn in snapshot["combat"]["colonists"]
+                        if not pawn.get("is_downed") and bridge.first_number(pawn.get("health")) >= 0.75
+                        and str(pawn.get("current_job") or "").lower() not in {"rescue", "tendpatient"}]
+    urgent_entity = bool(recurring and healthy_fighters)
+    criteria: dict[str, str] = ({} if urgent_entity else {
         "leave_downed_raiders": downed_raider_leave_description(downed),
-    }
-    can_build_prison = bridge.choose_worker(snapshot.get("colonists") or [], "Construction") is not None
-    if not prison_beds and can_build_prison:
+    })
+    can_build_prison = (bridge.choose_worker(snapshot.get("colonists") or [], "Construction") is not None
+                        and prison_material(snapshot["development"].get("item_counts") or {}) is not None)
+    if not urgent_entity and not prison_beds and can_build_prison:
         if not issued_recently(map_state, "prison_blueprint", tick, retry_ticks=90000):
             criteria["build_prison"] = "Place a normal enclosed prison now; capture becomes possible only after construction finishes, and this raider may bleed out first."
         else:
             criteria["wait_for_prison"] = "Keep colonists undrafted and prioritize construction while the already-issued prison is completed."
     for hostile in downed:
+        if urgent_entity and hostile not in recurring:
+            continue
         pawn_id = int(hostile["id"])
         name = str(hostile.get("name") or pawn_id)
-        criteria[f"finish_downed:{pawn_id}"] = (
-            f"Kill {name} with an ordinary drafted attack. Health {float(hostile.get('health') or 0) * 100:.0f}%, "
-            f"bleeding {float(hostile.get('bleeding_rate') or 0):.2f}; this avoids prison costs but may affect mood or ideology."
-        )
-        if prison_beds:
+        if healthy_fighters:
+            criteria[f"finish_downed:{pawn_id}"] = (
+                f"Kill {name} with an ordinary drafted attack. Health {float(hostile.get('health') or 0) * 100:.0f}%, "
+                f"bleeding {float(hostile.get('bleeding_rate') or 0):.2f}; "
+                + ("this shambler can rise and attack again and cannot be recruited or traded."
+                   if recurring_entity_hostile(hostile) else
+                   "this avoids prison costs but may affect mood or ideology.")
+            )
+        if prison_beds and not recurring_entity_hostile(hostile) and not urgent_entity:
             skills = ", ".join(map(str, hostile.get("top_skills") or [])) or "unknown skills"
             if hostile.get("recruitable", True):
                 criteria[f"capture_recruit:{pawn_id}"] = (
@@ -8694,30 +9000,37 @@ def run_downed_raider_cycle(
     elif choice == "build_prison":
         terrain = client.get("/api/v1/map/terrain", map_id=snapshot["map"]["id"])
         site = choose_prison_site(terrain, anchor, snapshot["development"], map_state)
-        issued["prison_blueprint"] = tick
         if site is None:
             result = {"applied": False, "reason": "No clear dry site for a seven-cell prison"}
         else:
-            responses.append(post_blueprint(client, snapshot["map"]["id"], site, prison_blueprint()))
-            map_state["prison_site"] = site
-            responses.append(prioritize(client, snapshot, "Construction"))
-            result = {"applied": True, "site": site, "responses": responses}
+            stuff = prison_material(material_counts)
+            if not stuff:
+                result = {"applied": False, "reason": "Prison needs 140 wood or steel"}
+                responses = []
+            else:
+                responses.append(post_blueprint(client, snapshot["map"]["id"], site, prison_blueprint(stuff)))
+                map_state["prison_site"] = site
+                issued["prison_blueprint"] = tick
+                responses.append(prioritize(client, snapshot, "Construction"))
+                result = {"applied": True, "site": site, "material": stuff, "responses": responses}
     elif choice.startswith("finish_downed:"):
         target_id = int(choice.split(":", 1)[1])
-        fighters = [p for p in snapshot["combat"]["colonists"] if not p.get("is_downed") and float(p.get("health") or 0) >= 0.75]
-        ranged = [p for p in fighters if p.get("has_ranged_weapon")]
-        actor = max(
-            ranged or fighters,
-            key=lambda p: int((p.get("shooting_skill") if ranged else p.get("melee_skill")) or 0),
-            default=None,
-        )
+        fighters = healthy_fighters
+        target = next((row for row in downed if int(row["id"]) == target_id), None)
+        actor = min(fighters, key=lambda pawn: (
+            squared_distance(pawn.get("position") or {}, (target or {}).get("position") or {}),
+            -int(pawn.get("melee_skill") or 0)), default=None)
         if actor is None:
             result = {"applied": False, "reason": "No healthy colonist can finish the target"}
+        elif (str(actor.get("current_job") or "").lower() == "attackmelee"
+              and int(actor.get("current_job_target_id") or 0) == target_id):
+            result = {"applied": False, "in_progress": True, "actor": actor.get("name"),
+                      "target_id": target_id, "reason": "Finishing attack is already underway"}
         else:
             responses.append(client.post("/api/v1/pawn/edit/status", body={"pawn_id": int(actor["id"]), "is_drafted": True}))
             responses.append(client.post("/api/v1/pawn/job", body={
                 "pawn_id": int(actor["id"]),
-                "job_def": "AttackStatic" if actor.get("has_ranged_weapon") else "AttackMelee",
+                "job_def": "AttackMelee",
                 "target_thing_id": target_id,
             }))
             issued[f"finish_downed:{target_id}"] = tick
@@ -9177,6 +9490,13 @@ def post_combat_care_options(snapshot: dict[str, Any],
             (bridge.first_number((row.get("position") or {}).get("x")) - bridge.first_number(patient_pos.get("x"))) ** 2
             + (bridge.first_number((row.get("position") or {}).get("z")) - bridge.first_number(patient_pos.get("z"))) ** 2,
         ))
+        # Carrying an untreated patient to a remote bed can take longer than
+        # their remaining bleed time. A doctor can tend at their current cell.
+        bleeding = bridge.first_number(patient.get("bleeding_rate"))
+        bed_distance = squared_distance(patient_pos, bed.get("position") or {}) ** 0.5
+        if (patient.get("tendable_now") and any(int(doctor["id"]) != patient_id for doctor in doctors)
+                and (bleeding >= 2.0 or (bleeding >= 0.5 and bed_distance >= 20))):
+            continue
         helpers = sorted(
             [pawn for pawn in available_helpers if int(pawn["id"]) != patient_id],
             key=lambda pawn: (
@@ -9212,8 +9532,15 @@ def post_combat_care_options(snapshot: dict[str, Any],
         )
         infection_note = (f" infection severity {max(bridge.first_number(c.get('severity')) for c in infections):.2f};"
                           if infections else "")
+        # A rescuer carrying this very patient must be allowed to switch to
+        # field tending if their bleeding is critical. Rescue never stops it.
+        rescuer_doctors = [pawn for pawn in colonists
+                           if bleeding >= 1.5 and int(pawn.get("current_job_target_id") or 0) == patient_id
+                           and str(pawn.get("current_job") or "").lower() == "rescue"
+                           and not pawn.get("is_dead") and not pawn.get("is_downed")
+                           and can_do_medicine(pawn)]
         available_doctors = sorted(
-            [pawn for pawn in doctors if int(pawn["id"]) != patient_id],
+            [pawn for pawn in doctors + rescuer_doctors if int(pawn["id"]) != patient_id],
             key=lambda pawn: (bridge.first_number(pawn.get("medicine_skill")),
                               bridge.first_number(pawn.get("health"), 1)), reverse=True,
         )[:2]
@@ -9237,6 +9564,15 @@ def post_combat_care_options(snapshot: dict[str, Any],
                             "summary": (f"Self-tend {patient.get('name')} medicine {patient.get('medicine_skill', 0)};"
                                         f"{infection_note} bleed {bleeding:.2f}, health {bridge.first_number(patient.get('health')):.2f}. "
                                         "Risk poor care versus waiting for another doctor. " + infection_risk)}
+    # Give the most seriously bleeding downed patient the next doctor before
+    # stable injuries or a long rescue consume that decision window.
+    urgent = next((pawn for pawn in patients if pawn.get("is_downed")
+                   and bridge.first_number(pawn.get("bleeding_rate")) >= 1.5), None)
+    if urgent is not None:
+        urgent_tends = {name: row for name, row in options.items()
+                        if row.get("kind") == "tend" and row.get("patient_id") == int(urgent["id"])}
+        if urgent_tends:
+            return urgent_tends
     return options
 
 
@@ -9260,6 +9596,23 @@ def rescue_job_in_progress(snapshot: dict[str, Any]) -> bool:
     return any(str(row.get("current_job") or "").lower() == "rescue"
                and row.get("current_job_target_id") is not None
                and int(row["current_job_target_id"]) in downed for row in colonists)
+
+
+def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
+    """Do not wait for one rescue while another colonist bleeds untreated."""
+    colonists = snapshot.get("combat", {}).get("colonists", [])
+    tended = {int(row["current_job_target_id"]) for row in colonists
+              if str(row.get("current_job") or "").lower() == "tendpatient"
+              and row.get("current_job_target_id") is not None}
+    return any(row.get("id") is not None and int(row["id"]) not in tended
+               and row.get("tendable_now") and not row.get("is_dead")
+               and bridge.first_number(row.get("bleeding_rate")) >= 1.5
+               for row in colonists)
+
+
+def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
+    return urgent_care_unassigned(snapshot) and any(
+        name.startswith("tend_") for name in post_combat_care_options(snapshot))
 
 
 def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict[str, Any],
@@ -9316,6 +9669,15 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     options = post_combat_care_options(snapshot, buildings)
     if not options:
         return None
+    if recurring_entity_unresolved(snapshot) and not any(
+            row.get("kind") == "tend"
+            and bridge.first_number(next((pawn.get("bleeding_rate") for pawn in
+                                          snapshot.get("combat", {}).get("colonists", [])
+                                          if pawn.get("id") == row.get("patient_id")), 0.0)) >= 1.5
+            for row in options.values()):
+        # Treat bleeding first. Stable wounds can wait until a finisher has
+        # dealt with an entity that will recover and attack again.
+        return None
     active_infection = any(
         "infection" in str(condition.get("def_name") or condition.get("label") or "").lower()
         and condition.get("tendable_now")
@@ -9329,6 +9691,8 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
         "defer_care": f"Do not treat now. {delay_risk} Choose only if delay is worth that risk.",
         "resume_colony_decisions": f"Return to other colony work without a treatment order. {delay_risk}",
     }
+    if urgent_care_actionable(snapshot):
+        alternatives = {}
     care_options = {**{key: row["summary"] for key, row in options.items()}, **alternatives}
     choice, raw = ask_laya_choice(agent, {
         "task": "Choose treatment, rescue or another action after combat",
@@ -9737,9 +10101,11 @@ def main() -> int:
                         if post_combat_pending and now >= next_post_combat_care_cycle:
                             care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log)
                             if care_record is None:
-                                post_combat_pending = False
-                            else:
+                                post_combat_pending = recurring_entity_unresolved(snapshot)
                                 next_post_combat_care_cycle = now + args.interval
+                            else:
+                                next_post_combat_care_cycle = now + (2.0 if urgent_care_actionable(snapshot)
+                                                                      else args.interval)
                                 if care_record["result"].get("deferred"):
                                     post_combat_pending = bool(care_record["result"].get("revisit"))
                                     if post_combat_pending:
@@ -9756,10 +10122,15 @@ def main() -> int:
                                 elapsed = time.monotonic() - started
                                 time.sleep(max(0.0, 2.0 - elapsed))
                                 continue
+                        if post_combat_pending and urgent_care_actionable(snapshot):
+                            elapsed = time.monotonic() - started
+                            time.sleep(max(0.0, 2.0 - elapsed))
+                            continue
                         if now >= next_downed_cycle:
                             record = run_downed_raider_cycle(client, agent, state, args.state, args.log)
                             downed_choice = str((record.get("decision") or {}).get("choice") or "")
-                            next_downed_cycle = now + (max(60.0, args.interval * 6)
+                            next_downed_cycle = now + (5.0 if recurring_entity_unresolved(snapshot)
+                                                       else max(60.0, args.interval * 6)
                                                        if downed_choice in {"leave_downed_raiders", "wait_for_prison"}
                                                        else args.interval)
                             last_combat_record = record
@@ -9768,7 +10139,8 @@ def main() -> int:
                             publish_combat_overlay(client, last_combat_record, repeated=True)
                         if ((last_combat_record or {}).get("decision") or {}).get("choice") in {
                             "leave_downed_raiders", "wait_for_prison",
-                        } and now >= next_colony_cycle and not snapshot["map"].get("is_temp_incident_map"):
+                        } and now >= next_colony_cycle and not recurring_entity_unresolved(snapshot) \
+                                and not snapshot["map"].get("is_temp_incident_map"):
                             development_record = run_development_cycle(client, agent, state, args.state, args.log)
                             next_colony_cycle = time.monotonic() + args.interval
                             print(f"[{development_record['timestamp']}] colony work beside downed raider: "
@@ -9828,23 +10200,27 @@ def main() -> int:
                     last_combat_order_time = 0.0
                     last_combat_step_time = 0.0
                     now = time.monotonic()
+                    fire_state = bridge.safe_get(client, "/api/v1/map/fire/situation", [],
+                                                 map_id=int(snapshot["map"]["id"])) or {}
+                    active_home_fire = any(
+                        fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
+                        for fire in fire_state.get("fires") or [])
+                    if active_home_fire:
+                        next_colony_cycle = min(next_colony_cycle, now)
                     # A lingering post-combat treatment must not keep every
                     # firefighter at low priority while the Home area burns.
-                    if post_combat_pending and firefighter_priority_options(snapshot):
-                        fire_state = bridge.safe_get(client, "/api/v1/map/fire/situation", [],
-                                                     map_id=int(snapshot["map"]["id"])) or {}
-                        if any(fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
-                               for fire in fire_state.get("fires") or []):
-                            fire_record = run_development_cycle(client, agent, state, args.state, args.log)
-                            next_colony_cycle = time.monotonic() + args.interval
-                            print(f"[{fire_record['timestamp']}] fire emergency: "
-                                  f"{fire_record['decision']['choice']} | {fire_record['result']}", flush=True)
-                            if (fire_record["decision"]["choice"] == "prioritize_firefighting"
-                                    and fire_record["result"].get("applied")):
-                                continue
+                    if post_combat_pending and firefighter_priority_options(snapshot) and active_home_fire:
+                        fire_record = run_development_cycle(client, agent, state, args.state, args.log)
+                        next_colony_cycle = time.monotonic() + 2.0
+                        print(f"[{fire_record['timestamp']}] fire emergency: "
+                              f"{fire_record['decision']['choice']} | {fire_record['result']}", flush=True)
+                        if (fire_record["decision"]["choice"] == "prioritize_firefighting"
+                                and fire_record["result"].get("applied")):
+                            continue
                     if (post_combat_pending and care_assignment_time > 0
                             and any(row.get("tendable_now") or row.get("is_downed")
                                     for row in snapshot["combat"]["colonists"])
+                            and not urgent_care_actionable(snapshot)
                             and (now - care_assignment_time < 15.0
                                  or ((treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot))
                                      and now - care_assignment_time < 120.0))):
@@ -9859,7 +10235,8 @@ def main() -> int:
                             post_combat_pending = False
                             post_combat_care_failures = 0
                         else:
-                            next_post_combat_care_cycle = now + args.interval
+                            next_post_combat_care_cycle = now + (2.0 if urgent_care_actionable(snapshot)
+                                                                  else args.interval)
                             next_colony_cycle = now + args.interval
                             if care_record["result"].get("deferred"):
                                 post_combat_pending = bool(care_record["result"].get("revisit"))
@@ -9874,6 +10251,10 @@ def main() -> int:
                             if post_combat_care_failures >= 3:
                                 post_combat_pending = False
                             print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                            if urgent_care_actionable(snapshot):
+                                elapsed = time.monotonic() - started
+                                time.sleep(max(0.0, 2.0 - elapsed))
+                                continue
                     rescue_record = run_rescue_site_cycle(client, state, args.state, args.log, snapshot)
                     away_site = bool(snapshot.get("map", {}).get("is_temp_incident_map"))
                     if rescue_record is not None:
@@ -9887,14 +10268,15 @@ def main() -> int:
                         if ancient_record is not None:
                             next_colony_cycle = now + args.interval
                             print(f"[{ancient_record['timestamp']}] ancient danger: {ancient_record['decision']['choice']}", flush=True)
-                    if rescue_record is None and ancient_record is None and not away_site and now >= next_colony_cycle:
+                    if (rescue_record is None and ancient_record is None and not away_site
+                            and not active_home_fire and now >= next_colony_cycle):
                         event_record = run_event_cycle(client, agent, state, args.state, args.log)
                         if event_record is not None:
                             next_colony_cycle = now + args.interval
                             print(f"[{event_record['timestamp']}] event: {event_record['decision']['choice']} | {event_record['result']}", flush=True)
                     if rescue_record is None and ancient_record is None and event_record is None and not away_site and now >= next_colony_cycle:
                         record = run_development_cycle(client, agent, state, args.state, args.log)
-                        next_colony_cycle = now + args.interval
+                        next_colony_cycle = now + (2.0 if active_home_fire else args.interval)
                         print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {record['result']}", flush=True)
                 runtime_state = "running"
                 runtime_detail = "Last decision cycle completed"

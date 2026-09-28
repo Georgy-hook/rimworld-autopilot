@@ -143,6 +143,45 @@ class StreamObserverTests(unittest.TestCase):
         planner.step(running, [], 45)
         self.assertEqual(planner.shot.target_id, 2)
 
+    def test_home_fire_slows_immediately_then_returns_to_three(self):
+        planner = observer.ObserverPlanner()
+        game = state()["game"]
+        self.assertEqual(planner.pacing_actions(game, 0),
+                         [{"kind": "ensure_speed", "speed": 3}])
+        self.assertEqual(planner.pacing_actions(game, 1, home_fire=True),
+                         [{"kind": "ensure_speed", "speed": 1}])
+        self.assertEqual(planner.pacing_actions(game, 2, home_fire=True), [])
+        self.assertEqual(planner.pacing_actions(game, 3),
+                         [{"kind": "ensure_speed", "speed": 3}])
+
+    def test_critical_bleeding_slows_immediately_then_returns_to_three(self):
+        planner = observer.ObserverPlanner()
+        game = state()["game"]
+        self.assertEqual(planner.pacing_actions(game, 0),
+                         [{"kind": "ensure_speed", "speed": 3}])
+        self.assertEqual(planner.pacing_actions(game, 1, critical_bleeding=True),
+                         [{"kind": "ensure_speed", "speed": 1}])
+        self.assertEqual(planner.pacing_actions(game, 2),
+                         [{"kind": "ensure_speed", "speed": 3}])
+
+    def test_downed_colonist_with_active_enemy_slows_then_returns_to_three(self):
+        planner = observer.ObserverPlanner()
+        game = state()["game"]
+        self.assertEqual(planner.pacing_actions(game, 0),
+                         [{"kind": "ensure_speed", "speed": 3}])
+        self.assertEqual(planner.pacing_actions(game, 1, downed_under_attack=True),
+                         [{"kind": "ensure_speed", "speed": 1}])
+        self.assertEqual(planner.pacing_actions(game, 2),
+                         [{"kind": "ensure_speed", "speed": 3}])
+
+    def test_distant_enemy_does_not_slow_downed_colonist_recovery(self):
+        colonists = [dict(pawn(1), is_downed=True), pawn(2)]
+        far = [dict(pawn(50), distance_to_nearest_opponent=106)]
+        near = [dict(pawn(50), distance_to_nearest_opponent=30)]
+        self.assertFalse(observer._downed_under_attack(colonists, far))
+        self.assertTrue(observer._downed_under_attack(colonists, near))
+        self.assertFalse(observer._downed_under_attack([pawn(1), pawn(2)], near))
+
     def test_new_colony_rearms_three_times_speed_immediately(self):
         planner = observer.ObserverPlanner()
         first = state(map_id=1, tick=120000)

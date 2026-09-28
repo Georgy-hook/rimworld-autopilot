@@ -129,12 +129,22 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(any("Hypothermia" in risk for risk in
                             director.model_decision_context(snapshot)["risks"]))
         client = mock.Mock()
-        client.post.return_value = {"placed": 1}
+        client.post.side_effect = lambda endpoint, **kwargs: (
+            {"sites": [{"position": {"x": 14, "z": 14}, "rotation": 2}]}
+            if endpoint.endswith("/site-options") else {"placed": 1})
         with mock.patch.object(director, "prioritize", return_value={"success": True}):
             result = director.execute_action(client, snapshot, state, "build_room_campfire", details)
         self.assertTrue(result["applied"])
         self.assertEqual(result["target"], {"x": 14, "z": 14})
         self.assertEqual(client.post.call_args.kwargs["body"]["blueprint"]["buildings"][0]["def_name"], "Campfire")
+        self.assertEqual(client.post.call_args.kwargs["body"]["blueprint"]["buildings"][0]["rotation"], 2)
+        client.post.reset_mock()
+        client.post.side_effect = None
+        client.post.return_value = {"sites": [], "reason": "Interaction spot is blocked"}
+        result = director.execute_action(client, snapshot, state, "build_room_campfire", details)
+        self.assertFalse(result["applied"])
+        self.assertEqual(client.post.call_count, 1)
+        client.post.return_value = {"placed": 1}
         snapshot["development"]["construction_projects"] = [{
             "thing_id": 99, "def_name": "Campfire", "label": "campfire",
             "kind": "blueprint", "position": {"x": 14, "z": 14},
@@ -553,6 +563,10 @@ class DirectorTests(unittest.TestCase):
         state = {"anchor": {"x": 11, "z": 11}, "issued": {}}
         actions, _ = director.candidate_actions(None, snapshot, state)
         self.assertIn("build_prison", actions)
+        snapshot["development"]["item_counts"] = {"WoodLog": 0, "Steel": 200}
+        actions, _ = director.candidate_actions(None, snapshot, state)
+        self.assertIn("build_prison", actions)
+        self.assertEqual(snapshot["development"]["population_growth_context"]["material"], "Steel")
         state["prison_site"] = {"x": 30, "z": 30}
         snapshot["development"]["buildings"].append(
             {"id": 30, "def": "SleepingSpot", "position": {"x": 32, "z": 33},
@@ -669,6 +683,33 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("ask_laya_generic", options)
         self.assertIn("observe_event", options)
 
+    def test_refugee_hospitality_quest_can_be_accepted(self):
+        quest = {"source": "quest", "id": 1, "quest_def": "Hospitality_Refugee",
+                 "name": "Tired Survivors", "description": "Two refugees may join later",
+                 "ever_accepted": False}
+        self.assertEqual(colony_events.classify_event(quest), "quest")
+        pending = colony_events.pending_events({"active_quests": [quest]}, set())
+        self.assertEqual(pending[0]["family"], "quest")
+        self.assertIn("accept_quest", colony_events.response_options(pending[0], {}))
+        self.assertNotIn("rescue_arrival", colony_events.response_options(pending[0], {}))
+        quest["ever_accepted"] = True
+        self.assertNotIn("accept_quest", colony_events.response_options(quest | {"family": "quest"}, {}))
+
+        rescue = {"source": "quest", "id": 2, "quest_def": "OpportunitySite_PrisonerWillingToJoin",
+                  "name": "Rescue a recruit", "ever_accepted": True,
+                  "look_targets": [{"world_object_id": 97}]}
+        self.assertEqual(colony_events.classify_event(rescue), "kidnap_rescue")
+        rescue["family"] = "kidnap_rescue"
+        self.assertIn("prepare_rescue_mission", colony_events.response_options(
+            rescue, {"active_quests": [rescue]}))
+
+    def test_unsupported_timed_monument_quest_is_not_accepted(self):
+        event = {"source": "quest", "quest_def": "BuildMonument_Basic",
+                 "family": "quest", "ever_accepted": False}
+        options = colony_events.response_options(event, {})
+        self.assertNotIn("accept_quest", options)
+        self.assertIn("defer_quest", options)
+
     def test_rescue_event_only_offers_mission_after_acceptance_and_site(self):
         event = {"family": "kidnap_rescue"}
         offered = {"active_quests": [{"quest_def": "PrisonerRescue", "ever_accepted": False, "look_targets": [{"world_object_id": 5}]}]}
@@ -676,6 +717,12 @@ class DirectorTests(unittest.TestCase):
         accepted = {"active_quests": [{"quest_def": "PrisonerRescue", "ever_accepted": True, "look_targets": [{"world_object_id": 5}]}]}
         self.assertIn("prepare_rescue_mission", colony_events.response_options(event, accepted))
         self.assertNotIn("accept_rescue_quest", colony_events.response_options(event, accepted))
+        accepted["rescue_readiness"] = {"ready": False, "travel_food": 0,
+                                         "minimum_travel_food": 36, "medicine": 30,
+                                         "minimum_medicine": 10}
+        blocked = colony_events.response_options(event, accepted)
+        self.assertNotIn("prepare_rescue_mission", blocked)
+        self.assertIn("0/36", blocked["defer_rescue"])
 
     def test_kidnapped_colonist_is_not_matched_to_unrelated_refugee(self):
         context = {"active_quests": [{"id": 1, "quest_def": "OpportunitySite_DownedRefugee",
@@ -869,6 +916,134 @@ class DirectorTests(unittest.TestCase):
         map_state["income_plan_started"] = "crops"
         subsequent, _ = director.candidate_actions(None, copy.deepcopy(snapshot), map_state)
         self.assertNotIn("income_crops", subsequent)
+
+        blocked = copy.deepcopy(snapshot)
+        blocked["game"]["tick"] = 100000
+        map_state.update({"doctrine": {"schema_version": 2, "primary_direction": "anomaly_containment",
+                                       "economy_product": "bioferrite", "endgame": "enduring_colony"},
+                          "income_strategy": "bioferrite", "doctrine_tick": 1000})
+        blocked_actions, _ = director.candidate_actions(None, blocked, map_state)
+        self.assertIn("choose_colony_doctrine", blocked_actions)
+        self.assertTrue(blocked["development"]["doctrine_context"]["income_blocked"])
+
+    def test_unfinished_sculpture_is_not_installable(self):
+        self.assertFalse(director.installable_sculpture({
+            "thing_id": 64912, "def_name": "UnfinishedSculpture", "inner_def_name": None,
+        }))
+        self.assertTrue(director.installable_sculpture({
+            "thing_id": 42, "def_name": "MinifiedThing", "inner_def_name": "SculptureSmall",
+        }))
+        snapshot = {"development": {"things": [
+            {"def_name": "UnfinishedSculpture", "categories": ["Unfinished"]},
+        ]}}
+        self.assertNotIn("art", director.available_sale_categories(snapshot))
+        snapshot["development"]["things"].append({
+            "def_name": "MinifiedThing", "inner_def_name": "SculptureSmall",
+        })
+        self.assertIn("art", director.available_sale_categories(snapshot))
+
+    def test_food_focus_keeps_guest_bedding_when_there_is_time(self):
+        snapshot = {"map": {"resources": {"food": 300, "raw_food": 290,
+                                            "meals": 10, "nutrition": 18}},
+                    "colonists": [{"id": number} for number in range(5)],
+                    "development": {"farm": {}, "hunt_options": {"deer": {}},
+                                    "item_counts": {"WoodLog": 200}}}
+        actions = ["build_basic_beds", "designate_safe_hunting", "install_sculpture"]
+        focused = director.focus_imminent_food_choices(snapshot, actions)
+        self.assertIn("build_basic_beds", focused)
+        self.assertNotIn("install_sculpture", focused)
+        snapshot["map"]["resources"]["nutrition"] = 8
+        self.assertNotIn("build_basic_beds", director.focus_imminent_food_choices(snapshot, actions))
+
+    def test_four_day_food_reserve_does_not_hide_income_or_victory_planning(self):
+        snapshot = {"map": {"resources": {"food": 418, "raw_food": 404,
+                                            "meals": 14, "nutrition": 32.8}},
+                    "colonists": [{"id": number} for number in range(5)],
+                    "development": {"farm": {"crop_types": [{"total_plants": 80,
+                        "growth_progress_average": 16}]},
+                        "wild_plant_options": {"Plant_Berry": {"count": 8}},
+                        "hunt_options": [{"id": 12}], "item_counts": {"WoodLog": 118}}}
+        actions = ["harvest_local_plants", "designate_safe_hunting",
+                   "choose_colony_doctrine", "start_income", "prioritize_research"]
+        self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions)
+
+    def test_trade_rations_use_the_researched_live_campfire_recipe(self):
+        client = mock.Mock()
+        client.get.side_effect = lambda path, **kwargs: (
+            [{"def_name": "Make_Pemmican"}] if path == "/api/v1/buildings/recipes" else [])
+        client.post.return_value = {"success": True}
+        snapshot = {"game": {"tick": 32000}, "map": {"id": 1},
+                    "colonists": [{"id": number} for number in range(6)],
+                    "development": {"finished_research": ["Pemmican"],
+                                    "work_tables": [{"id": 12, "thing_def": "Campfire"}]}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        result = director.execute_action(client, snapshot, state, "prepare_trade_rations", {})
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["recipe"], "Make_Pemmican")
+        self.assertEqual(result["target_count"], 50)
+        client.post.assert_called_once_with(
+            "/api/v1/buildings/bills/add", query={"building_id": 12},
+            body={"recipe_def_name": "Make_Pemmican", "repeat_mode": "TargetCount",
+                  "target_count": 50, "pause_when_satisfied": True, "unpause_when_you_have": 16})
+
+    def test_trade_rations_research_waits_for_current_project(self):
+        client = mock.Mock()
+        snapshot = {"game": {"tick": 32000}, "map": {"id": 1}, "colonists": [{"id": 1}],
+                    "development": {"finished_research": [],
+                                    "current_research": {"name": "RecurveBow"}}}
+        result = director.execute_action(client, snapshot, {"anchor": {"x": 1, "z": 1}},
+                                         "prepare_trade_rations", {})
+        self.assertFalse(result["applied"])
+        client.post.assert_not_called()
+
+    def test_crop_income_offers_the_missing_caravan_ration_step(self):
+        snapshot = {"game": {"tick": 45000},
+                    "map": {"id": 1, "resources": {"food": 100, "nutrition": 60}},
+                    "colonists": [{"id": number} for number in range(3)],
+                    "animals": [], "wild_animals": [],
+                    "combat": {"colonists": [], "prisoners": []},
+                    "development": {"building_counts": {"SimpleResearchBench": 1},
+                                    "zones": [], "things": [], "item_counts": {"WoodLog": 200},
+                                    "current_research": {"name": "none"},
+                                    "finished_research": [], "work_tables": [],
+                                    "research_tree": [{"name": "Pemmican", "can_start_now": True}],
+                                    "trade_destinations": [{"settlement_id": 6}],
+                                    "trade_opportunities": []}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {},
+                 "doctrine": {"schema_version": 2, "economy_product": "crops",
+                              "endgame": "ship_escape"},
+                 "income_strategy": "crops", "doctrine_tick": 45000,
+                 "income_plan_started": "crops"}
+        actions, _ = director.candidate_actions(None, snapshot, state)
+        self.assertIn("prepare_trade_rations", actions)
+        self.assertIn("advance_doctrine_research", actions)
+        self.assertNotIn("select_research", actions)
+        snapshot["development"]["current_research"] = {
+            "name": "Xenogermination", "progress_percent": 0.0}
+        actions, _ = director.candidate_actions(None, snapshot, state)
+        self.assertIn("advance_doctrine_research", actions)
+        self.assertNotIn("prepare_trade_rations", actions)
+        self.assertEqual(snapshot["development"]["research_misalignment"]["current"],
+                         "Xenogermination")
+        aligned = copy.deepcopy(snapshot)
+        aligned["development"].pop("research_misalignment", None)
+        aligned["development"]["current_research"]["name"] = "Pemmican"
+        aligned["development"]["research_tree"].extend(
+            {"name": f"Extra{i}", "label": "pemmican survival meal", "can_start_now": True,
+             "research_points": 100} for i in range(15))
+        director.candidate_actions(None, aligned, state)
+        self.assertNotIn("research_misalignment", aligned["development"])
+
+    def test_fresh_research_detour_gets_one_safe_correction_cycle(self):
+        snapshot = {"map": {"resources": {"nutrition": 22}},
+                    "colonists": [{"id": number, "downed": False} for number in range(4)],
+                    "development": {"research_misalignment": {"current": "Xenogermination"},
+                                    "fire_situation": {"fires": []}}}
+        actions = ["harvest_local_plants", "advance_doctrine_research", "hold_survival"]
+        self.assertEqual(director.focus_misaligned_research_choice(snapshot, actions),
+                         ["advance_doctrine_research"])
+        snapshot["development"]["fire_situation"]["fires"] = [{"in_home": True}]
+        self.assertEqual(director.focus_misaligned_research_choice(snapshot, actions), actions)
 
     def test_failed_action_uses_bounded_exponential_backoff(self):
         state = {}
@@ -1114,6 +1289,16 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(harvest_call.kwargs["body"]["plant_ids"], list(range(99, 89, -1)))
         self.assertNotIn("harvest_food_crops_early", director.candidate_actions(
             None, snapshot, state)[0])
+        client.post.side_effect = director.bridge.RimApiError(
+            "No selected mature plants could be designated.")
+        stale = director.execute_action(client, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}},
+            "harvest_food_crops_early", {**details, "early_crop_type": "Plant_Rice", "early_crop_batch": "10"})
+        self.assertFalse(stale["applied"])
+        snapshot["map"]["resources"].update(raw_food=100, food=108, nutrition=7)
+        with mock.patch.object(director.bridge, "choose_worker", return_value=worker):
+            actions, _ = director.candidate_actions(
+                None, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}})
+        self.assertNotIn("harvest_food_crops_early", actions)
 
     def test_early_rice_is_not_an_emergency_with_four_days_of_meals(self):
         worker = {"id": 1, "name": "Grower", "hunger": 0.6,
@@ -1254,6 +1439,25 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("anchor", fresh)
         self.assertNotIn("doctrine", fresh)
         self.assertEqual(director.map_state_for_snapshot(state, second)["known_colonist_ids"], [501, 502])
+
+    def test_rollback_preserves_only_doctrine_chosen_before_restored_tick(self):
+        state = {}
+        saved = {"game": {"tick": 5000}, "map": {"seed": "same", "tile_id": 7, "id": 1},
+                 "colonists": [{"id": 10}, {"id": 11}]}
+        current = director.map_state_for_snapshot(state, saved)
+        current.update({"doctrine": {"endgame": "ship_escape"}, "doctrine_tick": 1000,
+                        "income_strategy": "crops", "anchor": {"x": 20, "z": 20}})
+        current["issued"]["hunt:42"] = 4000
+        saved["game"]["tick"] = 3000
+        rolled = director.map_state_for_snapshot(state, saved)
+        self.assertEqual(rolled["doctrine"], {"endgame": "ship_escape"})
+        self.assertEqual(rolled["income_strategy"], "crops")
+        self.assertEqual(rolled["issued"], {})
+        self.assertNotIn("anchor", rolled)
+        rolled["doctrine_tick"] = 3500
+        rolled["last_seen_tick"] = 5000
+        rolled_again = director.map_state_for_snapshot(state, saved)
+        self.assertNotIn("doctrine", rolled_again)
 
     def test_reloaded_base_anchor_stays_near_structures_and_food_when_pawns_roam(self):
         snapshot = {"colonists": [{"position": {"x": 18, "z": 20}},
@@ -1724,6 +1928,25 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(director.firefighter_priority_options(snapshot), [])
         actions, _ = director.candidate_actions(None, snapshot, state)
         self.assertNotIn("prioritize_firefighting", actions)
+
+    def test_home_fire_assigns_all_firefighters_in_one_cycle_and_hides_research(self):
+        snapshot = {"game": {"tick": 12000}, "map": {"id": 1},
+                    "colonists": [{"id": 7, "name": "Ada", "work_priorities": {}},
+                                  {"id": 8, "name": "Bess", "work_priorities": {}}],
+                    "development": {}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        client = mock.Mock()
+        client.post.return_value = {"success": True}
+        result = director.execute_action(client, snapshot, state, "prioritize_firefighting",
+                                         {"firefighter_worker_ids": [7, 8]})
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["assigned_ids"], [7, 8])
+        self.assertEqual(client.post.call_count, 2)
+        self.assertEqual(director.focus_active_fire_choices(
+            ["advance_doctrine_research", "rescue_downed_colonist"], True),
+            ["rescue_downed_colonist"])
+        self.assertEqual(director.focus_active_fire_choices(
+            ["advance_doctrine_research"], True), ["hold_survival"])
 
     def test_campfire_is_survival_choice_until_cooking_station_exists(self):
         snapshot = {
@@ -2248,6 +2471,32 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in details["hunt_options"]], [10])
         self.assertEqual([row["id"] for row in details["risky_hunt_options"]], [9])
 
+    def test_recovering_colony_does_not_start_new_hunts_with_food_in_store(self):
+        snapshot = {
+            "game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 80, "meals": 20}},
+            "colonists": [
+                {"id": 1, "name": "Hunter", "health": 1, "hunger": 0.8, "position": {"x": 20, "z": 20}},
+                {"id": 2, "name": "Patient", "health": 0.5, "hunger": 0.8, "downed": True,
+                 "position": {"x": 20, "z": 21}},
+            ],
+            "animals": [], "wild_animals": [
+                {"id": 9, "def": "Rhinoceros", "position": {"x": 25, "z": 20},
+                 "combat_power": 270, "harm_revenge_chance": 0.5},
+                {"id": 10, "def": "Hare", "position": {"x": 24, "z": 20},
+                 "combat_power": 33, "harm_revenge_chance": 0},
+            ],
+            "combat": {"colonists": [{"id": 1, "has_ranged_weapon": True,
+                                       "is_downed": False, "health": 1, "shooting_skill": 7}]},
+            "development": {"building_counts": {}, "zones": [], "current_research": {"name": "none"},
+                            "item_counts": {}, "work_tables": [], "forbidden": [], "plants": [], "things": []},
+        }
+        candidates, details = director.candidate_actions(None, snapshot, {"anchor": {"x": 20, "z": 20}, "issued": {}})
+        self.assertNotIn("consider_dangerous_hunt", candidates)
+        self.assertNotIn("designate_safe_hunting", candidates)
+        self.assertNotIn("prioritize_hunting", candidates)
+        self.assertNotIn("hunt_options", details)
+        self.assertNotIn("risky_hunt_options", details)
+
     def test_wood_shortage_offers_exact_tree_cutting_and_tracks_designations(self):
         snapshot = {
             "game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 30}},
@@ -2637,6 +2886,31 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(defs.count("SleepingSpot"), 2)
         self.assertEqual(defs.count("Door"), 1)
         self.assertGreaterEqual(defs.count("Wall"), 20)
+        steel = director.prison_blueprint("Steel")
+        self.assertTrue(all(row.get("stuff_def_name") == "Steel" for row in steel["buildings"]
+                            if row["def_name"] in {"Wall", "Door"}))
+        self.assertEqual(director.prison_material({"WoodLog": 0, "Steel": 150}), "Steel")
+
+    def test_research_staffing_reserves_worker_without_sacrificing_only_cook(self):
+        snapshot = {"map": {"resources": {"food": 200, "meals": 10}}, "colonists": [
+            {"id": 1, "name": "Grower", "skills": {"Intellectual": {"level": 2}},
+             "work_priorities": {"Research": {"priority": 0}, "Growing": {"priority": 1}}},
+            {"id": 2, "name": "Builder", "skills": {"Intellectual": {"level": 3}},
+             "work_priorities": {"Research": {"priority": 0}, "Construction": {"priority": 1},
+                                 "Hauling": {"priority": 1}, "Firefighter": {"priority": 1}}},
+            {"id": 3, "name": "Only cook", "skills": {"Intellectual": {"level": 4}},
+             "work_priorities": {"Research": {"priority": 1}, "Cooking": {"priority": 1},
+                                 "Construction": {"priority": 1}}},
+        ]}
+        self.assertFalse(director.researcher_is_dedicated(snapshot))
+        client = mock.Mock()
+        client.post.return_value = {"success": True}
+        result = director.dedicate_researcher(client, snapshot)
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["colonist"], "Builder")
+        self.assertEqual([(call.kwargs["body"]["work"], call.kwargs["body"]["priority"])
+                          for call in client.post.call_args_list],
+                         [("Research", 1), ("Construction", 2), ("Hauling", 2)])
 
     def test_room_floor_blueprint_uses_only_real_room_cells(self):
         layout, origin = director.room_floor_blueprint(
@@ -3344,7 +3618,7 @@ class DirectorTests(unittest.TestCase):
         choices = [
             "choose_colony_doctrine", "prosperity", "industrial_manufacturing",
             "compact", "manufacturing", "industrial", "industrial", "ranged_firepower", "pragmatic",
-            "ship_escape", "peaceful_trade", "expansionist", "peaceful_trade", "balanced", "components",
+            "ship_escape", "peaceful_trade", "expansionist", "peaceful_trade", "balanced", "art",
         ]
         agent = self.FakeAgent(choices)
         context = {
@@ -3360,7 +3634,7 @@ class DirectorTests(unittest.TestCase):
         doctrine = result["doctrine_selection"]
         self.assertEqual(doctrine["primary_direction"], "industrial_manufacturing")
         self.assertEqual(doctrine["economy_family"], "manufacturing")
-        self.assertEqual(doctrine["economy_product"], "components")
+        self.assertEqual(doctrine["economy_product"], "art")
         self.assertNotIn("doctrine_mining_product", result["raw"]["answers"])
         direction_question = agent.calls[2]["doctrine_primary_direction"]["criteria"]
         self.assertTrue(direction_question)
@@ -3380,6 +3654,50 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(result["selection"], current)
         self.assertEqual(len(agent.calls), 1)
 
+    def test_blocked_income_revision_must_choose_an_executable_product(self):
+        class FirstOptionAgent:
+            def predict(self, state, questions):
+                return {"answers": {key: {"choice": next(iter(question["criteria"])), "confidence": 1.0}
+                                    for key, question in questions.items()}}
+
+        context = {
+            "current": {"schema_version": 2, "primary_direction": "anomaly_containment",
+                        "economy_family": "anomaly", "economy_product": "bioferrite",
+                        "endgame": "enduring_colony"},
+            "income_blocked": True,
+            "material_options": {"WoodLog": "wood"},
+            "active_mods": [{"package_id": "ludeon.rimworld"},
+                            {"package_id": "ludeon.rimworld.anomaly"}],
+        }
+        result = colony_strategy.choose_cascaded_doctrine(
+            FirstOptionAgent(), {"people": 3, "needs": {"food": 100}}, context)
+        self.assertFalse(result.get("retained"))
+        self.assertIn(result["selection"]["economy_product"], colony_strategy.DIRECT_INCOME_PLANS)
+        self.assertEqual(result["raw_steps"][0]["question"]["id"], "doctrine_domain")
+
+    def test_endgame_direction_cannot_keep_a_continuity_goal(self):
+        class EndgameAgent:
+            def predict(self, state, questions):
+                answers = {}
+                for key, question in questions.items():
+                    preferred = "endgame" if key.startswith("doctrine_domain") else (
+                        "archonexus_pilgrimage" if key.startswith("doctrine_primary_direction") else None)
+                    chosen = preferred if preferred in question["criteria"] else next(iter(question["criteria"]))
+                    answers[key] = {"choice": chosen, "confidence": 1.0}
+                return {"answers": answers}
+
+        context = {"current": {"schema_version": 2, "primary_direction": "archonexus_pilgrimage",
+                               "economy_product": "crops", "endgame": "enduring_colony"},
+                   "material_options": {"WoodLog": "wood"},
+                   "active_mods": [{"package_id": "ludeon.rimworld"},
+                                   {"package_id": "ludeon.rimworld.ideology"}]}
+        result = colony_strategy.choose_cascaded_doctrine(
+            EndgameAgent(), {"people": 5, "needs": {"food": 200}}, context)
+        self.assertFalse(result.get("retained"))
+        self.assertEqual(result["selection"]["primary_direction"], "archonexus_pilgrimage")
+        self.assertEqual(result["selection"]["endgame"], "archonexus")
+        self.assertEqual(result["answers"]["doctrine_endgame"]["source"], "chosen_direction")
+
     def test_economic_outlook_distinguishes_inventory_from_real_sales(self):
         context = {"item_counts": {"Duster": 4}, "building_counts": {"ElectricTailoringBench": 1},
                    "trade_destinations": [{"settlement_id": 6}], "trade_ledger": []}
@@ -3391,6 +3709,16 @@ class DirectorTests(unittest.TestCase):
         context["trade_ledger"] = [{"sale_value": 420.0, "sold_units": 2}]
         self.assertEqual(colony_strategy.economic_outlook(
             {"economy_product": "tailoring"}, context)["recent_approx_sale_value"], 420.0)
+        context["item_counts"] = {"UnfinishedSculpture": 1}
+        context["building_counts"]["TableSculpting"] = 1
+        outlook = colony_strategy.economic_outlook({"economy_product": "art"}, context)
+        self.assertEqual(outlook["candidate_stock"], {})
+        self.assertEqual(outlook["stage"], "production")
+        context["things"] = [{"def_name": "MinifiedThing", "inner_def_name": "SculptureSmall",
+                              "stack_count": 1, "is_forbidden": False}]
+        outlook = colony_strategy.economic_outlook({"economy_product": "art"}, context)
+        self.assertEqual(outlook["candidate_stock"], {"SculptureSmall": 1})
+        self.assertEqual(outlook["stage"], "caravan_needed")
 
     def test_income_forecast_does_not_sell_food_reserves_or_call_purchases_sales(self):
         context = {"item_counts": {"RawRice": 50}, "resources": {"food": 8},
@@ -3416,6 +3744,11 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("Fabrication", options)
         self.assertNotIn("BlockedMachining", options)
         self.assertNotIn("FinishedComponents", options)
+        crop_options = colony_strategy.doctrine_research_candidates(
+            {"economy_product": "crops"}, [{"name": "Pemmican", "label": "Pemmican",
+                                            "can_start_now": True, "is_finished": False,
+                                            "research_points": 500}])
+        self.assertIn("Pemmican", crop_options)
 
     def test_architecture_includes_strategic_building_programs(self):
         options = director.architect.program_options({
@@ -3492,12 +3825,82 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("tend_1_2", options)
         self.assertNotIn("tend_1_3", options)
 
+    def test_stable_wound_waits_while_downed_shambler_can_reanimate(self):
+        snapshot = {"combat": {"hostiles": [
+            {"id": 99, "kind_def": "ShamblerSwarmer", "faction": "Entities",
+             "is_downed": True, "is_dead": False, "bleeding_rate": 0}],
+            "colonists": [
+                {"id": 1, "name": "Stable patient", "health": 0.6,
+                 "tendable_now": True, "bleeding_rate": 0, "is_downed": False},
+                {"id": 2, "name": "Doctor", "moving": 1, "manipulation": 1},
+            ]}, "map": {"id": 0}}
+        self.assertTrue(director.recurring_entity_unresolved(snapshot))
+        agent = self.FakeAgent(["tend_1_2"])
+        with tempfile.TemporaryDirectory() as folder:
+            result = director.run_post_combat_care_cycle(
+                mock.Mock(), agent, snapshot, pathlib.Path(folder) / "care.jsonl")
+        self.assertIsNone(result)
+        self.assertEqual(agent.calls, [])
+        snapshot["combat"]["colonists"][0].update(
+            is_downed=True, bleeding_rate=1.66)
+        self.assertIn("tend_1_2", director.post_combat_care_options(snapshot))
+
     def test_leaving_downed_raider_warns_about_second_attack(self):
         description = director.downed_raider_leave_description([
             {"name": "Slick", "bleeding_rate": 0.0},
         ])
         self.assertIn("bleeding 0.00", description[:120])
         self.assertIn("stand up and attack again", description[:120])
+
+    def test_downed_shambler_cannot_be_offered_as_prisoner_or_left_to_reanimate(self):
+        class Client:
+            def __init__(self):
+                self.posts = []
+
+            def post(self, endpoint, body=None, query=None):
+                self.posts.append((endpoint, body))
+                return {"success": True}
+
+        snapshot = {"game": {"tick": 200000},
+                    "map": {"id": 0, "seed": 1, "tile_id": 2,
+                            "resources": {"food": 100, "medicine": 4}},
+                    "colonists": [{"id": 1, "skills": {"Social": {"level": 1},
+                                                       "Medicine": {"level": 4}}}, {"id": 2}],
+                    "combat": {"colonists": [
+                        {"id": 1, "name": "Defender", "health": 1.0,
+                         "has_ranged_weapon": True, "shooting_skill": 5,
+                         "current_job": "Rescue", "current_job_target_id": 1},
+                        {"id": 2, "name": "Free defender", "health": 1.0,
+                         "has_ranged_weapon": True, "shooting_skill": 3}],
+                        "hostiles": [{"id": 99, "name": "Shambler", "kind_def": "ShamblerSwarmer",
+                                      "faction": "Entities", "health": 0.18, "bleeding_rate": 0,
+                                      "is_downed": True, "is_dead": False,
+                                      "recruitable": True}]},
+                    "development": {"item_counts": {"WoodLog": 200}}}
+        agent = self.FakeAgent(["finish_downed:99"])
+        client = Client()
+        state = {"maps": {"1:2:0": {"issued": {}, "anchor": {"x": 100, "z": 100}}}}
+        with (mock.patch.object(director.bridge, "collect_snapshot", return_value=snapshot),
+              mock.patch.object(director, "collect_development", return_value=snapshot),
+              mock.patch.object(director, "ready_prison_beds", return_value=[{"id": 7}]),
+              mock.patch.object(director.bridge, "choose_worker", return_value={"id": 1}),
+              mock.patch.object(director, "publish_combat_overlay"),
+              mock.patch.object(director, "save_state"),
+              mock.patch.object(director.bridge, "append_log")):
+            record = director.run_downed_raider_cycle(
+                client, agent, state, pathlib.Path("unused"), pathlib.Path("unused"))
+            initial_posts = len(client.posts)
+            snapshot["combat"]["colonists"][1].update(
+                current_job="AttackMelee", current_job_target_id=99)
+            in_progress = director.run_downed_raider_cycle(
+                client, agent, state, pathlib.Path("unused"), pathlib.Path("unused"))
+        self.assertEqual(set(record["decision"]["raw"]["question"]["criteria"]),
+                         {"finish_downed:99"})
+        self.assertEqual(record["decision"]["choice"], "finish_downed:99")
+        self.assertEqual(client.posts[-1][1]["job_def"], "AttackMelee")
+        self.assertEqual(client.posts[-1][1]["pawn_id"], 2)
+        self.assertTrue(in_progress["result"]["in_progress"])
+        self.assertEqual(len(client.posts), initial_posts)
 
     def test_post_combat_care_offers_rescue_and_executes_selected_job(self):
         class Client:
@@ -3515,7 +3918,7 @@ class DirectorTests(unittest.TestCase):
                 return {"success": True}
 
         snapshot = {"combat": {"hostiles": [], "colonists": [
-            {"id": 1, "name": "Patient", "health": 0.4, "bleeding_rate": 0.8,
+            {"id": 1, "name": "Patient", "health": 0.4, "bleeding_rate": 0.2,
              "tendable_now": True, "is_downed": True, "position": {"x": 50, "z": 50}},
             {"id": 2, "name": "Doctor", "health": 1, "medicine_skill": 8,
              "moving": 1, "manipulation": 1, "position": {"x": 45, "z": 45}},
@@ -3539,6 +3942,18 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(record["result"]["applied"])
         self.assertIn("not a completed treatment", agent.states[0]["triage"])
 
+    def test_remote_bed_does_not_displace_field_tending_for_bleeding_patient(self):
+        snapshot = {"combat": {"colonists": [
+            {"id": 1, "name": "Patient", "is_downed": True, "tendable_now": True,
+             "bleeding_rate": 1.66, "position": {"x": 100, "z": 100}},
+            {"id": 2, "name": "Doctor", "moving": 1, "manipulation": 1,
+             "position": {"x": 20, "z": 20}},
+        ]}}
+        beds = [{"id": 7, "def": "Bed", "position": {"x": 10, "z": 10}}]
+        options = director.post_combat_care_options(snapshot, beds)
+        self.assertNotIn("rescue_1_2", options)
+        self.assertIn("tend_1_2", options)
+
     def test_post_combat_rescue_avoids_occupied_and_reserved_beds(self):
         beds = [{"id": 99, "def": "Bed", "position": {"x": 10, "z": 10}},
                 {"id": 100, "def": "Bed", "position": {"x": 12, "z": 10}},
@@ -3550,7 +3965,8 @@ class DirectorTests(unittest.TestCase):
             {"id": 2, "name": "Reserved patient", "is_downed": True,
              "position": {"x": 30, "z": 30}},
             {"id": 3, "name": "Bleeding patient", "is_downed": True,
-             "bleeding_rate": 4.5, "position": {"x": 35, "z": 30}},
+             "tendable_now": True, "bleeding_rate": 4.5,
+             "position": {"x": 35, "z": 30}},
             {"id": 4, "name": "Rescuer", "current_job": "Rescue",
              "current_job_target_id": 2, "current_job_target_id_b": 100,
              "moving": 1, "manipulation": 1},
@@ -3560,8 +3976,33 @@ class DirectorTests(unittest.TestCase):
         options = director.post_combat_care_options(snapshot, beds)
         self.assertNotIn("rescue_1_5", options)
         self.assertNotIn("rescue_2_5", options)
-        self.assertEqual(options["rescue_3_5"]["bed_id"], 101)
-        self.assertIn("Critical bleeding", options["rescue_3_5"]["summary"])
+        self.assertNotIn("rescue_3_5", options)
+        self.assertIn("tend_3_5", options)
+
+    def test_critical_bleeding_needs_new_care_even_during_another_rescue(self):
+        snapshot = {"combat": {"colonists": [
+            {"id": 1, "tendable_now": True, "bleeding_rate": 11.76,
+             "is_downed": True, "position": {"x": 10, "z": 10}},
+            {"id": 2, "tendable_now": True, "bleeding_rate": 4.01,
+             "is_downed": True, "position": {"x": 20, "z": 10}},
+            {"id": 3, "current_job": "Rescue", "current_job_target_id": 1,
+             "moving": 1, "manipulation": 1},
+            {"id": 4, "moving": 1, "manipulation": 1},
+        ]}}
+        self.assertTrue(director.rescue_job_in_progress(snapshot))
+        self.assertTrue(director.urgent_care_unassigned(snapshot))
+        self.assertTrue(director.urgent_care_actionable(snapshot))
+        options = director.post_combat_care_options(snapshot)
+        self.assertEqual(set(options), {"tend_1_3", "tend_1_4"})
+        snapshot["combat"]["colonists"][0]["tendable_now"] = False
+        self.assertIn("tend_2_4", director.post_combat_care_options(snapshot))
+        snapshot["combat"]["colonists"][0]["tendable_now"] = True
+        snapshot["combat"]["colonists"][3].update(
+            current_job="TendPatient", current_job_target_id=2)
+        self.assertTrue(director.urgent_care_unassigned(snapshot))
+        snapshot["combat"]["colonists"][2].update(
+            current_job="TendPatient", current_job_target_id=1)
+        self.assertFalse(director.urgent_care_unassigned(snapshot))
 
     def test_infection_risk_is_visible_even_with_full_health_and_no_bleeding(self):
         snapshot = {"combat": {"hostiles": [], "colonists": [
@@ -4071,7 +4512,7 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions[:3])
 
     def test_immature_field_requires_earlier_food_replenishment(self):
-        snapshot = {"map": {"resources": {"food": 18, "nutrition": 15.36}},
+        snapshot = {"map": {"resources": {"food": 18, "nutrition": 10.56}},
                     "colonists": [{"id": n} for n in range(3)],
                     "development": {"farm": {"crop_types": [{"total_plants": 80,
                         "growth_progress_average": 25}]}}}
@@ -4079,7 +4520,7 @@ class DirectorTests(unittest.TestCase):
                    "prioritize_growing", "prioritize_hauling"]
         self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions[:2] + actions[-1:])
         snapshot["map"]["resources"]["nutrition"] = 24.0  # Five days for three people.
-        self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions[:2] + actions[-1:])
+        self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions)
         snapshot["development"]["farm"]["crop_types"][0]["growth_progress_average"] = 80
         self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions)
         snapshot["development"]["farm"]["crop_types"][0].update(

@@ -800,6 +800,30 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             )
             if "backstep_fire" in criteria:
                 criteria = {"backstep_fire": criteria.pop("backstep_fire"), **criteria}
+        # A healthy melee attacker has reached an isolated, mobile gunner.
+        # Holding cover or bashing it with a gun can kill the only nearby
+        # defender before distant allies can cross the map. Preserve the
+        # normal tactical choice when the enemy is already nearly down or a
+        # shooter/melee guard is close enough to cover the contact.
+        if "backstep_fire" in criteria:
+            isolated_contact = any(
+                pawn.get("has_ranged_weapon")
+                and first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 2
+                and first_number(pawn.get("moving"), 1) >= 0.7
+                and not any(other.get("id") != pawn.get("id")
+                            and not other.get("is_downed")
+                            and first_number(other.get("distance_to_nearest_opponent"), 9999) <= 10
+                            for other in fighters)
+                for pawn in fighters
+            )
+            strong_melee_threat = any(not hostile.get("has_ranged_weapon")
+                                      and first_number(hostile.get("health"), 0) >= 0.65
+                                      for hostile in hostile_rows)
+            if isolated_contact and strong_melee_threat:
+                criteria = {"backstep_fire": (
+                    "Immediately backstep the isolated gunner from a healthy melee attacker and keep firing; "
+                    "distant allies cannot cover this contact yet."
+                )}
         if not staging and any(weapon.get("is_ranged") for weapon in snapshot["combat"].get("available_weapons", [])) and any(
             not pawn.get("has_ranged_weapon") and first_number(pawn.get("sight"), 1) >= 0.65
             and first_number(pawn.get("manipulation"), 1) >= 0.65

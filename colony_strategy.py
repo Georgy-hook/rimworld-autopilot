@@ -308,6 +308,7 @@ DIRECT_INCOME_PLANS = frozenset({
 })
 
 PRODUCT_NEXT_MILESTONE = {
+    "crops": "Preserve home food, then research and cook caravan rations (26 pemmican or survival meals are required by the current trade route), or sell surplus to a verified visiting buyer.",
     "caravan_trade": "Prepare sale stock or silver, travel meals, healthy escorts and a friendly settlement.",
     "quest_rewards": "Inspect an active quest, its risk and the actual reward before accepting.",
     "raiding": "Scout a target and retain enough defenders, medicine and travel food.",
@@ -336,8 +337,18 @@ def economic_outlook(doctrine: dict[str, Any], context: dict[str, Any]) -> dict[
     known_buildings = {str(name) for name, amount in buildings.items() if int(amount or 0) > 0}
     known_buildings.update(str(row.get("thing_def") or "") for row in tables if isinstance(row, dict))
     stock = {str(name): int(amount or 0) for name, amount in counts.items()
-             if int(amount or 0) > 0 and any(token.lower() in str(name).lower()
-                                               for token in PRODUCT_STOCK_SIGNALS.get(product, ())) }
+             if int(amount or 0) > 0
+             and not (product == "art" and "unfinished" in str(name).lower())
+             and any(token.lower() in str(name).lower()
+                     for token in PRODUCT_STOCK_SIGNALS.get(product, ())) }
+    if product == "art":
+        for thing in context.get("things") or []:
+            if (not isinstance(thing, dict) or thing.get("is_forbidden")
+                    or thing.get("def_name") != "MinifiedThing"):
+                continue
+            inner = str(thing.get("inner_def_name") or "")
+            if inner.startswith("Sculpture"):
+                stock[inner] = stock.get(inner, 0) + max(1, int(thing.get("stack_count") or 1))
     facilities = list(PRODUCT_WORKSHOP_SIGNALS.get(product, ()))
     ready_facilities = [name for name in facilities if any(name.lower() in built.lower() for built in known_buildings)]
     destinations = [row for row in context.get("trade_destinations") or []
@@ -456,6 +467,7 @@ RESEARCH_TOKENS = {
 }
 
 PRODUCT_RESEARCH_TOKENS = {
+    "crops": ("pemmican", "survival meal"),
     "drugs": ("drug production", "psychite"), "brewing": ("brewing",), "travel_food": ("pemmican", "survival meal"),
     "biofuel": ("biofuel",), "tailoring": ("clothing", "devilstrand"), "art": ("stonecut",),
     "weapons": ("gunsmith", "weapon", "machining"), "armor": ("armor", "smith"), "components": ("fabrication", "component"),
@@ -558,6 +570,13 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     # Each Laya call is independent. Pass the previous selections back in the
     # *next* state, or direction, revenue and ending can contradict each other.
     current = context.get("current") or {}
+    income_blocked = bool(context.get("income_blocked"))
+    victory_required = bool(context.get("victory_required"))
+    victory_missing = victory_required and str(current.get("endgame") or "") == "enduring_colony"
+    endgame_conflict = bool(
+        str(current.get("primary_direction")) in DIRECTION_ENDGAME_HINTS
+        and course_alignment(current) != "Direction and ending are not visibly in conflict."
+    )
     def decision_state() -> dict[str, Any]:
         needs = state.get("needs") or {}
         return {
@@ -568,6 +587,8 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
             "chosen_so_far": {key.removeprefix("doctrine_"): row.get("choice")
                               for key, row in answers.items() if isinstance(row, dict)},
             "income_evidence": economic_outlook(current, context),
+            "income_blocked": income_blocked, "endgame_conflict": endgame_conflict,
+            "victory_required": victory_required,
             "alignment": course_alignment(current),
             "recent_course_changes": (context.get("recent_course_changes") or [])[-2:],
         }
@@ -578,7 +599,7 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
         answers.update(raw.get("answers", {}))
         return selected
 
-    if current:
+    if current and not income_blocked and not endgame_conflict and not victory_missing:
         continuation = ask_step("doctrine_revision",
             "Keep the established course if it still advances colony survival and the chosen ending; revise only with a concrete reason from current evidence.",
             {"keep": "Keep current goal, trade route, diplomacy and building policy.",
@@ -596,6 +617,8 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     family_options = {
         key: str(row["label"]) for key, row in ECONOMY_FAMILIES.items()
         if _requires_available(row.get("requires"), flags)
+        and any(name in DIRECT_INCOME_PLANS and _requires_available(PRODUCT_REQUIREMENTS.get(name), flags)
+                for name in row.get("products", {}))
     }
     independent = {
         "doctrine_settlement_form": {"type": "choice", "instructions": "Choose future settlement topology; never rebuild existing rooms only to match it.", "criteria": settlements},
@@ -603,7 +626,9 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
         "doctrine_technology": {"type": "choice", "instructions": "Choose the primary technology focus; research still respects live prerequisites.", "criteria": _filter_axis(TECHNOLOGY, flags)},
         "doctrine_military": {"type": "choice", "instructions": "Choose a defense doctrine that will filter fortifications, research and combat preparation.", "criteria": _filter_axis(DEFENSE, flags)},
         "doctrine_society": {"type": "choice", "instructions": "Choose social organization without violating the colony's actual ideology precepts.", "criteria": _filter_axis(SOCIETY, flags)},
-        "doctrine_endgame": {"type": "choice", "instructions": "Choose the long-horizon victory or continuity objective.", "criteria": _filter_axis(ENDGAMES, flags)},
+        "doctrine_endgame": {"type": "choice", "instructions": "Choose the long-horizon victory objective.",
+                             "criteria": {name: description for name, description in _filter_axis(ENDGAMES, flags).items()
+                                          if not victory_required or name != "enduring_colony"}},
         "doctrine_diplomacy": {"type": "choice", "instructions": "Choose the external posture; individual quests and wars still require live risk evaluation.", "criteria": dict(DIPLOMACY)},
         "doctrine_material": {"type": "choice", "instructions": "Choose the default material for new structures only, from sufficient current reserves.", "criteria": dict(context.get("material_options") or {"WoodLog": "wood"})},
         "doctrine_beauty": {"type": "choice", "instructions": "Choose where beauty investment has priority.", "criteria": dict(BEAUTY)},
@@ -616,6 +641,10 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     for question_id, question in independent.items():
         instructions = str(question["instructions"])
         if question_id == "doctrine_endgame":
+            expected = DIRECTION_ENDGAME_HINTS.get(direction)
+            if expected and expected in question["criteria"]:
+                answers[question_id] = {"choice": expected, "source": "chosen_direction"}
+                continue
             instructions += " Match the selected direction where it is a concrete victory route; choose a different ending only deliberately."
         ask_step(question_id, instructions, dict(question["criteria"]))
 
@@ -623,6 +652,7 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     products = {
         name: description for name, description in (ECONOMY_FAMILIES.get(family) or {}).get("products", {}).items()
         if _requires_available(PRODUCT_REQUIREMENTS.get(name), flags)
+        and name in DIRECT_INCOME_PLANS
     }
     products = {
         name: (f"{description}; {economic_outlook({'economy_product': name}, context)['horizon']}; "

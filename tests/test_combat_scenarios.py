@@ -166,6 +166,17 @@ class CombatScenarioTests(unittest.TestCase):
         self.assertEqual(next(row["body"]["tactic"] for row in action["commands"]
                               if row.get("body", {}).get("tactic")), "backstep_fire")
 
+    def test_isolated_gunner_backsteps_from_healthy_wolf_before_distant_support_arrives(self):
+        snapshot = raid([
+            fighter(1, distance=2, weapon="Gun_AssaultRifle"),
+            fighter(2, distance=67), fighter(3, distance=69),
+        ], [{"id": 99, "kind_def": "Wolf_Timber", "health": 1.0,
+             "has_ranged_weapon": False, "position": {"x": 13, "z": 10}}])
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertEqual(list(criteria), ["backstep_fire"])
+        snapshot["combat"]["hostiles"][0]["health"] = 0.48
+        self.assertIn("engage_melee", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+
     def test_unsupported_sword_charge_gets_a_real_model_support_choice(self):
         class SupportAgent:
             def __init__(self):
