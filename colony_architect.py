@@ -638,7 +638,7 @@ def program_options(context: dict[str, Any]) -> dict[str, str]:
         options["temple"] = "Ideology is active; a dedicated floored ritual room avoids invalid mixed-room uses"
     if animals:
         options["barn"] = f"{len(animals)} colony animals; sleeping places, light/climate and optional straw floor"
-    if any(int(counts.get(name) or 0) == 0 for name in ("SimpleResearchBench", "HiTechResearchBench")) or "research_lab" in direction_buildings:
+    if not any(int(counts.get(name) or 0) > 0 for name in ("SimpleResearchBench", "HiTechResearchBench")) or "research_lab" in direction_buildings:
         options["research_lab"] = "Research room with the best unlocked bench, strong light and optional sterile flooring/multi-analyzer"
     if "workshop" in direction_buildings or not any((row.get("is_work_table") for row in context.get("building_catalog") or [])):
         options["workshop"] = "Workshop matched to the chosen workforce specialization, with nearby input shelves and lighting"
@@ -716,9 +716,12 @@ def select_building_stuff(
     amount = int(building_def.get("cost_stuff_count") or 0)
     if amount <= 0:
         return None
+    exact_allowed = building_def.get("allowed_stuff_defs")
     categories = {str(value).lower() for value in building_def.get("stuff_categories") or []}
 
     def compatible(name: str) -> bool:
+        if isinstance(exact_allowed, list):
+            return name in exact_allowed
         lowered = name.lower()
         if name == "Jade":
             return not categories or any("stone" in category or "stony" in category for category in categories)
@@ -740,6 +743,72 @@ def select_building_stuff(
         if compatible(name) and int(item_counts.get(name) or 0) >= amount + reserve:
             return name
     return None
+
+
+def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Expose every unlocked, affordable live building by its real category.
+
+    The full catalog remains in the snapshot. Laya chooses a category, then an
+    exact def; no hand-maintained list can silently omit a new DLC or mod bench.
+    """
+    stock = development.get("item_counts") or {}
+    counts = development.get("building_counts") or {}
+    options: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in development.get("building_catalog") or []:
+        if not isinstance(row, dict) or not row.get("def_name") or not row.get("available_now") or row.get("metadata_error"):
+            continue
+        fixed: Counter[str] = Counter()
+        for cost in row.get("cost_list") or []:
+            name = str(cost.get("thing_def") or "")
+            if name:
+                fixed[name] += max(0, int(cost.get("count") or 0))
+        if any(int(stock.get(name) or 0) < amount for name, amount in fixed.items()):
+            continue
+        stuff_count = max(0, int(row.get("cost_stuff_count") or 0))
+        materials: dict[str, str] = {}
+        if stuff_count:
+            for name in stock:
+                if int(stock.get(name) or 0) < stuff_count + fixed.get(name, 0):
+                    continue
+                if select_building_stuff(row, {name: int(stock[name])}, name) == name:
+                    materials[name] = f"{stuff_count} {name}; stock {int(stock[name])}"
+            if not materials:
+                continue
+        name = str(row["def_name"])
+        category = str(row.get("designation_category") or "Other")
+        options.setdefault(category, {})[name] = {
+            "def_name": name,
+            "construction_kind": str(row.get("construction_kind") or "building"),
+            "label": str(row.get("label") or name),
+            "category": category,
+            "size_x": max(1, int(row.get("size_x") or 1)),
+            "size_z": max(1, int(row.get("size_z") or 1)),
+            "cost_list": dict(fixed),
+            "cost_stuff_count": stuff_count,
+            "materials": materials,
+            "requires_power": bool(row.get("requires_power")),
+            "is_work_table": bool(row.get("is_work_table")),
+            "existing_count": int(counts.get(name) or 0),
+        }
+    return options
+
+
+def catalog_access_audit(development: dict[str, Any],
+                         options: dict[str, dict[str, dict[str, Any]]] | None = None) -> dict[str, Any]:
+    """Account for every loaded definition, including locked and unaffordable ones."""
+    rows = [row for row in development.get("building_catalog") or []
+            if isinstance(row, dict) and row.get("def_name")]
+    plans = options if options is not None else catalog_construction_options(development)
+    actionable = {name for category in plans.values() for name in category}
+    unlocked = {str(row["def_name"]) for row in rows if row.get("available_now") and not row.get("metadata_error")}
+    return {
+        "loaded": len(rows),
+        "unlocked": len(unlocked),
+        "affordable_now": len(actionable),
+        "locked_or_metadata_error": sorted(str(row["def_name"]) for row in rows if str(row["def_name"]) not in unlocked),
+        "need_materials": sorted(unlocked - actionable),
+        "categories": {name: len(category) for name, category in sorted(plans.items())},
+    }
 
 
 def resolve_layout_materials(layout: dict[str, Any], catalog: dict[str, dict[str, Any]],

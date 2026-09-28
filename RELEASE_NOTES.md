@@ -1,6 +1,11 @@
-# 0.0.6 — release candidate under verification
+# 0.0.6 — construction coverage, fire response and colony survival
 
-This candidate is not published. The remaining live gates are listed in `docs/RELEASE_READINESS_0.0.6.md`.
+The 0.0.6 release includes the construction and fire changes originally developed on the 0.0.7 feature branch. Live results and remaining limitations are recorded in `docs/RELEASE_READINESS_0.0.6.md` and `docs/CONSTRUCTION_FIRE_AUDIT_0.0.6.md`.
+
+- The construction catalog now exposes all 533 player construction definitions seen in the tested RimWorld 1.6 game, including 301 constructed terrains. Laya can select unlocked definitions by category and exact ID; the bridge checks research, compatible materials and actual placement rules. A controlled audit received normal site responses for all 533 definitions.
+- Butcher spots, butcher tables and simple research benches are available through the same catalog. In a 3× run Laya placed a SimpleResearchBench, and the colony completed it. Laya chose a research project, but research points did not advance in that observation; effective research staffing remains to be verified.
+- Construction orders that cannot proceed because of reachability, materials or skill return an actionable non-applied result instead of an API error. The director also skips an already finished floor.
+- A fire threatening buildings in the Home area remains an urgent choice after the incident event has passed. Laya can raise each eligible colonist's Firefighter priority to 1. In a replay beginning with 54 fires, colonists performed firefighting work and the blaze reached zero; substantial property loss remains possible. Post-combat context was shortened to avoid model input overflow during that scenario.
 
 - Laya now identifies a pile of animal carcasses without a processing station, can choose a free Butcher spot beside the actual pile, and adds an active forever butchering bill in the same action. A controlled 3× replay showed Laya choosing it and two carcasses turning into 78 raw meat.
 - A fresh-colony replay exposed a colonist sealed behind completed walls while food was nearby. Laya can choose to open the blocked path; the affected colonist then reached food and recovered.

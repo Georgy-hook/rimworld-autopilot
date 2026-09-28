@@ -8,8 +8,9 @@ namespace RIMAPI.Services
         ApiResult<BlueprintDto> CopyArea(CopyAreaRequestDto request);
         ApiResult PasteArea(PasteAreaRequestDto request);
         ApiResult PlaceBlueprints(PasteAreaRequestDto request);
+        ApiResult<BuildingSiteOptionsDto> GetBuildingSiteOptions(BuildingSiteOptionsRequestDto request);
         ApiResult<CheckZoneResultDto> CheckZone(CheckZoneRequestDto request);
         ApiResult<ConstructionProjectsDto> GetConstructionProjects(int mapId);
-        ApiResult PrioritizeConstruction(PrioritizeConstructionRequestDto request);
+        ApiResult<PrioritizeConstructionResultDto> PrioritizeConstruction(PrioritizeConstructionRequestDto request);
     }
 }

@@ -544,7 +544,37 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
                          assigned_roles: dict[int, str] | None = None) -> dict[str, Any]:
     """Fit actionable combat evidence into Laya's real state-token window."""
     if not snapshot["combat"].get("hostiles"):
-        return decision_state(snapshot)
+        # Post-combat choices need the verified absence of hostiles and the
+        # squad's condition. Serializing the entire map here can exceed Laya's
+        # tokenizer limit even though the model later truncates the sequence.
+        resources = (snapshot.get("map") or {}).get("resources") or {}
+        farm = snapshot.get("map") or {}
+        preferences = laya_preferences.model_context(laya_preferences.load_preferences())
+        def count_rows(value: Any) -> int:
+            return len(value) if isinstance(value, (list, tuple, dict)) else int(first_number(value))
+        return {
+            "task": "Post-combat or routine work",
+            "hostiles": 0,
+            "drafted": sum(bool(pawn.get("is_drafted")) for pawn in snapshot["combat"].get("colonists", [])),
+            "people": [{
+                "id": pawn.get("id"), "health": pawn.get("health"),
+                "downed": pawn.get("is_downed"), "drafted": pawn.get("is_drafted"),
+                "bleeding": pawn.get("bleeding_rate"),
+                "job": pawn.get("current_job"),
+                "work": {name: ((pawn.get("work_priorities") or {}).get(name) or {}).get("priority")
+                         for name in ("Cooking", "Growing", "Hauling", "Construction", "Cleaning")},
+            } for pawn in snapshot["colonists"][:4]],
+            "resources": {name: resources.get(name) for name in ("food", "meals", "raw_food", "medicine")},
+            "farm": {
+                "zones": count_rows(farm.get("growing_zones")),
+                "plants": count_rows(farm.get("plants")),
+                "expected_yield": farm.get("expected_yield"),
+            },
+            "player_preferences": {
+                "weights": preferences.get("priority_weights_0_to_100"),
+                "guidance": str(preferences.get("personal_guidance") or "")[:120],
+            },
+        }
     combat = snapshot["combat"]
     active = [row for row in combat.get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
     available = [row for row in combat.get("colonists", []) if not row.get("is_dead")
@@ -875,7 +905,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
     questions = make_questions(snapshot)
     question_id = next(iter(questions))
     feasible = list(questions[question_id].get("criteria", {}))
-    visible_state = combat_model_context(agent, snapshot) if snapshot["combat"].get("hostiles") else decision_state(snapshot)
+    visible_state = combat_model_context(agent, snapshot)
     choice, raw = ask_combat_choice(agent, visible_state, question_id, questions[question_id])
     raw["visible_state"] = visible_state
     answer = (raw.get("answers") or {}).get(question_id) or {}

@@ -189,6 +189,20 @@ class BridgeTests(unittest.TestCase):
         decision = bridge.decide(FakeAgent(confidence=0.2), self.snapshot(), 0.6)
         self.assertEqual(decision["choice"], "keep_current_plan")
 
+    def test_post_combat_context_does_not_send_entire_crowded_map(self):
+        snapshot = self.snapshot()
+        snapshot["combat"]["colonists"] = [{"id": 10, "is_drafted": True, "health": 0.8}]
+        snapshot["map"]["plants"] = [{"description": "x" * 10000}]
+        decision = bridge.decide(FakeAgent(choice="stand_down"), snapshot, 0.0)
+        self.assertEqual(decision["choice"], "stand_down")
+        state = decision["raw"]["visible_state"]
+        self.assertEqual(state["hostiles"], 0)
+        self.assertEqual(state["drafted"], 1)
+        self.assertNotIn("plants", state)
+        self.assertLess(len(str(state)), 3000)
+        self.assertIn("farm", state)
+        self.assertIn("resources", state)
+
     def test_threat_without_target_ids_undrafts_instead_of_exhausting_colonists(self):
         snapshot = self.snapshot()
         snapshot["map"]["enemies"] = 2

@@ -39,6 +39,7 @@
   </Target>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" PrivateAssets="all" />
     <!-- RimWorld 1.5 dependencies -->
     <PackageReference
       Include="Krafs.Rimworld.Ref"
