@@ -1,6 +1,6 @@
-# 0.0.7 construction and fire audit — 28 September 2026
+# 0.0.6 construction and fire audit — 28 September 2026
 
-Status: **development draft; not release ready**. This branch builds on the open 0.0.6 release candidate. `VERSION` stays at 0.0.6 until that candidate is integrated and the 0.0.7 release is packaged.
+These changes were developed on the 0.0.7 feature branch and included in the final 0.0.6 release at the user's request. The checks below describe observed behavior and open limits, not a claim of complete autonomous survival.
 
 ## Construction coverage
 
@@ -30,6 +30,6 @@ The fire replay logged 23 decisions and no API error backoffs. It expanded Home 
 - **Open:** Research did not gain points. The chosen researcher also had Cooking, Construction, Hauling and other work at priority 1; assigning Research priority 1 alone did not reserve time at the bench. Verify research labor allocation without compromising food or emergency work.
 - **Open:** Run a new colony from before ignition to confirm the fire response starts when the first flames appear and to measure structural losses. The saved 54-fire replay tests recovery from an already severe incident.
 - **Open:** Generic catalog choice produced a Grand Altar and HoldingSpot in the construction replay. Confirm that discretionary catalog spending follows colony need and does not crowd out food, research or fire prevention.
-- **Open:** 0.0.6 RC integration, packaged 0.0.7 installation and extended autonomous survival checks remain separate release gates.
+- **Open:** Packaged 0.0.6 installation and extended autonomous survival checks remain separate verification tasks.
 
 The original `Laya Test 14 Autonomous Butchery Verified 2026-09-28` control save was restored and paused after testing. Fire diagnostics were preserved as `Laya 007 Fire Replay Before Fix` and `Laya 007 Fire Extinguished Early Response` without replacing the control save.
