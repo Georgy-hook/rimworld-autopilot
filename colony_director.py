@@ -2036,7 +2036,7 @@ def live_work_options(snapshot: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def cooking_rebalance_options(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def cooking_rebalance_options(snapshot: dict[str, Any], reserved_researcher_id: int = 0) -> dict[str, dict[str, Any]]:
     """Offer actual staffing tradeoffs when ingredients are not becoming meals.
 
     Priority 1 alone is not enough when an endless, naturally higher-priority
@@ -2053,6 +2053,11 @@ def cooking_rebalance_options(snapshot: dict[str, Any]) -> dict[str, dict[str, A
     ):
         return {}
     options: dict[str, dict[str, Any]] = {}
+    alternative_cooks = [pawn for pawn in snapshot.get("colonists") or []
+                         if int(pawn.get("id") or 0) != reserved_researcher_id
+                         and not pawn.get("downed") and not pawn.get("in_mental_state")
+                         and isinstance((pawn.get("work_priorities") or {}).get("Cooking"), dict)
+                         and not pawn["work_priorities"]["Cooking"].get("disabled")]
     for pawn in snapshot.get("colonists") or []:
         if pawn.get("downed") or pawn.get("in_mental_state"):
             continue
@@ -2062,6 +2067,8 @@ def cooking_rebalance_options(snapshot: dict[str, Any]) -> dict[str, dict[str, A
             continue
         pawn_id = int(pawn.get("id") or 0)
         if pawn_id <= 0:
+            continue
+        if pawn_id == reserved_researcher_id and alternative_cooks:
             continue
         cooking_level = int(cooking.get("priority") or 0)
         skill = int((((pawn.get("skills") or {}).get("Cooking") or {}).get("level")) or 0)
@@ -3532,7 +3539,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if (food_tables and food_bills_need_configuration(client, food_tables)
             and not issued_recently(map_state, "food_bills", tick, retry_ticks=15000)):
         one_time.append("configure_food_bills")
-    cooking_options = cooking_rebalance_options(snapshot)
+    cooking_options = cooking_rebalance_options(snapshot, int(map_state.get("reserved_researcher_id") or 0))
     if cooking_options and not issued_recently(map_state, "cooking_rebalance", tick, retry_ticks=12000):
         details["cooking_rebalance_options"] = cooking_options
         dev["cooking_rebalance_options"] = cooking_options
@@ -6356,11 +6363,16 @@ def dedicate_researcher(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
                 for work, priority, response in changes]}
 
 
-def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str, pawn_id: int | None = None) -> Any:
+def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str, pawn_id: int | None = None,
+               *, avoid_ids: set[int] | None = None) -> Any:
     target = next(
         (p for p in snapshot["colonists"] if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)),
         None,
     )
+    if target is None and pawn_id is None and avoid_ids:
+        alternatives = [pawn for pawn in snapshot["colonists"]
+                        if int(pawn.get("id") or 0) not in avoid_ids]
+        target = bridge.choose_worker(alternatives, work)
     target = target or bridge.choose_worker(snapshot["colonists"], work)
     if target is None:
         return {"applied": False, "reason": f"No eligible colonist for {work}"}
@@ -6478,6 +6490,11 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
     anchor = map_state["anchor"]
     issued = map_state.setdefault("issued", {})
     dev = snapshot.get("development") or {}
+    active_research = str((dev.get("current_research") or {}).get("name") or "none").lower() != "none"
+    reserved_researcher_id = int(map_state.get("reserved_researcher_id") or 0)
+    routine_avoid = ({reserved_researcher_id} if active_research and reserved_researcher_id
+                     and any(int(pawn.get("id") or 0) == reserved_researcher_id and not pawn.get("downed")
+                             for pawn in snapshot.get("colonists") or []) else set())
 
     if choice == "build_research_bench":
         name = str(details.get("research_bench_def") or "")
@@ -7999,15 +8016,16 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         result = dedicate_researcher(client, snapshot)
         if result.get("applied"):
             issued["priority:Research"] = tick
+            map_state["reserved_researcher_id"] = int(result["pawn_id"])
         return result
     if choice == "prioritize_cooking":
-        result = prioritize(client, snapshot, "Cooking")
+        result = prioritize(client, snapshot, "Cooking", avoid_ids=routine_avoid)
         issued["priority:Cooking"] = tick
         return result
     if choice == "rebalance_cooking":
         selected = str(details.get("cooking_rebalance_choice") or "")
         plan = (details.get("cooking_rebalance_options") or {}).get(selected)
-        if plan is None or selected not in cooking_rebalance_options(snapshot):
+        if plan is None or selected not in cooking_rebalance_options(snapshot, reserved_researcher_id):
             return {"applied": False, "reason": "The selected cooking staffing change is no longer available"}
         pawn_id = int(plan["pawn_id"])
         work = str(plan["work"])
@@ -8019,27 +8037,27 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return {"applied": True, "worker": pawn_id, "work": work,
                 "priority": priority, "response": response}
     if choice == "prioritize_growing":
-        result = prioritize(client, snapshot, "Growing")
+        result = prioritize(client, snapshot, "Growing", avoid_ids=routine_avoid)
         issued["priority:Growing"] = tick
         return result
     if choice == "prioritize_hauling":
-        result = prioritize(client, snapshot, "Hauling")
+        result = prioritize(client, snapshot, "Hauling", avoid_ids=routine_avoid)
         issued["priority:Hauling"] = tick
         return result
     if choice == "prioritize_hunting":
-        result = prioritize(client, snapshot, "Hunting")
+        result = prioritize(client, snapshot, "Hunting", avoid_ids=routine_avoid)
         issued["priority:Hunting"] = tick
         return result
     if choice == "prioritize_handling":
-        result = prioritize(client, snapshot, "Handling")
+        result = prioritize(client, snapshot, "Handling", avoid_ids=routine_avoid)
         issued["priority:Handling"] = tick
         return result
     if choice == "prioritize_plant_cutting":
-        result = prioritize(client, snapshot, "PlantCutting")
+        result = prioritize(client, snapshot, "PlantCutting", avoid_ids=routine_avoid)
         issued["priority:PlantCutting"] = tick
         return result
     if choice == "prioritize_cleaning":
-        result = prioritize(client, snapshot, "Cleaning")
+        result = prioritize(client, snapshot, "Cleaning", avoid_ids=routine_avoid)
         issued["priority:Cleaning"] = tick
         return result
     if choice == "prioritize_rescue":
@@ -8151,7 +8169,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued[f"hunt:{animal_id}"] = tick
         issued["dangerous_hunt_review" if risky else "safe_hunting"] = tick
         issued["priority:Hunting"] = tick
-        hunting = prioritize(client, snapshot, "Hunting")
+        hunting = prioritize(client, snapshot, "Hunting", avoid_ids=routine_avoid)
         return {"applied": True, "animal": animal, "responses": [result, hunting]}
     if choice == "leave_wildlife_alone":
         issued["wildlife_pause"] = tick

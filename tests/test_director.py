@@ -1343,6 +1343,8 @@ class DirectorTests(unittest.TestCase):
                     "development": {"work_tables": [{"id": 10, "thing_def": "Campfire"}]} }
         options = director.cooking_rebalance_options(snapshot)
         self.assertEqual(set(options), {"defer_handling:1", "assign:2"})
+        self.assertEqual(set(director.cooking_rebalance_options(snapshot, reserved_researcher_id=2)),
+                         {"defer_handling:1"})
         self.assertIn("taming", options["defer_handling:1"]["summary"])
         self.assertIn("food poisoning", options["assign:2"]["summary"])
         snapshot["development"]["cooking_rebalance_options"] = options
@@ -2911,6 +2913,23 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual([(call.kwargs["body"]["work"], call.kwargs["body"]["priority"])
                           for call in client.post.call_args_list],
                          [("Research", 1), ("Construction", 2), ("Hauling", 2)])
+
+    def test_routine_work_prefers_another_worker_after_researcher_is_reserved(self):
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 0, "resources": {}},
+                    "colonists": [{"id": 1, "name": "Researcher"}, {"id": 2, "name": "Hunter"}],
+                    "development": {"current_research": {"name": "Pemmican"}}}
+        client = mock.Mock()
+        client.post.return_value = {"success": True}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        with mock.patch.object(director, "dedicate_researcher",
+                               return_value={"applied": True, "pawn_id": 1}):
+            director.execute_action(client, snapshot, state, "prioritize_research", {})
+        self.assertEqual(state["reserved_researcher_id"], 1)
+        with mock.patch.object(director.bridge, "choose_worker",
+                               side_effect=lambda pawns, work: pawns[0] if pawns else None):
+            result = director.execute_action(client, snapshot, state, "prioritize_hunting", {})
+        self.assertTrue(result["applied"])
+        self.assertEqual(client.post.call_args.kwargs["body"]["id"], 2)
 
     def test_room_floor_blueprint_uses_only_real_room_cells(self):
         layout, origin = director.room_floor_blueprint(
