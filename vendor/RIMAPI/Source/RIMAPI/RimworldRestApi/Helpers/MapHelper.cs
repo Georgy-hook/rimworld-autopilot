@@ -288,6 +288,59 @@ namespace RIMAPI.Helpers
             }
         }
 
+        public static ApiResult<List<WildHumanDto>> GetWildHumans(int mapId)
+        {
+            try
+            {
+                Map map = GetMapByID(mapId);
+                if (map == null) return ApiResult<List<WildHumanDto>>.Fail($"Map {mapId} not found.");
+                var people = map.mapPawns.AllPawns
+                    .Where(p => p.Spawned && !p.Dead && p.kindDef?.defName == "WildMan"
+                                && p.Faction != Faction.OfPlayer)
+                    .Select(p => new WildHumanDto
+                    {
+                        Id = p.thingIDNumber,
+                        Name = p.LabelShortCap,
+                        Gender = p.gender.ToString(),
+                        Age = p.ageTracker?.AgeBiologicalYears ?? 0,
+                        Health = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f,
+                        Downed = p.Downed,
+                        Position = new PositionDto { X = p.Position.x, Y = 0, Z = p.Position.z },
+                        MinimumHandlingSkill = 7,
+                    }).ToList();
+                return ApiResult<List<WildHumanDto>>.Ok(people);
+            }
+            catch (Exception ex)
+            {
+                LogApi.Error($"Wild human observation failed: {ex}");
+                return ApiResult<List<WildHumanDto>>.Fail(ex.Message);
+            }
+        }
+
+        public static ApiResult DesignateWildHumanForTaming(TameWildHumanRequestDto request)
+        {
+            try
+            {
+                Map map = GetMapByID(request.MapId);
+                if (map == null) return ApiResult.Fail($"Map {request.MapId} not found.");
+                Pawn person = map.mapPawns.AllPawns.FirstOrDefault(p => p.thingIDNumber == request.PawnId
+                    && p.Spawned && !p.Dead && !p.Downed && p.kindDef?.defName == "WildMan"
+                    && p.Faction != Faction.OfPlayer);
+                if (person == null) return ApiResult.Fail("The selected wild person is no longer available for taming.");
+                bool handlerAvailable = map.mapPawns.FreeColonistsSpawned.Any(p => !p.Downed
+                    && p.skills?.GetSkill(SkillDefOf.Animals)?.Level >= 7);
+                if (!handlerAvailable) return ApiResult.Fail("No available colonist has the required Animals skill 7.");
+                if (map.designationManager.DesignationOn(person, DesignationDefOf.Tame) == null)
+                    map.designationManager.AddDesignation(new Designation(person, DesignationDefOf.Tame));
+                return ApiResult.Ok();
+            }
+            catch (Exception ex)
+            {
+                LogApi.Error($"Wild human taming designation failed: {ex}");
+                return ApiResult.Fail(ex.Message);
+            }
+        }
+
         public static ApiResult SetGrowingSowing(SetGrowingSowingRequestDto request)
         {
             try
@@ -797,6 +850,36 @@ namespace RIMAPI.Helpers
                 compressedFloorGrid.Add(currentVal);
             }
 
+            // Terrain alone is not enough to site a house: ancient ruins and
+            // natural rock can sit on perfectly dry soil. Include every live
+            // edifice, not just buildings owned by the colony.
+            var compressedEdificeGrid = new List<int>();
+            int previousEdifice = -1;
+            int edificeRun = 0;
+            for (int index = 0; index < width * height; index++)
+            {
+                int occupied = map.edificeGrid.InnerArray[index] == null ? 0 : 1;
+                if (occupied == previousEdifice)
+                {
+                    edificeRun++;
+                }
+                else
+                {
+                    if (edificeRun > 0)
+                    {
+                        compressedEdificeGrid.Add(edificeRun);
+                        compressedEdificeGrid.Add(previousEdifice);
+                    }
+                    previousEdifice = occupied;
+                    edificeRun = 1;
+                }
+            }
+            if (edificeRun > 0)
+            {
+                compressedEdificeGrid.Add(edificeRun);
+                compressedEdificeGrid.Add(previousEdifice);
+            }
+
             return new MapTerrainDto
             {
                 Width = width,
@@ -804,7 +887,8 @@ namespace RIMAPI.Helpers
                 Palette = palette,
                 Grid = compressedGrid,
                 FloorPalette = floorPalette,
-                FloorGrid = compressedFloorGrid
+                FloorGrid = compressedFloorGrid,
+                EdificeGrid = compressedEdificeGrid
             };
         }
 

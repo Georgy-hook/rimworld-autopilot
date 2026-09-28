@@ -232,7 +232,8 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     combat = snapshot.get("combat", {})
     hostiles = [row for row in combat.get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
     fighters = [row for row in combat.get("colonists", []) if not row.get("is_dead")
-                and not row.get("is_downed") and not row.get("is_in_mental_state")]
+                and not row.get("is_downed") and not row.get("is_in_mental_state")
+                and row.get("can_fight", True)]
     if not hostiles:
         return {"stand_down": TACTICS["stand_down"]["description"]} if any(row.get("is_drafted") for row in fighters) else {}
     if not fighters:

@@ -98,8 +98,23 @@ public class OrderService : IOrderService
                     count++;
                 }
             }
+            else if (type == "remove-sleeping-spot")
+            {
+                // A free sleeping spot is not a normal deconstruction job.
+                // Deconstruct designations returned success but never removed
+                // it, leaving colonists to choose the exposed spot forever.
+                foreach (var bed in c.GetThingList(map).OfType<Building_Bed>().ToList())
+                {
+                    if (bed.def.defName != "SleepingSpot" || bed.Faction != Faction.OfPlayer)
+                        continue;
+                    bed.Destroy(DestroyMode.Vanish);
+                    count++;
+                }
+            }
         }
 
+        if (type == "remove-sleeping-spot" && count == 0)
+            return ApiResult.Fail("No player-owned sleeping spot found in the selected area");
         return ApiResult.Ok();
     }
 }

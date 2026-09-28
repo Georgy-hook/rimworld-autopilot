@@ -137,6 +137,22 @@ namespace RIMAPI.Controllers
             await context.SendJsonResponse(result);
         }
 
+        [Get("/api/v1/map/wild-humans")]
+        [EndpointMetadata("Observe wild humans who may be tamed into colonists")]
+        public async Task GetWildHumans(HttpListenerContext context)
+        {
+            var mapId = RequestParser.GetMapId(context);
+            await context.SendJsonResponse(MapHelper.GetWildHumans(mapId));
+        }
+
+        [Post("/api/v1/map/wild-human/tame")]
+        [EndpointMetadata("Designate one wild human for ordinary taming by a skilled handler")]
+        public async Task DesignateWildHumanForTaming(HttpListenerContext context)
+        {
+            var body = await context.Request.ReadBodyAsync<TameWildHumanRequestDto>();
+            await context.SendJsonResponse(MapHelper.DesignateWildHumanForTaming(body));
+        }
+
         [Post("/api/v1/map/animal/hunt")]
         [EndpointMetadata("Designate one specific wild animal for hunting")]
         public async Task DesignateAnimalForHunting(HttpListenerContext context)

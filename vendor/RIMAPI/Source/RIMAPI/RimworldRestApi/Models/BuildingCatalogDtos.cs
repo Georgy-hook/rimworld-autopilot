@@ -5,6 +5,7 @@ namespace RIMAPI.Models
     public class BuildingCatalogDto
     {
         public string DefName { get; set; }
+        public string ConstructionKind { get; set; } = "building";
         public string Label { get; set; }
         public string Description { get; set; }
         public string DesignationCategory { get; set; }
@@ -13,6 +14,8 @@ namespace RIMAPI.Models
         public List<ThingCostDto> CostList { get; set; }
         public int CostStuffCount { get; set; }
         public List<string> StuffCategories { get; set; }
+        public List<string> AllowedStuffDefs { get; set; }
+        public string MetadataError { get; set; }
         public int SizeX { get; set; }
         public int SizeZ { get; set; }
         public bool IsWorkTable { get; set; }

@@ -57,7 +57,7 @@ namespace RIMAPI.Helpers
             }
         }
 
-        public static ApiResult<LiveTradePreviewDto> GetPreview(int mapId, string traderId, int minimumSilverReserve, int maximumSpend)
+        public static ApiResult<LiveTradePreviewDto> GetPreview(int mapId, string traderId, int minimumSilverReserve, int maximumSpend, string saleCategory)
         {
             bool opened = false;
             try
@@ -103,7 +103,24 @@ namespace RIMAPI.Helpers
                         Category = category, Example = row.Label, MaximumUnits = units, UnitPrice = price,
                     });
                 }
-                int availableSilver = Math.Min(spendLimit, Math.Max(0, colonySilver - reserve));
+                if (SaleCategories.Contains(saleCategory))
+                {
+                    float traderSilverRemaining = traderSilver;
+                    var plannedCategories = new HashSet<string> { saleCategory };
+                    foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
+                        && t.CountHeldBy(Transactor.Colony) > 0))
+                    {
+                        float price = row.GetPriceFor(TradeAction.PlayerSells);
+                        if (price <= 0f) continue;
+                        int units = Math.Min(SafeSaleCount(row, map, plannedCategories),
+                            (int)Math.Floor(traderSilverRemaining / price));
+                        if (units <= 0) continue;
+                        float proceeds = units * price;
+                        preview.PlannedSaleValue += proceeds;
+                        traderSilverRemaining -= proceeds;
+                    }
+                }
+                float availableSilver = Math.Min(spendLimit, Math.Max(0f, colonySilver + preview.PlannedSaleValue - reserve));
                 foreach (string priority in PurchasePriorities)
                 {
                     Tradeable row = deal.AllTradeables.Where(t => t.TraderWillTrade
@@ -119,6 +136,34 @@ namespace RIMAPI.Helpers
                     {
                         Category = priority, Example = row.Label, MaximumUnits = units, UnitPrice = price,
                     });
+                }
+                foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
+                    && t.CountHeldBy(Transactor.Trader) > 0 && t.ThingDef?.race?.Humanlike == true))
+                {
+                    float price = row.GetPriceFor(TradeAction.PlayerBuys);
+                    if (price <= 0f || price > availableSilver) continue;
+                    if (row.FirstThingTrader is Pawn pawn)
+                    {
+                        preview.HumanlikeOffers.Add(new LiveTradePawnOfferDto
+                        {
+                            PawnId = pawn.thingIDNumber,
+                            Name = pawn.LabelShortCap,
+                            UnitPrice = price,
+                            Health = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f,
+                            Age = pawn.ageTracker?.AgeBiologicalYears ?? 0,
+                            Gender = pawn.gender.ToString(),
+                            Skills = pawn.skills?.skills.OrderByDescending(skill => skill.Level)
+                                .Take(8).Select(skill => $"{skill.def.defName}:{skill.Level}:{skill.passion}").ToList()
+                                ?? new List<string>(),
+                            Traits = pawn.story?.traits?.allTraits.Select(trait => trait.LabelCap).ToList()
+                                ?? new List<string>(),
+                            HealthConditions = pawn.health?.hediffSet?.hediffs.Select(hediff => hediff.LabelCap)
+                                .Take(8).ToList() ?? new List<string>(),
+                            DisabledWork = DefDatabase<WorkTypeDef>.AllDefsListForReading
+                                .Where(work => pawn.WorkTypeIsDisabled(work)).Select(work => work.defName).ToList(),
+                        });
+                    }
+                    if (preview.HumanlikeOffers.Count >= 12) break;
                 }
                 return ApiResult<LiveTradePreviewDto>.Ok(preview);
             }
@@ -160,6 +205,19 @@ namespace RIMAPI.Helpers
                 if (TradeSession.Active) TradeSession.Close();
                 TradeSession.SetupWith(trader, negotiator, false);
                 TradeDeal deal = TradeSession.deal;
+                if (request.PurchasePawnId.HasValue && !(request.PurchasePriorities ?? new List<string>())
+                    .Any(value => value.Equals("slaves", StringComparison.OrdinalIgnoreCase)))
+                {
+                    TradeSession.Close();
+                    return ApiResult<LiveTradeResponseDto>.Fail("A selected pawn requires the slaves purchase priority.");
+                }
+                if (request.PurchasePawnId.HasValue && !deal.AllTradeables.Any(row => row.TraderWillTrade
+                    && row.CountHeldBy(Transactor.Trader) > 0 && row.ThingDef?.race?.Humanlike == true
+                    && row.FirstThingTrader is Pawn pawn && pawn.thingIDNumber == request.PurchasePawnId.Value))
+                {
+                    TradeSession.Close();
+                    return ApiResult<LiveTradeResponseDto>.Fail("The chosen person is no longer offered by this trader.");
+                }
                 var response = new LiveTradeResponseDto
                 {
                     TraderId = request.TraderId,
@@ -193,11 +251,16 @@ namespace RIMAPI.Helpers
                 }
 
                 float spend = 0f;
+                bool selectedPersonPurchased = !request.PurchasePawnId.HasValue;
                 foreach (string priority in request.PurchasePriorities ?? new List<string>())
                 {
+                    int remainingPawns = priority.Equals("slaves", StringComparison.OrdinalIgnoreCase)
+                        || priority.Equals("livestock", StringComparison.OrdinalIgnoreCase) ? 1 : int.MaxValue;
                     foreach (Tradeable row in deal.AllTradeables
                         .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0
-                            && MatchesPriority(t, priority) && CanKeepPurchasedAnimal(t, map))
+                            && MatchesPriority(t, priority) && CanKeepPurchasedAnimal(t, map)
+                            && (!request.PurchasePawnId.HasValue || !priority.Equals("slaves", StringComparison.OrdinalIgnoreCase)
+                                || (t.FirstThingTrader is Pawn pawn && pawn.thingIDNumber == request.PurchasePawnId.Value)))
                         .OrderBy(t => t.GetPriceFor(TradeAction.PlayerBuys)))
                     {
                         float unitPrice = Math.Max(0.01f, row.GetPriceFor(TradeAction.PlayerBuys));
@@ -206,7 +269,7 @@ namespace RIMAPI.Helpers
                             ((deal.CurrencyTradeable?.CountPostDealFor(Transactor.Colony) ?? 0)
                              - request.MinimumSilverReserve) / unitPrice));
                         int wanted = Math.Min(row.CountHeldBy(Transactor.Trader), PurchaseTarget(priority, row));
-                        int count = Math.Min(Math.Min(affordableByBudget, affordableBySilver), wanted);
+                        int count = Math.Min(Math.Min(Math.Min(affordableByBudget, affordableBySilver), wanted), remainingPawns);
                         if (count <= 0) continue;
                         row.ForceToSource(count);
                         deal.UpdateCurrencyCount();
@@ -221,9 +284,20 @@ namespace RIMAPI.Helpers
                         response.BoughtUnits += count;
                         response.ApproximatePurchaseValue += unitPrice * count;
                         response.Bought.Add($"{row.Label} x{count}");
+                        if (request.PurchasePawnId.HasValue && priority.Equals("slaves", StringComparison.OrdinalIgnoreCase)
+                            && row.FirstThingTrader is Pawn boughtPawn
+                            && boughtPawn.thingIDNumber == request.PurchasePawnId.Value)
+                            selectedPersonPurchased = true;
+                        remainingPawns -= count;
+                        if (remainingPawns <= 0) break;
                     }
                 }
 
+                if (!selectedPersonPurchased)
+                {
+                    TradeSession.Close();
+                    return ApiResult<LiveTradeResponseDto>.Fail("The selected person is no longer affordable; no partial sale was made.");
+                }
                 if (response.SoldUnits == 0 && response.BoughtUnits == 0)
                 {
                     TradeSession.Close();

@@ -74,12 +74,24 @@ def _fighting(pawn: dict[str, Any], hostiles: list[dict[str, Any]]) -> bool:
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
     cause = str(raw or "").strip()
     if not cause or cause.lower() == "unknown":
-        return f"Last known condition: {fallback}" if fallback else "Cause not reported by the game"
+        return (f"not reported by the game (last observed condition: {fallback})"
+                if fallback else "not reported by the game")
     labels = {
         "Bullet": "gunshot wounds", "Cut": "blade wounds", "Blunt": "blunt-force trauma",
         "Flame": "fire", "Starvation": "starvation", "BloodLoss": "blood loss",
     }
     return labels.get(cause, re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cause).replace("_", " ").lower())
+
+
+def _critical_condition(conditions: list[str]) -> str | None:
+    """Show a relevant last observation without calling an old scar the cause."""
+    names = [str(condition) for condition in conditions]
+    for marker in ("bloodloss", "blood loss", "malnutrition", "infection", "heatstroke",
+                   "hypothermia", "toxic", "plague", "flu", "malaria", "disease"):
+        match = next((name for name in names if marker in name.lower()), None)
+        if match:
+            return match
+    return None
 
 
 def parse_sse_event(event_type: str, data: str) -> dict[str, Any] | None:
@@ -185,7 +197,7 @@ class ObserverPlanner:
             if corpse:
                 conditions = previous.get("health_conditions") or []
                 self.death_queue.append({"id": pawn_id, "name": previous.get("name"), "cause": "Unknown",
-                                         "fallback": conditions[0] if conditions else None,
+                                         "fallback": _critical_condition(conditions),
                                          "position": _position(corpse) or _position(previous)})
                 event_ids.add(pawn_id)
         for event in events:
@@ -197,7 +209,7 @@ class ObserverPlanner:
                            in str(row.get("label") or "").lower()
                            and "corpse" in str(row.get("def_name") or "").lower()), None)
             conditions = previous.get("health_conditions") or []
-            self.death_queue.append({**event, "fallback": conditions[0] if conditions else None,
+            self.death_queue.append({**event, "fallback": _critical_condition(conditions),
                                      "position": _position(corpse or {}) or _position(previous)})
         previous_known = self.known
         self.known = {_id(pawn): dict(pawn) for pawn in colonists if _id(pawn)}

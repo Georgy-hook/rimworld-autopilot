@@ -88,6 +88,24 @@ namespace RIMAPI.Models
         public int AnimalId { get; set; }
     }
 
+    public class WildHumanDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Gender { get; set; }
+        public int Age { get; set; }
+        public float Health { get; set; }
+        public bool Downed { get; set; }
+        public PositionDto Position { get; set; }
+        public int MinimumHandlingSkill { get; set; }
+    }
+
+    public class TameWildHumanRequestDto
+    {
+        public int MapId { get; set; }
+        public int PawnId { get; set; }
+    }
+
     public class HuntAnimalRequestDto
     {
         public int MapId { get; set; }

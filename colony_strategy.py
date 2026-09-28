@@ -271,6 +271,124 @@ ECONOMY_FAMILIES: dict[str, dict[str, Any]] = {
 
 PRODUCT_REQUIREMENTS = {"genes": "biotech", "mechanoids": "biotech", "bioferrite": "anomaly", "anomaly_arms": "anomaly", "orbital_salvage": "odyssey"}
 
+# These are observations, not sale-price predictions. The only realised money
+# below comes from completed trades; inventory market value is not income.
+PRODUCT_STOCK_SIGNALS = {
+    "crops": ("Rice", "Corn", "Potato"), "drugs": ("Smokeleaf", "Yayo", "Flake", "Psychite"),
+    "brewing": ("Beer", "Wort", "Hops"), "travel_food": ("Pemmican", "MealSurvivalPack"),
+    "livestock": ("Wool", "Milk", "Egg", "Leather"), "biofuel": ("Chemfuel",),
+    "tailoring": ("Apparel", "Duster", "Parka"), "art": ("Sculpture",),
+    "stoneblocks": ("Blocks",), "weapons": ("Gun_", "MeleeWeapon_"),
+    "armor": ("Armor", "Flak"), "components": ("Component",),
+    "mining": ("Gold", "Jade", "Uranium", "Plasteel"),
+    "genes": ("Genepack", "Xenogerm"), "mechanoids": ("Subcore", "Mech"),
+    "organs": ("Heart", "Kidney", "Lung", "Liver"),
+    "bioferrite": ("Bioferrite",), "anomaly_arms": ("Serum", "Shard", "Anomaly"),
+}
+PRODUCT_WORKSHOP_SIGNALS = {
+    "drugs": ("DrugLab",), "brewing": ("FermentingBarrel",),
+    "travel_food": ("Stove", "Campfire"), "biofuel": ("BiofuelRefinery",),
+    "tailoring": ("Tailoring",), "art": ("TableSculpting",),
+    "stoneblocks": ("Stonecutter",), "weapons": ("Machining", "Smithy"),
+    "armor": ("Smithy", "Fabrication"), "components": ("Fabrication",),
+    "genes": ("GeneAssembler",), "mechanoids": ("MechGestator",),
+    "organs": ("HospitalBed", "Bed"), "bioferrite": ("BioferriteHarvester",),
+    "anomaly_arms": ("Bioferrite",), "orbital": ("CommsConsole", "OrbitalTradeBeacon"),
+}
+
+DIRECTION_ENDGAME_HINTS = {
+    "research_starflight": "ship_escape", "royal_court": "imperial_ascension",
+    "archonexus_pilgrimage": "archonexus", "anomaly_mastery": "anomaly_void",
+    "mechhive_crusade": "mechhive",
+}
+
+DIRECT_INCOME_PLANS = frozenset({
+    "drugs", "tailoring", "art", "livestock", "biofuel", "mining", "crops",
+    "brewing", "travel_food", "orbital",
+})
+
+PRODUCT_NEXT_MILESTONE = {
+    "caravan_trade": "Prepare sale stock or silver, travel meals, healthy escorts and a friendly settlement.",
+    "quest_rewards": "Inspect an active quest, its risk and the actual reward before accepting.",
+    "raiding": "Scout a target and retain enough defenders, medicine and travel food.",
+    "salvage": "Locate a site, prepare a caravan and bring recovered goods home.",
+    "orbital_salvage": "Acquire the required Odyssey ship and safe return capacity.",
+    "livestock": "Secure an enclosed pen, fodder and a buyer before expanding the herd.",
+    "organs": "Have a prison, skilled doctor and medicine; weigh colony mood and diplomacy.",
+}
+
+
+def course_alignment(doctrine: dict[str, Any]) -> str:
+    direction = str(doctrine.get("primary_direction") or "")
+    ending = str(doctrine.get("endgame") or "")
+    expected = DIRECTION_ENDGAME_HINTS.get(direction)
+    if expected and ending and ending != expected:
+        return f"{direction} normally advances {expected}, but saved ending is {ending}; keep only if intentional."
+    return "Direction and ending are not visibly in conflict."
+
+
+def economic_outlook(doctrine: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    """Give Laya a short, falsifiable readiness estimate, never invented profit."""
+    product = str(doctrine.get("economy_product") or doctrine.get("economy") or "")
+    counts = context.get("item_counts") or {}
+    buildings = context.get("building_counts") or {}
+    tables = context.get("work_tables") or []
+    known_buildings = {str(name) for name, amount in buildings.items() if int(amount or 0) > 0}
+    known_buildings.update(str(row.get("thing_def") or "") for row in tables if isinstance(row, dict))
+    stock = {str(name): int(amount or 0) for name, amount in counts.items()
+             if int(amount or 0) > 0 and any(token.lower() in str(name).lower()
+                                               for token in PRODUCT_STOCK_SIGNALS.get(product, ())) }
+    facilities = list(PRODUCT_WORKSHOP_SIGNALS.get(product, ()))
+    ready_facilities = [name for name in facilities if any(name.lower() in built.lower() for built in known_buildings)]
+    destinations = [row for row in context.get("trade_destinations") or []
+                    if isinstance(row, dict) and row.get("can_trade_now", True)]
+    visitors = [row for row in context.get("trade_opportunities") or [] if isinstance(row, dict)]
+    channels = len(destinations) + len(visitors)
+    sales = [row for row in context.get("trade_ledger") or []
+             if isinstance(row, dict) and (float(row.get("sale_value") or 0) > 0
+                                           or int(row.get("sold_units") or 0) > 0)]
+    realised = round(sum(float(row.get("sale_value") or 0) for row in sales), 1)
+    population = max(0, int(context.get("population") or 0))
+    food = (context.get("resources") or {}).get("food")
+    food_reserve_short = (product in {"crops", "travel_food"} and food is not None
+                          and int(food or 0) < max(30, population * 25))
+    if food_reserve_short:
+        stage = "reserve_short"
+        horizon = "food reserve too low to treat current stock as sale surplus"
+    elif stock and visitors:
+        stage = "live_market"
+        horizon = "potential sale to a visiting trader, subject to actual buying stock and reserves"
+    elif stock and destinations:
+        stage = "caravan_needed"
+        horizon = "candidate stock exists; a safe caravan and buyer are still needed"
+    elif ready_facilities or (product == "crops" and any(
+        isinstance(zone, dict) and any(token in str(zone.get("plant_def") or zone.get("plant_def_name") or "")
+                                       for token in ("Rice", "Corn", "Potato"))
+        for zone in context.get("zones") or []
+    )):
+        stage = "production"
+        horizon = "production possible, sale depends on labor, inputs and trader"
+    elif product in {"caravan_trade", "quest_rewards", "raiding", "salvage", "orbital_salvage"}:
+        stage = "opportunity_needed"
+        horizon = "income depends on a verified destination or event, not a fixed output rate"
+    else:
+        stage = "setup"
+        horizon = "setup required before regular sales"
+    return {
+        "product": product or "unselected", "horizon": horizon, "stage": stage,
+        "candidate_stock": dict(list(sorted(stock.items(), key=lambda row: -row[1]))[:5]),
+        "facility_ready": ready_facilities[:3], "facility_needed": [name for name in facilities if name not in ready_facilities][:3],
+        "trade_channels_seen": channels,
+        "buyer_route": ("visiting trader" if visitors else "faction settlement; caravan required" if destinations else "no live buyer route"),
+        "direct_production_plan": product in DIRECT_INCOME_PLANS,
+        "next_milestone": PRODUCT_NEXT_MILESTONE.get(product)
+            or ("Finish the relevant workshop and bill, then produce surplus and find a buyer."
+                if facilities else "Establish a safe output source and find a buyer."),
+        "recent_completed_sales": len(sales),
+        "recent_approx_sale_value": realised,
+        "caution": "No reliable future silver amount is inferred. Inventory value is not profit; keep food, medicine and defense reserves.",
+    }
+
 TECHNOLOGY = {
     "starflight": ("Звёздный корабль", None), "industrial": ("Промышленность и компоненты", None),
     "agriculture": ("Сельское хозяйство и питание", None), "medical": ("Медицина и протезирование", None),
@@ -437,10 +555,40 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     raw_steps: list[dict[str, Any]] = []
     answers: dict[str, Any] = {}
 
-    domain, raw = _ask(agent, state, "doctrine_domain", "Choose the colony's broad development domain first.", domain_options(audit))
-    raw_steps.append(raw); answers.update(raw.get("answers", {}))
-    direction, raw = _ask(agent, state, "doctrine_primary_direction", "Now choose one exact long-term direction supported by live workforce and loaded content.", direction_options(audit, domain))
-    raw_steps.append(raw); answers.update(raw.get("answers", {}))
+    # Each Laya call is independent. Pass the previous selections back in the
+    # *next* state, or direction, revenue and ending can contradict each other.
+    current = context.get("current") or {}
+    def decision_state() -> dict[str, Any]:
+        needs = state.get("needs") or {}
+        return {
+            "population": state.get("people"), "food": needs.get("food"),
+            "sheltered_beds": needs.get("sheltered_beds"),
+            "current_course": {key: current.get(key) for key in (
+                "primary_direction", "economy_product", "diplomacy", "endgame") if current.get(key)},
+            "chosen_so_far": {key.removeprefix("doctrine_"): row.get("choice")
+                              for key, row in answers.items() if isinstance(row, dict)},
+            "income_evidence": economic_outlook(current, context),
+            "alignment": course_alignment(current),
+            "recent_course_changes": (context.get("recent_course_changes") or [])[-2:],
+        }
+
+    def ask_step(question_id: str, instructions: str, options: dict[str, str]) -> str:
+        selected, raw = _ask(agent, decision_state(), question_id, instructions, options)
+        raw_steps.append(raw)
+        answers.update(raw.get("answers", {}))
+        return selected
+
+    if current:
+        continuation = ask_step("doctrine_revision",
+            "Keep the established course if it still advances colony survival and the chosen ending; revise only with a concrete reason from current evidence.",
+            {"keep": "Keep current goal, trade route, diplomacy and building policy.",
+             "revise": "Reconsider the course because evidence shows a better path or the existing route is blocked."})
+        if continuation == "keep":
+            return {"selection": dict(current), "answers": answers, "raw_steps": raw_steps,
+                    "audit": audit, "retained": True}
+
+    domain = ask_step("doctrine_domain", "Choose the colony's broad development domain first.", domain_options(audit))
+    direction = ask_step("doctrine_primary_direction", "Choose one long-term direction supported by workforce and content. Later choices must serve it unless you deliberately change course.", direction_options(audit, domain))
 
     settlements = _filter_axis(SETTLEMENTS, flags)
     if context.get("mountain_possible"):
@@ -466,17 +614,22 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
             "type": "choice", "instructions": "Choose the workforce specialization supported by actual skills, passions and disabled work.", "criteria": profession_choices,
         }
     for question_id, question in independent.items():
-        _, raw_axis = _ask(agent, state, question_id, str(question["instructions"]), dict(question["criteria"]))
-        raw_steps.append(raw_axis)
-        answers.update(raw_axis.get("answers", {}))
+        instructions = str(question["instructions"])
+        if question_id == "doctrine_endgame":
+            instructions += " Match the selected direction where it is a concrete victory route; choose a different ending only deliberately."
+        ask_step(question_id, instructions, dict(question["criteria"]))
 
     family = str(answers["doctrine_economy_family"]["choice"])
     products = {
         name: description for name, description in (ECONOMY_FAMILIES.get(family) or {}).get("products", {}).items()
         if _requires_available(PRODUCT_REQUIREMENTS.get(name), flags)
     }
-    product, raw = _ask(agent, state, "doctrine_economy_product", "The economic family is fixed; choose its exact product or revenue mechanism.", products)
-    raw_steps.append(raw); answers.update(raw.get("answers", {}))
+    products = {
+        name: (f"{description}; {economic_outlook({'economy_product': name}, context)['horizon']}; "
+               f"direct setup order available: {economic_outlook({'economy_product': name}, context)['direct_production_plan']}")
+        for name, description in products.items()
+    }
+    product = ask_step("doctrine_economy_product", "Choose the main revenue mechanism. Compare time to first sale, available labor, infrastructure and food reserve; keep it aligned with the long-term goal.", products)
 
     mining_product = None
     if product == "mining":
@@ -486,8 +639,7 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
             if int(count or 0) > 0 and any(token in str(name).lower() for token in ("gold", "silver", "jade", "uranium", "plasteel", "steel"))
         }
         if minerals:
-            mining_product, raw = _ask(agent, state, "doctrine_mining_product", "Mining was selected; choose the verified local mineral priority.", minerals)
-            raw_steps.append(raw); answers.update(raw.get("answers", {}))
+            mining_product = ask_step("doctrine_mining_product", "Mining was selected; choose the verified local mineral priority.", minerals)
 
     selection = {
         "schema_version": 2,

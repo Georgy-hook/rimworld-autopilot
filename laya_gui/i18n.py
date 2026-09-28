@@ -167,9 +167,15 @@ ACTION_EN = {
     "build_income_infrastructure": "build income-producing facilities", "configure_income_production": "configure profitable production",
     "prepare_ancient_danger": "prepare for an ancient danger", "open_ancient_danger": "open the ancient danger",
     "prepare_rescue_mission": "prepare a rescue mission", "plan_human_reproduction": "plan family growth", "hold_and_observe": "wait and observe safely",
+    "build_passive_cooler": "cool an occupied bedroom", "build_room_campfire": "warm a bedroom with a campfire",
+    "build_room_heater": "install a wired electric heater", "connect_room_heater_power": "connect the bedroom heater",
+    "prioritize_thermal_project": "finish urgent temperature control",
 }
 
 ACTION_RU = {
+    "build_passive_cooler": "охладить жилую комнату", "build_room_campfire": "согреть спальню костром",
+    "build_room_heater": "установить обогреватель с проводкой", "connect_room_heater_power": "подключить обогреватель",
+    "prioritize_thermal_project": "достроить отопление или охлаждение",
     "choose_colony_doctrine": "выбрать долгосрочный курс колонии", "advance_doctrine_research": "начать исследование по курсу",
     "advance_research": "начать следующее исследование", "hold_survival": "дать колонии закончить текущую работу",
     "build_freezer": "построить холодильник для еды", "create_stockpile": "организовать общий склад", "expand_stockpile": "расширить склад",

@@ -51,6 +51,25 @@ class RosterAgent:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_disappeared_combat_target_does_not_stop_director(self):
+        client = mock.Mock()
+        client.post.side_effect = [
+            {"success": True},
+            bridge.RimApiError('/api/v1/pawn/job: HTTP 404: Target thing not found on the worker\'s map: 53491'),
+        ]
+        action = {"kind": "commands", "commands": [
+            {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": 1, "is_drafted": True}},
+            {"endpoint": "/api/v1/pawn/job", "body": {"pawn_id": 1, "job_def": "AttackMelee", "target_thing_id": 53491}},
+        ]}
+        result = bridge.apply_action(client, action)
+        self.assertTrue(result["stale_target"])
+        self.assertTrue(result["applied"])
+        self.assertEqual(len(result["responses"]), 1)
+
+        client.post.side_effect = bridge.RimApiError("/api/v1/pawn/job: HTTP 400: Job is not allowed")
+        with self.assertRaises(bridge.RimApiError):
+            bridge.apply_action(client, {"kind": "commands", "commands": [action["commands"][1]]})
+
     def test_food_summary_preserves_short_term_spoilage(self):
         summary = {"critical_resources": {"food_summary": {
             "food_total": 90, "meals_count": 5, "raw_food_count": 85,
@@ -169,6 +188,20 @@ class BridgeTests(unittest.TestCase):
     def test_low_confidence_becomes_noop(self):
         decision = bridge.decide(FakeAgent(confidence=0.2), self.snapshot(), 0.6)
         self.assertEqual(decision["choice"], "keep_current_plan")
+
+    def test_post_combat_context_does_not_send_entire_crowded_map(self):
+        snapshot = self.snapshot()
+        snapshot["combat"]["colonists"] = [{"id": 10, "is_drafted": True, "health": 0.8}]
+        snapshot["map"]["plants"] = [{"description": "x" * 10000}]
+        decision = bridge.decide(FakeAgent(choice="stand_down"), snapshot, 0.0)
+        self.assertEqual(decision["choice"], "stand_down")
+        state = decision["raw"]["visible_state"]
+        self.assertEqual(state["hostiles"], 0)
+        self.assertEqual(state["drafted"], 1)
+        self.assertNotIn("plants", state)
+        self.assertLess(len(str(state)), 3000)
+        self.assertIn("farm", state)
+        self.assertIn("resources", state)
 
     def test_threat_without_target_ids_undrafts_instead_of_exhausting_colonists(self):
         snapshot = self.snapshot()

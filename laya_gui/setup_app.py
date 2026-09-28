@@ -13,14 +13,13 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from install_payload import copy_install_payload
 from .services import BASE_DIR, RESOURCE_DIR
 from .theme import COLORS, FONTS, FancyButton, ShadowCard, configure_styles, render_photo
 
 
 PRODUCT_NAME = "RimWorld Autopilot"
 DEFAULT_INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / PRODUCT_NAME
-PAYLOAD_FOLDERS = ("assets", "laya_gui", "vendor")
-PAYLOAD_SUFFIXES = {".py", ".ps1", ".cmd", ".md", ".txt"}
 
 
 def _default_rimworld() -> Path:
@@ -93,7 +92,7 @@ class SetupWindow(tk.Tk):
             self.withdraw()
         self.language = "ru"
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
-        self.title(f"{PRODUCT_NAME} 0.0.5 — Setup")
+        self.title(f"{PRODUCT_NAME} 0.0.6 — Setup")
         self.geometry("980x700")
         self.resizable(False, False)
         self.configure(bg=COLORS["window"])
@@ -244,24 +243,7 @@ class SetupWindow(tk.Tk):
 
     @staticmethod
     def _copy_payload(source: Path, destination: Path) -> None:
-        destination.mkdir(parents=True, exist_ok=True)
-        for child in source.iterdir():
-            if child.is_file() and (child.suffix.lower() in PAYLOAD_SUFFIXES or child.name in {"LICENSE", "RIMAPI_UPSTREAM_COMMIT"}):
-                if child.name not in {"laya-control.json", "laya-preferences.json", "rimworld-autopilot.json", "autopilot-preferences.json"}:
-                    shutil.copy2(child, destination / child.name)
-        for folder in PAYLOAD_FOLDERS:
-            item = source / folder
-            if item.exists():
-                shutil.copytree(item, destination / folder, dirs_exist_ok=True)
-        for name in ("RimWorld-Autopilot.exe",):
-            candidate = source / "dist" / name
-            if not candidate.exists():
-                candidate = source / name
-            if candidate.exists():
-                shutil.copy2(candidate, destination / name)
-        legacy_setup = destination / "RimWorld-Autopilot-Setup.exe"
-        if legacy_setup.exists():
-            legacy_setup.unlink()
+        copy_install_payload(source, destination)
 
     @staticmethod
     def _create_shortcut(install_dir: Path, venv_python: Path) -> None:

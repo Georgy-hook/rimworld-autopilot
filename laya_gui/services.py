@@ -16,7 +16,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 
-APP_NAME = "RimWorld Autopilot 0.0.5"
+APP_NAME = "RimWorld Autopilot 0.0.6"
 BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
 DATA_DIR = (Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "RimWorld Autopilot") if getattr(sys, "frozen", False) else BASE_DIR

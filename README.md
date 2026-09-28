@@ -92,7 +92,7 @@ That hierarchy keeps decisions focused. If Laya skips hunting, it is not asked t
 
 The control center shows the current colony direction, recent decisions, priorities, and connection health. It also offers a technical log view and a way to export decision history. See [Laya architecture and evaluation](docs/LAYA_ARCHITECTURE.md) for the model interface and [architecture](ARCHITECTURE.md) for the full project layout.
 
-The [colony playtest log](PLAYTEST_REPORT.md) records each observed run, including colony lifespan, colonist outcomes, and issues found during testing.
+The [colony playtest log](PLAYTEST_REPORT.md) records each observed run, including colony lifespan, colonist outcomes, and issues found during testing. The [recruitment and economy QA audit](docs/RECRUITMENT_ECONOMY_QA.md) tracks the live choice-API checks, growth routes and limits of the income forecast.
 
 For a Twitch broadcast, open **Stream** in the control center and turn on **Observer**. It directs the camera, resumes game pauses and restores 3× speed after raids slow the game; Laya's colony decisions remain separate. Camera shot lengths stay in real seconds. Turn it off before pausing to inspect the game yourself. The [observer guide](docs/STREAM_OBSERVER.md) explains the shot order and standalone script.
 
@@ -123,6 +123,8 @@ To build the Windows app, ZIP, and installer, install Inno Setup 6.7+ and run:
 ```powershell
 .\Build-GUI.ps1
 ```
+
+The installer puts only the app, colony controller, required mod files, and license notices in Program Files. The ZIP keeps the documentation and mod source for people who want to inspect or build the project.
 
 The build also creates `dist/RimWorld-Autopilot-Installer.exe`, an identical copy of the full versioned installer. Attach that fixed-name file to every stable release so the [permanent download link](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest/download/RimWorld-Autopilot-Installer.exe) keeps working. See the [release checklist](docs/RELEASING.md).
 

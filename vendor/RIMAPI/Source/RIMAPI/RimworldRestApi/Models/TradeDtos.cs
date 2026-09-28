@@ -84,6 +84,21 @@ namespace RIMAPI.Models
         public System.Collections.Generic.List<string> PurchasePriorities { get; set; } = new System.Collections.Generic.List<string>();
         public int MinimumSilverReserve { get; set; } = 300;
         public int MaximumSpend { get; set; } = 2000;
+        public int? PurchasePawnId { get; set; }
+    }
+
+    public class LiveTradePawnOfferDto
+    {
+        public int PawnId { get; set; }
+        public string Name { get; set; }
+        public float UnitPrice { get; set; }
+        public float Health { get; set; }
+        public int Age { get; set; }
+        public string Gender { get; set; }
+        public System.Collections.Generic.List<string> Skills { get; set; } = new System.Collections.Generic.List<string>();
+        public System.Collections.Generic.List<string> Traits { get; set; } = new System.Collections.Generic.List<string>();
+        public System.Collections.Generic.List<string> HealthConditions { get; set; } = new System.Collections.Generic.List<string>();
+        public System.Collections.Generic.List<string> DisabledWork { get; set; } = new System.Collections.Generic.List<string>();
     }
 
     public class LiveTradeCategoryDto
@@ -103,6 +118,8 @@ namespace RIMAPI.Models
         public int MaximumSpend { get; set; }
         public System.Collections.Generic.List<LiveTradeCategoryDto> SaleOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
         public System.Collections.Generic.List<LiveTradeCategoryDto> PurchaseOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
+        public float PlannedSaleValue { get; set; }
+        public System.Collections.Generic.List<LiveTradePawnOfferDto> HumanlikeOffers { get; set; } = new System.Collections.Generic.List<LiveTradePawnOfferDto>();
     }
 
     public class LiveTradeResponseDto
@@ -117,5 +134,26 @@ namespace RIMAPI.Models
         public bool Executed { get; set; }
         public System.Collections.Generic.List<string> Sold { get; set; } = new System.Collections.Generic.List<string>();
         public System.Collections.Generic.List<string> Bought { get; set; } = new System.Collections.Generic.List<string>();
+    }
+
+    public class ActiveCaravanTradeDto
+    {
+        public bool Active { get; set; }
+        public int SettlementId { get; set; }
+        public string SettlementName { get; set; }
+        public int ColonySilver { get; set; }
+        public int TraderSilver { get; set; }
+        public System.Collections.Generic.List<LiveTradePawnOfferDto> HumanlikeOffers { get; set; } = new System.Collections.Generic.List<LiveTradePawnOfferDto>();
+        public System.Collections.Generic.List<LiveTradeCategoryDto> SaleOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
+    }
+
+    public class ActiveCaravanTradeRequestDto
+    {
+        public int SettlementId { get; set; }
+        public int? PurchasePawnId { get; set; }
+        public string SaleCategory { get; set; }
+        public int MinimumSilverReserve { get; set; }
+        public int MaximumSpend { get; set; } = 2500;
+        public bool CloseWithoutTrade { get; set; }
     }
 }

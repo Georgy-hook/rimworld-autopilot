@@ -46,6 +46,7 @@ namespace RIMAPI.Models
     {
         public int LetterId { get; set; }
         public string OptionLabel { get; set; }
+        public string LetterText { get; set; }
     }
 
     public class KidnappedPawnDto

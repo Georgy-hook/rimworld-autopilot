@@ -107,6 +107,44 @@ class CombatScenarioTests(unittest.TestCase):
         self.assertEqual(len(context["fighters"]), 3)
         self.assertIn("unarmed", context["ally_weapons"])
 
+    def test_pacifist_with_rifle_is_not_counted_or_commanded_as_a_shooter(self):
+        gunner = fighter(1, distance=9)
+        pacifist = fighter(2, distance=11, weapon="Gun_BoltActionRifle")
+        combat = {"colonists": [gunner, pacifist]}
+        bridge.annotate_combat_capability([
+            {"id": 1, "skills": {"Shooting": {"disabled": False}, "Melee": {"disabled": False}}},
+            {"id": 2, "skills": {"Shooting": {"disabled": True}, "Melee": {"disabled": True}}},
+        ], combat)
+        self.assertTrue(gunner["can_fight"])
+        self.assertFalse(pacifist["can_fight"])
+        hostile = {"id": 99, "kind_def": "Wolf_Timber", "health": 1.0,
+                   "position": {"x": 20, "z": 10}}
+        snapshot = raid(combat["colonists"], [hostile])
+        context = bridge.combat_model_context(None, snapshot)
+        self.assertIn("1 allies, 1 guns", context["forces"])
+        self.assertIn("/pacifist", " ".join(context["fighters"]))
+        self.assertIn("focus_fire", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+        action = bridge.plan_action(snapshot, {"choice": "focus_fire"})
+        attacks = [row["body"] for row in action["commands"]
+                   if row.get("body", {}).get("tactic") == "focus_fire"]
+        self.assertEqual(attacks[0]["fighter_ids"], [1])
+
+    def test_compact_contact_context_names_animal_and_bleeding_gunner_risk(self):
+        class ShortWindowAgent:
+            cfg = {"max_len": 512, "head_max_len": 192}
+
+            def tok(self, text, add_special_tokens=False):
+                return {"input_ids": [0] * ((len(text) + 1) // 2)}
+
+        gunner = fighter(1, distance=1, health=0.85)
+        gunner["bleeding_rate"] = 0.66
+        snapshot = raid([gunner], [{"id": 99, "kind_def": "Wolf_Timber", "health": 1.0,
+                                    "position": {"x": 12, "z": 10}}])
+        context = bridge.combat_model_context(ShortWindowAgent(), snapshot)
+        self.assertIn("Wolf_Timber", " ".join(context["hostiles"]))
+        self.assertIn("Gun in melee", context["risk"])
+        self.assertIn("bleeding 0.66", context["risk"])
+
     def test_revolver_vs_yorkshire_terrier_at_melee_range_offers_movement_or_melee(self):
         shooter = fighter(1, distance=1, health=0.79)
         shooter["tendable_now"] = True

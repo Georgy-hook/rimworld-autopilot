@@ -1,6 +1,6 @@
 # RIMAPI — RimWorld Autopilot fork
 
-Версия 0.0.5 включает изменённую сборку RIMAPI 1.10.0 для RimWorld 1.6. Полный соответствующий исходный код находится в `vendor/RIMAPI/Source`; базовый upstream-коммит записан в `RIMAPI_UPSTREAM_COMMIT`.
+Версия 0.0.6 включает изменённую сборку RIMAPI 1.10.0 для RimWorld 1.6. Полный соответствующий исходный код находится в `vendor/RIMAPI/Source`; базовый upstream-коммит записан в `RIMAPI_UPSTREAM_COMMIT`.
 
 Новые контуры боя, событий и торговли:
 

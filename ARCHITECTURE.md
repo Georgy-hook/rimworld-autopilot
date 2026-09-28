@@ -1,6 +1,6 @@
 # Decision architecture
 
-Version 0.0.5 follows the way the Laya/Jev ecosystem is used in public examples: deterministic application code projects state and defines typed alternatives; the model ranks a bounded choice; application code validates and reduces the answer into an effect. The additional [Laya architecture and evaluation](docs/LAYA_ARCHITECTURE.md) explains the root checkpoint's limitations, tokenizer-aware context and bounded comparisons introduced after 0.0.3.
+Version 0.0.6 follows the way the Laya/Jev ecosystem is used in public examples: deterministic application code projects state and defines typed alternatives; the model ranks a bounded choice; application code validates and reduces the answer into an effect. The additional [Laya architecture and evaluation](docs/LAYA_ARCHITECTURE.md) explains the root checkpoint's limitations, tokenizer-aware context and bounded comparisons introduced after 0.0.3.
 
 References reviewed before this redesign:
 

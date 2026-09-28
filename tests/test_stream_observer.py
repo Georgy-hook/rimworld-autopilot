@@ -62,10 +62,19 @@ class StreamObserverTests(unittest.TestCase):
 
     def test_corpse_fallback_shows_unknown_cause_without_inventing_one(self):
         planner = observer.ObserverPlanner()
-        planner.step(state([pawn(1, conditions=["Malnutrition:whole body"]), pawn(2)]), [], 0)
+        planner.step(state([pawn(1, conditions=["Bite:Arm", "Malnutrition:whole body"]), pawn(2)]), [], 0)
         corpse = {"def_name": "Corpse_Human", "label": "Corpse of Colonist 1", "position": {"x": 5, "z": 20}}
         actions = planner.step(state([pawn(2)], tick=1001, corpses=[corpse]), [], 1)
-        self.assertIn("Last known condition", actions[-1]["text"])
+        self.assertIn("last observed condition: Malnutrition", actions[-1]["text"])
+        self.assertNotIn("Bite:Arm", actions[-1]["text"])
+
+    def test_old_scar_alone_is_not_reported_as_death_cause(self):
+        planner = observer.ObserverPlanner()
+        planner.step(state([pawn(1, conditions=["Bite:Arm"]), pawn(2)]), [], 0)
+        corpse = {"def_name": "Corpse_Human", "label": "Corpse of Colonist 1", "position": {"x": 5, "z": 20}}
+        actions = planner.step(state([pawn(2)], tick=1001, corpses=[corpse]), [], 1)
+        self.assertIn("Cause: not reported by the game", actions[-1]["text"])
+        self.assertNotIn("Bite:Arm", actions[-1]["text"])
 
     def test_corpse_appearing_on_a_later_poll_still_gets_a_death_shot(self):
         planner = observer.ObserverPlanner()
@@ -133,6 +142,17 @@ class StreamObserverTests(unittest.TestCase):
                       planner.step(running, [], 10))
         planner.step(running, [], 45)
         self.assertEqual(planner.shot.target_id, 2)
+
+    def test_new_colony_rearms_three_times_speed_immediately(self):
+        planner = observer.ObserverPlanner()
+        first = state(map_id=1, tick=120000)
+        planner.step(first, [], 100)
+        self.assertEqual(planner.pacing_actions(first["game"], 100),
+                         [{"kind": "ensure_speed", "speed": 3}])
+        next_colony = state(map_id=2, tick=100)
+        planner.step(next_colony, [], 101)
+        self.assertEqual(planner.pacing_actions(next_colony["game"], 101),
+                         [{"kind": "ensure_speed", "speed": 3}])
 
     def test_quiet_colony_rotates_and_zoom_out_is_far(self):
         planner = observer.ObserverPlanner()

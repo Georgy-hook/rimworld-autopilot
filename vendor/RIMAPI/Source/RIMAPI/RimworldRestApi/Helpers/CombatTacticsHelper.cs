@@ -297,41 +297,33 @@ namespace RIMAPI.Helpers
                             && pawn.Position.DistanceToSquared(nearestShooter.Position) > 144;
                         if (isolatedUnarmed)
                         {
-                            // "Guard the shooters" cannot mean attacking alone
-                            // while the shooters are on the other side of the map.
-                            // Rejoin them; if already threatened, first move away
-                            // from the hostile on a trap-free route.
+                            // An isolated civilian must converge with the shooter.
+                            // Retreating directly away from the pursuer can instead
+                            // drag it out of gun range while the shooter gives chase.
                             Pawn immediateThreat = threats
                                 .OrderBy(p => p.Position.DistanceToSquared(pawn.Position))
                                 .FirstOrDefault();
                             if (immediateThreat != null
                                 && pawn.Position.DistanceToSquared(immediateThreat.Position) <= 100)
                             {
-                                float awayX = pawn.Position.x - immediateThreat.Position.x;
-                                float awayZ = pawn.Position.z - immediateThreat.Position.z;
-                                float awayLength = (float)Math.Sqrt(awayX * awayX + awayZ * awayZ);
-                                if (awayLength < 0.1f) awayX = 1f;
-                                IntVec3 away = new IntVec3(
-                                    pawn.Position.x + (int)Math.Round(awayX * 8f / Math.Max(awayLength, 1f)), 0,
-                                    pawn.Position.z + (int)Math.Round(awayZ * 8f / Math.Max(awayLength, 1f)));
-                                IntVec3 safeRetreat;
-                                if (TryFindTrapFreeCell(pawn, away, immediateThreat.Position,
-                                    "withdraw_and_regroup", out safeRetreat, 6f))
+                                IntVec3 regroup;
+                                if (TryFindGuardRegroupCell(pawn, nearestShooter, immediateThreat, out regroup))
                                 {
-                                    Job retreat = JobMaker.MakeJob(JobDefOf.Goto, safeRetreat);
+                                    Job retreat = JobMaker.MakeJob(JobDefOf.Goto, regroup);
                                     retreat.playerForced = true;
                                     if (pawn.jobs.TryTakeOrderedJob(retreat))
                                         result.PositionedPawnIds.Add(pawn.thingIDNumber);
                                 }
                                 else
-                                    result.Notes.Add($"No safe route for isolated {pawn.LabelShortCap} to regroup.");
+                                    result.Notes.Add($"No short trap-free route for isolated {pawn.LabelShortCap} toward the shooter; reassess tactic.");
                                 continue;
                             }
                         }
                         float shooterRadius = tactic == "screen_melee" ? 12f : 5f;
                         float fighterRadius = tactic == "screen_melee" ? 9f : 4f;
                         Pawn intercept = threats
-                            .Where(p => !isolatedUnarmed && (nearestShooter == null
+                            .Where(p => !isolatedUnarmed && (tactic != "guard_shooters" || pawn.equipment?.Primary != null)
+                                && (nearestShooter == null
                                 || p.Position.DistanceTo(nearestShooter.Position) <= shooterRadius
                                 || p.Position.DistanceTo(pawn.Position) <= fighterRadius))
                             .OrderBy(p => nearestShooter == null
@@ -366,9 +358,10 @@ namespace RIMAPI.Helpers
                         float dx = target.Position.x - nearestShooter.Position.x;
                         float dz = target.Position.z - nearestShooter.Position.z;
                         float distance = (float)Math.Sqrt(dx * dx + dz * dz);
+                        float offset = pawn.equipment?.Primary == null && tactic == "guard_shooters" ? -3f : 2f;
                         IntVec3 desired = new IntVec3(
-                            nearestShooter.Position.x + (int)Math.Round(dx * 2f / Math.Max(distance, 1f)), 0,
-                            nearestShooter.Position.z + (int)Math.Round(dz * 2f / Math.Max(distance, 1f)));
+                            nearestShooter.Position.x + (int)Math.Round(dx * offset / Math.Max(distance, 1f)), 0,
+                            nearestShooter.Position.z + (int)Math.Round(dz * offset / Math.Max(distance, 1f)));
                         IntVec3 safe;
                         if (TryFindTrapFreeCell(pawn, desired, target.Position, tactic, out safe, 0f))
                         {
@@ -711,6 +704,36 @@ namespace RIMAPI.Helpers
             }
             int depth = tactic == "melee_block" || tactic == "door_defense" || tactic == "infestation_choke" ? 1 : 2;
             return new IntVec3(baseCell.x + dx * depth + sideX * centered * spacing, 0, baseCell.z + dz * depth + sideZ * centered * spacing);
+        }
+
+        private static bool TryFindGuardRegroupCell(Pawn pawn, Pawn shooter, Pawn threat, out IntVec3 result)
+        {
+            Map map = pawn.Map;
+            int currentShooterDistance = pawn.Position.DistanceToSquared(shooter.Position);
+            IEnumerable<IntVec3> candidates = GenRadial.RadialCellsAround(pawn.Position, 8f, true)
+                .Where(cell => cell != pawn.Position && cell.InBounds(map) && cell.Standable(map)
+                    && !cell.Fogged(map) && !cell.ContainsStaticFire(map) && !HasFriendlyTrap(cell, map)
+                    && !cell.GetThingList(map).OfType<Pawn>().Any()
+                    && cell.DistanceToSquared(shooter.Position) + 4 < currentShooterDistance
+                    && cell.DistanceToSquared(threat.Position) >= 36)
+                .OrderBy(cell => cell.DistanceToSquared(shooter.Position))
+                .ThenByDescending(cell => cell.DistanceToSquared(threat.Position))
+                .Take(24);
+            foreach (IntVec3 cell in candidates)
+            {
+                PawnPath path = map.pathFinder.FindPathNow(pawn.Position, cell, pawn, null, PathEndMode.OnCell);
+                int startingThreatDistance = pawn.Position.DistanceToSquared(threat.Position);
+                bool valid = path.Found && path.NodesReversed.All(node => !HasFriendlyTrap(node, map)
+                    && (node == pawn.Position || node.DistanceToSquared(threat.Position) >=
+                        (node.DistanceToSquared(pawn.Position) <= 4
+                            ? Math.Min(4, startingThreatDistance) : 4)));
+                path.ReleaseToPool();
+                if (!valid) continue;
+                result = cell;
+                return true;
+            }
+            result = IntVec3.Invalid;
+            return false;
         }
 
         private static bool TryFindTrapFreeCell(Pawn pawn, IntVec3 desired, IntVec3 hostile, string tactic, out IntVec3 result,
