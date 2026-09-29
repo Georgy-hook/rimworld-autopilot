@@ -56,6 +56,11 @@ namespace RIMAPI.Models
         public bool IsColonyAnimal { get; set; }
         public float Health { get; set; }
         public float Hunger { get; set; }
+        public float Rest { get; set; }
+        public float Consciousness { get; set; }
+        public float Moving { get; set; }
+        public float Pain { get; set; }
+        public List<AnimalConditionDto> HealthConditions { get; set; } = new List<AnimalConditionDto>();
         public float BleedingRate { get; set; }
         public bool TendableNow { get; set; }
         public bool Downed { get; set; }
@@ -80,6 +85,17 @@ namespace RIMAPI.Models
         public float HarmRevengeChance { get; set; }
         public float MinComfortableTemperature { get; set; }
         public float MaxComfortableTemperature { get; set; }
+    }
+
+    public class AnimalConditionDto
+    {
+        public string DefName { get; set; }
+        public string Label { get; set; }
+        public float Severity { get; set; }
+        public string Stage { get; set; }
+        public bool TendableNow { get; set; }
+        public bool IsPermanent { get; set; }
+        public bool IsCurrentlyLifeThreatening { get; set; }
     }
 
     public class TameAnimalRequestDto

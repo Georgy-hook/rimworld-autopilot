@@ -37,6 +37,8 @@ RAID_SECONDS = 30.0
 TARGET_GAME_SPEED = 3
 EMERGENCY_GAME_SPEED = 1
 SPEED_RETRY_SECONDS = 5.0
+TAB_LIFETIME_SECONDS = 30.0
+TAB_CLOSE_RETRY_SECONDS = 5.0
 
 
 def _id(row: dict[str, Any]) -> int:
@@ -139,6 +141,32 @@ class Shot:
     position: dict[str, int] | None = None
     zoomed_out: bool = False
     last_follow: float = 0.0
+
+
+class TimedWindowCloser:
+    """Leave research and quest tabs visible briefly, then return to the map."""
+
+    def __init__(self) -> None:
+        self.first_seen: dict[str, float] = {}
+        self.last_attempt: dict[str, float] = {}
+
+    def step(self, windows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+        visible = {
+            name for row in windows if isinstance(row, dict)
+            if (name := str(row.get("window_type") or ""))
+            and name.casefold().startswith("maintabwindow_")
+            and any(token in name.casefold() for token in ("research", "quest"))
+        }
+        self.first_seen = {name: self.first_seen.get(name, now) for name in visible}
+        self.last_attempt = {name: attempted for name, attempted in self.last_attempt.items()
+                             if name in visible}
+        actions = []
+        for name in sorted(visible):
+            if (now - self.first_seen[name] >= TAB_LIFETIME_SECONDS
+                    and now - self.last_attempt.get(name, -9999.0) >= TAB_CLOSE_RETRY_SECONDS):
+                self.last_attempt[name] = now
+                actions.append({"kind": "close_window", "window_type": name})
+        return actions
 
 
 class ObserverPlanner:
@@ -455,6 +483,10 @@ def _execute(api: RimApi, action: dict[str, Any]) -> None:
             "text": action["text"], "duration": action["duration"], "color": "#FFF1D6",
             "scale": 1.15, "panel": True, "compact": True, "bars": [],
         })
+    elif kind == "close_window":
+        api.request("/api/v1/ui/window/close", post=True, body={
+            "window_types": [action["window_type"]], "force_pause_only": False,
+        })
 
 
 def _parse_args() -> argparse.Namespace:
@@ -474,6 +506,8 @@ def main() -> None:
         signal.signal(signum, lambda *_: stop.set())
     api = RimApi(args.api_url)
     planner = ObserverPlanner()
+    window_closer = TimedWindowCloser()
+    next_window_scan = 0.0
     outbox: queue.Queue[dict[str, Any]] = queue.Queue()
     DeathEventReader(args.api_url, outbox, stop).start()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -516,6 +550,10 @@ def main() -> None:
                 actions = planner.pacing_actions(game, now, home_fire=home_fire,
                                                  critical_bleeding=critical_bleeding,
                                                  downed_under_attack=downed_under_attack) + actions
+                if now >= next_window_scan:
+                    windows = api.request("/api/v1/ui/windows") or []
+                    actions.extend(window_closer.step(windows, now))
+                    next_window_scan = now + 1.0
                 death_until = time.time() + max(0, DEATH_SECONDS - (now - planner.shot.started)) if planner.shot and planner.shot.kind == "death" else 0
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),

@@ -228,6 +228,24 @@ namespace RIMAPI.Helpers
                         IsColonyAnimal = p.Faction == Faction.OfPlayer,
                         Health = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f,
                         Hunger = p.needs?.food?.CurLevelPercentage ?? 1f,
+                        Rest = p.needs?.rest?.CurLevelPercentage ?? 1f,
+                        Consciousness = p.Faction == Faction.OfPlayer
+                            ? p.health?.capacities?.GetLevel(PawnCapacityDefOf.Consciousness) ?? 0f : 0f,
+                        Moving = p.Faction == Faction.OfPlayer
+                            ? p.health?.capacities?.GetLevel(PawnCapacityDefOf.Moving) ?? 0f : 0f,
+                        Pain = p.Faction == Faction.OfPlayer ? p.health?.hediffSet?.PainTotal ?? 0f : 0f,
+                        HealthConditions = p.Faction == Faction.OfPlayer ? p.health?.hediffSet?.hediffs?
+                            .Where(h => h != null && h.Visible)
+                            .Select(h => new AnimalConditionDto
+                            {
+                                DefName = h.def?.defName,
+                                Label = h.Label,
+                                Severity = h.Severity,
+                                Stage = h.CurStage?.label,
+                                TendableNow = h.TendableNow(),
+                                IsPermanent = h.IsPermanent(),
+                                IsCurrentlyLifeThreatening = h.IsCurrentlyLifeThreatening,
+                            }).ToList() ?? new List<AnimalConditionDto>() : new List<AnimalConditionDto>(),
                         BleedingRate = p.health?.hediffSet?.BleedRateTotal ?? 0f,
                         TendableNow = p.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false,
                         Downed = p.Downed,

@@ -385,6 +385,21 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
                 "is_colony_animal": bool(row.get("is_colony_animal")),
                 "health": round(first_number(row.get("health"), 1.0), 3),
                 "hunger": round(first_number(row.get("hunger"), 1.0), 3),
+                "rest": round(first_number(row.get("rest"), 1.0), 3),
+                "consciousness": round(first_number(row.get("consciousness"), 1.0), 3),
+                "moving": round(first_number(row.get("moving"), 1.0), 3),
+                "pain": round(first_number(row.get("pain")), 3),
+                "health_conditions": [
+                    {"def_name": str(condition.get("def_name") or ""),
+                     "label": str(condition.get("label") or ""),
+                     "severity": round(first_number(condition.get("severity")), 3),
+                     "stage": str(condition.get("stage") or ""),
+                     "tendable_now": bool(condition.get("tendable_now")),
+                     "is_permanent": bool(condition.get("is_permanent")),
+                     "is_currently_life_threatening": bool(condition.get("is_currently_life_threatening"))}
+                    for condition in row.get("health_conditions") or []
+                    if isinstance(condition, dict)
+                ],
                 "bleeding_rate": round(first_number(row.get("bleeding_rate")), 3),
                 "tendable_now": bool(row.get("tendable_now")),
                 "gender": str(row.get("gender") or "None"),
