@@ -787,6 +787,10 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
             "cost_stuff_count": stuff_count,
             "materials": materials,
             "requires_power": bool(row.get("requires_power")),
+            "is_power_generator": bool(row.get("is_power_generator")),
+            "requires_fuel": bool(row.get("requires_fuel")),
+            "nominal_power_output": float(row.get("nominal_power_output") or 0),
+            "minimum_construction_skill": int(row.get("minimum_construction_skill") or 0),
             "is_work_table": bool(row.get("is_work_table")),
             "existing_count": int(counts.get(name) or 0),
         }

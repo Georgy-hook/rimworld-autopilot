@@ -50,6 +50,7 @@ namespace RIMAPI.Models
         public string Kind { get; set; }
         public string StuffDefName { get; set; }
         public float PercentComplete { get; set; }
+        public int MinimumConstructionSkill { get; set; }
         public PositionDto Position { get; set; }
     }
 

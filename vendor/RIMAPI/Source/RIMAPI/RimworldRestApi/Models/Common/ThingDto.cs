@@ -24,6 +24,7 @@ namespace RIMAPI.Models
         public string Description { get; set; }
         public float Growth { get; set; }
         public bool HarvestableNow { get; set; }
+        public bool IsDesignatedForHarvest { get; set; }
         public int HarvestYield { get; set; }
         public string HarvestedThingDef { get; set; }
         public string InnerDefName { get; set; }

@@ -477,6 +477,7 @@ namespace RIMAPI.Helpers
                 if (map == null) return ApiResult.Fail($"Map {request.MapId} not found.");
                 var ids = new HashSet<int>(request.PlantIds ?? new List<int>());
                 int designated = 0;
+                int alreadyDesignated = 0;
                 foreach (Plant plant in map.listerThings.ThingsInGroup(ThingRequestGroup.Plant).OfType<Plant>().Where(p => ids.Contains(p.thingIDNumber)))
                 {
                     if (!plant.HarvestableNow) continue;
@@ -485,8 +486,10 @@ namespace RIMAPI.Helpers
                         map.designationManager.AddDesignation(new Designation(plant, DesignationDefOf.HarvestPlant));
                         designated++;
                     }
+                    else alreadyDesignated++;
                 }
-                return designated > 0 ? ApiResult.Ok() : ApiResult.Fail("No selected mature plants could be designated.");
+                return designated + alreadyDesignated > 0 ? ApiResult.Ok()
+                    : ApiResult.Fail("No selected mature plants could be designated.");
             }
             catch (Exception ex)
             {

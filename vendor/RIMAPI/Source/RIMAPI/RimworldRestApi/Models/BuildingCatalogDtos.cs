@@ -21,6 +21,10 @@ namespace RIMAPI.Models
         public bool IsWorkTable { get; set; }
         public bool IsBed { get; set; }
         public bool RequiresPower { get; set; }
+        public bool IsPowerGenerator { get; set; }
+        public bool RequiresFuel { get; set; }
+        public float NominalPowerOutput { get; set; }
+        public int MinimumConstructionSkill { get; set; }
         public float LightRadius { get; set; }
         public List<string> BuildingTags { get; set; }
         public List<string> RecipeSkills { get; set; }

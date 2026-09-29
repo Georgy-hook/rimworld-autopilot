@@ -54,7 +54,19 @@ namespace RIMAPI.Helpers
                         SizeZ = def.size.z,
                         IsWorkTable = def.IsWorkTable,
                         IsBed = def.IsBed,
-                        RequiresPower = def.comps?.Any(comp => comp?.compClass == typeof(CompPowerTrader)) ?? false,
+                        RequiresPower = (def.comps?.Any(comp => comp?.compClass != null
+                            && typeof(CompPowerTrader).IsAssignableFrom(comp.compClass)) ?? false)
+                            && !(def.comps?.Any(comp => comp?.compClass != null
+                                && typeof(CompPowerPlant).IsAssignableFrom(comp.compClass)) ?? false),
+                        IsPowerGenerator = def.comps?.Any(comp => comp?.compClass != null
+                            && typeof(CompPowerPlant).IsAssignableFrom(comp.compClass)) ?? false,
+                        RequiresFuel = def.comps?.Any(comp => comp?.compClass != null
+                            && typeof(CompRefuelable).IsAssignableFrom(comp.compClass)) ?? false,
+                        NominalPowerOutput = def.comps?.OfType<CompProperties_Power>()
+                            .Where(comp => comp.compClass != null
+                                && typeof(CompPowerPlant).IsAssignableFrom(comp.compClass))
+                            .Select(comp => Math.Abs(comp.PowerConsumption)).DefaultIfEmpty(0f).Max() ?? 0f,
+                        MinimumConstructionSkill = def.constructionSkillPrerequisite,
                         LightRadius = def.comps?.OfType<CompProperties_Glower>()
                             .Select(comp => comp.glowRadius).DefaultIfEmpty(0f).Max() ?? 0f,
                         BuildingTags = def.building?.buildingTags?.ToList() ?? new List<string>(),

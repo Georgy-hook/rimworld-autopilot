@@ -392,6 +392,8 @@ namespace RIMAPI.Helpers
             {
                 dto.Growth = plant.Growth;
                 dto.HarvestableNow = plant.HarvestableNow;
+                dto.IsDesignatedForHarvest = plant.Map?.designationManager?.DesignationOn(
+                    plant, DesignationDefOf.HarvestPlant) != null;
                 dto.HarvestYield = plant.HarvestableNow ? plant.YieldNow() : 0;
                 dto.HarvestedThingDef = plant.def.plant?.harvestedThingDef?.defName;
             }

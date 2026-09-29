@@ -881,6 +881,9 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             }
             if drafted:
                 criteria["prepare_undrafted"] = "Undraft exhausted or defenseless colonists so they can seek safety."
+        if any(row.get("carrying_pawn_id") or "kidnap" in str(row.get("current_job") or "").lower()
+               for row in hostile_rows):
+            criteria.pop("prepare_undrafted", None)
         if combat_planner.guarded_hive_outside_contact(snapshot):
             # A generic focus-fire order repositions out-of-range shooters
             # toward its target. At a passive hive that is an attack order,
@@ -1487,7 +1490,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             selected_set = set(map(int, selected))
             fighters = [pawn for pawn in fighters if int(pawn.get("id", -1)) in selected_set]
         ranged_tactics = {
-            "hold_cover", "focus_fire", "firing_line", "spread_out", "kite", "backstep_fire", "advance_to_range",
+            "hold_cover", "focus_fire", "intercept_kidnapper", "firing_line", "spread_out", "kite", "backstep_fire", "advance_to_range",
             "staggered_retreat", "killbox_hold", "wide_flank", "pincer",
             "counter_snipe", "siege_harass", "drop_pod_encircle",
         }
@@ -2019,6 +2022,18 @@ def resolve_model_source(model: str) -> str:
 
 
 def load_agent(model: str, device: str) -> Any:
+    try:
+        import torch
+    except ModuleNotFoundError:
+        torch = None  # Lightweight clients can load a mocked or remote agent.
+    if torch is not None:
+        # A 20-thread CPU pool saturated the host during each short decision.
+        cpu_threads = max(1, min(8, int(os.environ.get("LAYA_CPU_THREADS", "4"))))
+        torch.set_num_threads(cpu_threads)
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError:
+            pass  # PyTorch allows this setting only before the first inference.
     import laya
 
     selected = None if device == "auto" else device

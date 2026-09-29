@@ -39,6 +39,21 @@ def raid(fighters, hostiles, defenses=()):
 
 
 class CombatScenarioTests(unittest.TestCase):
+    def test_kidnapper_exposes_interception_without_undrafting(self):
+        shooter = fighter(1, distance=38, range_cells=25)
+        shooter["is_drafted"] = True
+        snapshot = raid([shooter], [{"id": 99, "kind_def": "Raider",
+                                     "health": 1.0, "current_job": "Kidnap",
+                                     "carrying_pawn_id": 8,
+                                     "position": {"x": 49, "z": 10}}])
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertIn("intercept_kidnapper", criteria)
+        self.assertNotIn("prepare_undrafted", criteria)
+        action = bridge.plan_action(snapshot, {"choice": "intercept_kidnapper"})
+        self.assertTrue(any(command.get("body", {}).get("tactic") == "intercept_kidnapper"
+                            and command["body"].get("target_pawn_id") == 99
+                            for command in action["commands"]))
+
     def test_wall_blocked_gun_is_not_counted_as_cover_even_inside_range(self):
         shooter = fighter(1, distance=9, range_cells=25)
         shooter["shootable_opponent_ids"] = []

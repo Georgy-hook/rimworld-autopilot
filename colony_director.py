@@ -108,7 +108,8 @@ ACTION_DESCRIPTIONS = {
     "rebalance_cooking": "Choose a real cook to assign or free from competing animal work when prepared meals are gone despite abundant edible ingredients.",
     "advance_research": "Select the next available project on the default route toward fabrication and starflight.",
     "advance_doctrine_research": "Let Laya choose one currently available research project whose live definition advances the selected economy, technology, defense or endgame direction.",
-    "build_power": "Build a wood generator and connected battery inside a small roofed shed. The walls take extra material and builder time but keep rain off the battery.",
+    "build_power": "Choose a power source from the live catalog, research a better source, or defer generation. Compare fuel, output, construction skill, grid demand and current consumers before placing a checked blueprint.",
+    "connect_power_consumer": "Connect an existing unpowered device to the generator's actual electrical network with a continuous, checked conduit route.",
     "build_battery_shelter": "Enclose an existing outdoor battery under an automatic roof. Rain on an exposed battery can short the grid and start fires; a small shed costs about 70 wall material plus a door and builder time.",
     "build_hitech_lab": "Place blueprints for a hi-tech research bench and multi-analyzer.",
     "build_fabrication": "Place a fabrication bench needed for advanced components.",
@@ -167,6 +168,7 @@ ACTION_DESCRIPTIONS = {
 ACTION_LABELS = {
     "plan_architecture": "архитектурный проект",
     "build_catalog_building": "постройка из полного каталога",
+    "connect_power_consumer": "подключить прибор к электросети",
     "build_research_bench": "первый исследовательский стол",
     "improve_room_lighting": "освещение комнаты",
     "develop_colonist_skill": "развитие навыка",
@@ -295,6 +297,7 @@ ACTION_LABELS = {
 ACTION_LABELS_EN = {
     "plan_architecture": "Design a building", "unforbid_supplies": "Unforbid supplies",
     "build_catalog_building": "Choose a catalog building",
+    "connect_power_consumer": "Connect a powered device",
     "build_research_bench": "Build the first research bench",
     "equip_colonists": "Equip colonists", "rescue_downed_colonist": "Rescue a colonist",
     "rescue_neutral_arrival": "Rescue a visitor",
@@ -891,7 +894,7 @@ def basic_beds_blueprint(colonist_count: int, stuff: str = "WoodLog") -> dict[st
     )
 
 
-def freezer_blueprint(*, include_generator: bool = True, wall_stuff: str = "WoodLog") -> dict[str, Any]:
+def freezer_blueprint(*, include_generator: bool = False, wall_stuff: str = "WoodLog") -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for x in range(6):
         items.append(building("Wall", x, 0, stuff=wall_stuff))
@@ -899,27 +902,29 @@ def freezer_blueprint(*, include_generator: bool = True, wall_stuff: str = "Wood
             items.append(building("Wall", x, 5, stuff=wall_stuff))
     for z in range(1, 5):
         items.append(building("Wall", 0, z, stuff=wall_stuff))
-        if z != 2:
+        if z not in {2, 3}:
             items.append(building("Wall", 5, z, stuff=wall_stuff))
     items.append(building("Door", 3, 5, stuff=wall_stuff))
     items.append(building("Cooler", 5, 2, rotation=1))
-    if include_generator:
-        items.append(building("WoodFiredGenerator", 8, 1))
-    for x in range(5, 9 if include_generator else 7):
+    for x in range(5, 7):
         items.append(building("PowerConduit", x, 3))
-    return blueprint(items, 11 if include_generator else 7, 6)
+    return blueprint(items, 7, 6)
 
 
 def freezer_resource_plan(
-    building_counts: dict[str, Any], item_counts: dict[str, Any], best_builder: int, finished: set[str]
+    building_counts: dict[str, Any], item_counts: dict[str, Any], best_builder: int, finished: set[str],
+    generator_defs: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if "Electricity" not in finished or int(building_counts.get("Cooler", 0)) > 0 or best_builder < 3:
         return None
     power_defs = {"WoodFiredGenerator", "SolarGenerator", "WindTurbine", "WatermillGenerator", "GeothermalGenerator"}
+    power_defs.update(generator_defs or set())
     has_generator = any(int(building_counts.get(name, 0)) > 0 for name in power_defs)
+    if not has_generator:
+        return None
     required = {
-        "components": 3 + (0 if has_generator else 2),
-        "steel": 90 + (0 if has_generator else 100),
+        "components": 3,
+        "steel": 90,
         "wood": 150,
     }
     if (
@@ -928,7 +933,7 @@ def freezer_resource_plan(
         or int(item_counts.get("WoodLog") or 0) < required["wood"]
     ):
         return None
-    return {"include_generator": not has_generator, "requirements": required}
+    return {"include_generator": False, "requirements": required}
 
 
 def temple_blueprint(altar_def: str, wall_stuff: str) -> dict[str, Any]:
@@ -971,16 +976,44 @@ def battery_shelter_blueprint(material: str) -> dict[str, Any]:
     return blueprint(items, 4, 5)
 
 
-def power_blueprint() -> dict[str, Any]:
-    # Never expose the initial battery to rain. The enclosed shed auto-roofs
-    # once built; the generator remains outdoors and connected through a wall.
-    items = [building("WoodFiredGenerator", 0, 1)]
-    for row in battery_shelter_blueprint("WoodLog")["buildings"]:
-        items.append({**row, "rel_x": row["rel_x"] + 4})
-    items.append(building("Battery", 5, 1))
-    for x in range(2, 6):
-        items.append(building("PowerConduit", x, 2))
-    return blueprint(items, 8, 5)
+def power_strategy_options(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Offer the game's actual generators and their research prerequisites."""
+    dev = snapshot.get("development") or {}
+    catalog = [row for row in dev.get("building_catalog") or []
+               if isinstance(row, dict) and row.get("is_power_generator")]
+    plans = {name: plan for group in architect.catalog_construction_options(dev).values()
+             for name, plan in group.items() if plan.get("is_power_generator")}
+    best_skill = max((int(((pawn.get("skills") or {}).get("Construction") or {}).get("level") or 0)
+                      for pawn in snapshot.get("colonists") or []
+                      if not pawn.get("downed")), default=0)
+    plans = {name: plan for name, plan in plans.items()
+             if best_skill >= int(plan.get("minimum_construction_skill") or 0)}
+    research = live_research_options(snapshot)
+    locked = {prerequisite: name for row in catalog if not row.get("available_now")
+              for name in [str(row.get("def_name"))]
+              for prerequisite in row.get("research_prerequisites") or []
+              if prerequisite in research}
+    buildings = dev.get("buildings") or []
+    consumers = [row for row in buildings if row.get("requires_power")]
+    unpowered = [row for row in consumers if not row.get("power_on")]
+    power = dev.get("power_info") or {}
+    choices = {
+        f"build:{name}": (
+            f"{plan['label']}: nominal {plan.get('nominal_power_output') or '?'} W; "
+            f"fuel {plan.get('requires_fuel')}; cost {plan.get('cost_list')} + "
+            f"{plan.get('cost_stuff_count')} material; Construction "
+            f"{plan.get('minimum_construction_skill') or 0}; already {plan.get('existing_count') or 0}"
+        ) for name, plan in plans.items()
+    }
+    choices.update({f"research:{name}": f"Research {name} to unlock {generator}; {research[name]}"
+                    for name, generator in locked.items()})
+    choices["defer"] = "Wait for a better technology or higher demand; no generator is placed now."
+    return {"choices": choices, "plans": plans, "research": locked,
+            "demand": {"consumers": [str(row.get("def")) for row in consumers[:12]],
+                       "unpowered": [str(row.get("def")) for row in unpowered[:12]],
+                       "generation_w": power.get("current_power"),
+                       "consumption_w": power.get("total_consumption"),
+                       "stored_wh": power.get("currently_stored_power")}}
 
 
 def hitech_blueprint() -> dict[str, Any]:
@@ -1104,22 +1137,15 @@ def decode_terrain(data: dict[str, Any]) -> tuple[int, int, list[str]]:
 
 def power_conduit_route(development: dict[str, Any], target: dict[str, int],
                         terrain: dict[str, Any]) -> list[dict[str, int]] | None:
-    """Find a buildable cable route from an existing live grid to a heater.
-
-    RIMAPI presently refuses a conduit blueprint on top of a wall or another
-    building, so routing only through clear cells is essential.  Keep the
-    endpoint within four tiles of the appliance's power connector range.
-    """
+    """Route continuous cable from a producing power net to a consumer."""
     power = development.get("power_info") or {}
-    if (int(power.get("current_power") or 0) < 175
-            and int(power.get("currently_stored_power") or 0) < 50):
-        return None
     try:
         width, height, cells = decode_terrain(terrain)
     except (ValueError, TypeError, IndexError):
         return None
     cable_defs = {"PowerConduit", "HiddenConduit", "WaterproofConduit"}
     cables = set()
+    cable_nets: dict[tuple[int, int], int] = {}
     blocked = set()
     for row in list(development.get("buildings") or []) + list(development.get("construction_projects") or []):
         if not isinstance(row, dict):
@@ -1131,27 +1157,44 @@ def power_conduit_route(development: dict[str, Any], target: dict[str, int],
         name = str(row.get("def") or row.get("def_name") or "")
         if name in cable_defs:
             cables.add((x, z))
-        elif not name.endswith("Floor") and name not in {"Concrete", "Flagstone", "PavedTile"}:
+            if row.get("power_net_id") is not None:
+                cable_nets[(x, z)] = int(row["power_net_id"])
+        elif name not in {"Wall", "Door"} and not name.endswith("Floor") and name not in {"Concrete", "Flagstone", "PavedTile"}:
             size = row.get("size") or {}
             blocked.update((x + dx, z + dz)
                            for dx in range(max(1, int(size.get("x") or 1)))
                            for dz in range(max(1, int(size.get("z") or 1))))
-    if not cables:
-        return None
-    # Existing conduits may belong to separate dead grids. Only use a group
-    # close enough to an actual generator, not an arbitrary map-wide cable.
-    active_sources = ({"WoodFiredGenerator", "SolarGenerator", "WindTurbine",
-                       "WatermillGenerator", "GeothermalGenerator"}
-                      if int(power.get("current_power") or 0) >= 175 else set())
+    # Use actual net identity when RIMAPI exposes it. A cable across a wall
+    # can be nearby without sharing the generator's electrical network.
+    active_sources = {"WoodFiredGenerator", "SolarGenerator", "WindTurbine",
+                      "WatermillGenerator", "GeothermalGenerator"}
+    active_sources.update(str(row.get("def_name")) for row in development.get("building_catalog") or []
+                          if row.get("is_power_generator"))
     if int(power.get("currently_stored_power") or 0) >= 50:
         active_sources.add("Battery")
     generators = [(int((row.get("position") or {}).get("x") or -1000),
-                   int((row.get("position") or {}).get("z") or -1000))
+                   int((row.get("position") or {}).get("z") or -1000),
+                   row.get("power_net_id"))
                   for row in development.get("buildings") or []
                   if str(row.get("def") or "") in active_sources]
+    if (int(power.get("current_power") or 0) <= 0
+            and int(power.get("currently_stored_power") or 0) <= 0
+            and not any(net is not None for _, _, net in generators)):
+        return None
+    live_nets = {int(net) for _, _, net in generators if net is not None}
+    target_building = next((row for row in development.get("buildings") or []
+                            if row.get("requires_power")
+                            and int((row.get("position") or {}).get("x") or -1) == int(target["x"])
+                            and int((row.get("position") or {}).get("z") or -1) == int(target["z"])), None)
+    if target_building and target_building.get("power_net_id") in live_nets:
+        return []
     source = {cell for cell in cables
-              if any((cell[0] - gx) ** 2 + (cell[1] - gz) ** 2 <= 36
-                     for gx, gz in generators)}
+              if ((cell in cable_nets and cable_nets[cell] in live_nets) if live_nets else
+                  any((cell[0] - gx) ** 2 + (cell[1] - gz) ** 2 <= 4
+                      for gx, gz, _ in generators))}
+    if not source:
+        source = {(gx, gz) for gx, gz, _ in generators
+                  if 1 <= gx < width - 1 and 1 <= gz < height - 1}
     if not source:
         return None
     connected = set(source)
@@ -1163,7 +1206,7 @@ def power_conduit_route(development: dict[str, Any], target: dict[str, int],
                 connected.add(adjacent)
                 pending.append(adjacent)
     tx, tz = int(target["x"]), int(target["z"])
-    if any((x - tx) ** 2 + (z - tz) ** 2 <= 16 for x, z in connected):
+    if any((x - tx) ** 2 + (z - tz) ** 2 <= 1 for x, z in connected):
         return []
     forbidden_terrain = {"Marsh", "DeepWater", "ShallowWater", "MovingWater",
                          "OceanDeep", "OceanShallow", "Mud", "Ice"}
@@ -1172,7 +1215,7 @@ def power_conduit_route(development: dict[str, Any], target: dict[str, int],
     endpoint = None
     while route_queue:
         x, z = route_queue.popleft()
-        if (x - tx) ** 2 + (z - tz) ** 2 <= 16:
+        if (x - tx) ** 2 + (z - tz) ** 2 <= 1:
             endpoint = (x, z)
             break
         for adjacent in ((x + 1, z), (x - 1, z), (x, z + 1), (x, z - 1)):
@@ -1285,6 +1328,33 @@ def architecture_occupied_cells(development: dict[str, Any], map_state: dict[str
             for z in range(int(lower["z"]) - 12, int(upper["z"]) + 13):
                 occupied.add((x, z))
     return occupied
+
+
+def find_clear_layout_site(client: bridge.RimApiClient, map_id: int,
+                           desired: dict[str, int], layout: dict[str, Any],
+                           development: dict[str, Any], map_state: dict[str, Any],
+                           *, radius: int = 30) -> dict[str, int] | None:
+    """Find stable ground without old plans, natural edifices or trees."""
+    terrain = client.get("/api/v1/map/terrain", map_id=map_id)
+    blocked = architecture_occupied_cells(development, map_state)
+    blocked.update((int((plant.get("position") or {}).get("x") or -1),
+                    int((plant.get("position") or {}).get("z") or -1))
+                   for plant in development.get("plants") or []
+                   if "Tree" in str(plant.get("def_name") or ""))
+    edifice_grid = terrain.get("edifice_grid") or []
+    if edifice_grid:
+        width, height, _ = decode_terrain(terrain)
+        edifice_cells = []
+        for index in range(0, len(edifice_grid), 2):
+            edifice_cells.extend([int(edifice_grid[index + 1])] * int(edifice_grid[index]))
+        if len(edifice_cells) == width * height:
+            blocked.update((index % width, index // width)
+                           for index, occupied in enumerate(edifice_cells) if occupied)
+    allowed = {str(name) for name in terrain.get("palette") or [] if
+               str(name) in {"Soil", "SoilRich", "Gravel", "Sand"}
+               or str(name).startswith(("Rough", "Smooth", "Flagstone", "Paved", "Concrete"))}
+    return find_terrain_rect(terrain, desired, int(layout["width"]), int(layout["height"]),
+                             allowed, radius=radius, blocked=blocked, clearance=2)
 
 
 def can_fight(pawn: dict[str, Any]) -> bool:
@@ -3748,7 +3818,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         one_time.append("create_growing_zone")
 
     finished_electricity = "Electricity" in finished
-    freezer_plan = freezer_resource_plan(counts, item_counts, best_builder, finished)
+    freezer_plan = freezer_resource_plan(counts, item_counts, best_builder, finished, {
+        str(row.get("def_name")) for row in dev.get("building_catalog") or []
+        if row.get("is_power_generator")
+    })
     if freezer_plan and "freezer" not in map_state["issued"]:
         details["freezer_include_generator"] = freezer_plan["include_generator"]
         details["freezer_requirements"] = freezer_plan["requirements"]
@@ -3820,8 +3893,47 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         details["cooking_rebalance_options"] = cooking_options
         dev["cooking_rebalance_options"] = cooking_options
         one_time.append("rebalance_cooking")
-    if "Electricity" in finished and counts.get("WoodFiredGenerator", 0) == 0 and "power" not in map_state["issued"] and "freezer" not in map_state["issued"]:
-        one_time.append("build_power")
+    if "Electricity" in finished and can_work("Construction"):
+        power_options = power_strategy_options(snapshot)
+        generator_defs = {str(row.get("def_name")) for row in dev.get("building_catalog") or []
+                          if row.get("is_power_generator")}
+        generators_present = any(int(counts.get(name) or 0) > 0 for name in generator_defs)
+        generators_planned = any(str(row.get("def_name")) in generator_defs
+                                 for row in dev.get("construction_projects") or [])
+        if (not generators_present and not generators_planned
+                and len(power_options["choices"]) > 1
+                and not issued_recently(map_state, "power_strategy", tick, retry_ticks=30000)):
+            details["power_source_options"] = power_options
+            dev["power_source_options"] = power_options
+            one_time.append("build_power")
+        if generators_present and int(item_counts.get("Steel") or 0) >= 2:
+            source_nets = {row.get("power_net_id") for row in dev.get("buildings") or []
+                           if str(row.get("def")) in generator_defs and row.get("power_net_id") is not None}
+            disconnected = [row for row in dev.get("buildings") or []
+                            if row.get("requires_power") and row.get("id") is not None
+                            and row.get("power_net_id") not in source_nets]
+            if disconnected and client is not None:
+                terrain = dev.get("terrain") or bridge.safe_get(
+                    client, "/api/v1/map/terrain", snapshot.setdefault("warnings", []),
+                    map_id=map_id)
+                if terrain:
+                    connection_options = {}
+                    for row in disconnected[:12]:
+                        target = row.get("position") or {}
+                        if target.get("x") is None or target.get("z") is None:
+                            continue
+                        if issued_recently(map_state, f"power_connection:{row['id']}", tick, retry_ticks=12000):
+                            continue
+                        route = power_conduit_route(dev, target, terrain)
+                        if route and len(route) <= int(item_counts.get("Steel") or 0):
+                            connection_options[str(row["id"])] = {
+                                "building": str(row.get("def")), "position": target,
+                                "route": route, "steel_cost": len(route),
+                            }
+                    if connection_options:
+                        details["power_consumer_options"] = connection_options
+                        dev["power_consumer_options"] = connection_options
+                        one_time.append("connect_power_consumer")
     if dev.get("rooms") is not None:
         exposed = exposed_batteries(dev)
         dev["exposed_batteries"] = [
@@ -4582,7 +4694,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                 and int(animal.get("minimum_handling_skill") or 0) <= best_handler):
             tame_options.append(animal)
     wildlife_paused = issued_recently(map_state, "wildlife_pause", tick, retry_ticks=15000)
-    if tame_options and not wildlife_paused:
+    if (tame_options and not wildlife_paused
+            and (len(snapshot.get("colonists") or []) >= 2
+                 or not dev.get("construction_projects"))):
         details["tame_options"] = tame_options
         details["handler_context"] = {"name": best_handler_row.get("name"), "skill": best_handler, "inspiration": best_handler_row.get("inspiration")}
         dev["tame_options"] = tame_options
@@ -4814,7 +4928,15 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         for cell in room.get("cells") or []
         if cell.get("x") is not None and cell.get("z") is not None
     }
+    available_builders = [pawn for pawn in snapshot.get("colonists") or []
+                          if not pawn.get("downed") and not pawn.get("in_mental_state")
+                          and not ((pawn.get("work_priorities") or {}).get("Construction") or {}).get("disabled")]
+    maximum_builder_skill = max((int(((pawn.get("skills") or {}).get("Construction") or {}).get("level") or 0)
+                                 for pawn in available_builders), default=0)
     projects = [row for row in dev.get("construction_projects", []) if isinstance(row, dict)
+                and int(row.get("minimum_construction_skill") or 0) <= maximum_builder_skill
+                and not issued_recently(map_state, f"construction_project:{row.get('thing_id')}", tick,
+                                        retry_ticks=15000 if int(row.get("minimum_construction_skill") or 0) >= 3 else 5000)
                 and (int((row.get("position") or {}).get("x") or -999),
                      int((row.get("position") or {}).get("z") or -999)) not in sealed_danger_cells
                 and (not (failure := failed_projects.get(str(row.get("thing_id"))))
@@ -5086,7 +5208,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     all_wild_plant_groups: dict[str, dict[str, Any]] = {}
     cultivated_defs = {"Plant_Rice", "Plant_Corn", "Plant_Potato", "Plant_Cotton", "Plant_Psychoid", "Plant_Hops", "Plant_Healroot"}
     for plant in dev.get("plants", []):
-        if not plant.get("harvestable_now"):
+        if not plant.get("harvestable_now") or plant.get("is_designated_for_harvest"):
             continue
         name = str(plant.get("def_name") or "")
         if name in cultivated_defs:
@@ -5123,7 +5245,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         for plant in dev.get("plants", [])
         if plant.get("harvestable_now")
         and plant.get("harvested_thing_def") == "WoodLog"
-        and issued_recently(map_state, f"tree:{plant.get('thing_id')}", tick, retry_ticks=120000)
+        and (plant.get("is_designated_for_harvest") or issued_recently(
+            map_state, f"tree:{plant.get('thing_id')}", tick, retry_ticks=120000))
     )
     dev["pending_tree_wood"] = pending_tree_wood
     tree_yield_by_id = {
@@ -5891,9 +6014,14 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
         opts = dev["temple_options"]
         q["temple_altar"] = {"type": "choice", "instructions": f"Choose the exact ritual focus for {opts.get('ideology')}.", "criteria": dict(opts.get("altars") or {})}
         q["temple_material"] = {"type": "choice", "instructions": "Choose an affordable, preferably fireproof temple material.", "criteria": dict(opts.get("materials") or {})}
+    elif action == "connect_power_consumer" and dev.get("power_consumer_options"):
+        q["power_consumer"] = {"type": "choice", "instructions":
+            "Choose which disconnected powered building to wire first. Compare survival need, steel and route length.",
+            "criteria": {key: f"{row['building']} at {row['position']}; {row['steel_cost']} steel for continuous conduit"
+                         for key, row in dev["power_consumer_options"].items()}}
     elif action == "prioritize_construction_project" and dev.get("construction_project_options"):
         q["construction_project"] = {"type": "choice", "instructions": "Choose one exact unfinished project. Prefer survival-critical, nearly finished, and materially feasible work.", "criteria": {
-            str(p["thing_id"]): f"{p.get('label')} ({p.get('kind')}) {float(p.get('percent_complete') or 0) * 100:.0f}% at {p.get('position')}; stuff {p.get('stuff_def_name')}" for p in dev["construction_project_options"]
+            str(p["thing_id"]): f"{p.get('label')} ({p.get('kind')}) {float(p.get('percent_complete') or 0) * 100:.0f}% at {p.get('position')}; stuff {p.get('stuff_def_name')}; minimum Construction {p.get('minimum_construction_skill') or 0}; repeated low-skill work can botch" for p in dev["construction_project_options"]
         }}
         q["worker_pawn"] = {"type": "choice", "instructions": "Choose a builder using Construction, manipulation, movement, traits and injuries.", "criteria": worker_criteria(snapshot, "Construction")}
     elif action == "prioritize_thermal_project" and dev.get("thermal_project_options"):
@@ -6128,6 +6256,17 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
             material = next(iter(materials), "")
         parsed["research_bench_material"] = material
         raw_details = {"mode": "first_research_bench", "steps": steps}
+    elif choice == "build_power":
+        options = snapshot.get("development", {}).get("power_source_options") or {}
+        context = options.get("demand") or {}
+        source, raw = ask_laya_choice(agent, state, "power_source",
+            "Choose a power plan. Compare every available generator with current consumers, "
+            f"unpowered devices, generation and stored energy: {context}. "
+            "Research and defer are valid decisions when a fuel generator would only serve a lamp.",
+            options.get("choices") or {})
+        parsed["power_source"] = source
+        merged_answers.update(raw.get("answers", {}))
+        raw_details = {"mode": "power_strategy", "steps": [raw]}
     elif choice == "build_catalog_building":
         groups = snapshot.get("development", {}).get("catalog_building_options") or {}
         category, category_raw = ask_laya_choice(agent, state, "catalog_building_category",
@@ -7171,9 +7310,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         material = str((map_state.get("doctrine") or {}).get("material") or "WoodLog")
         if material.startswith("Blocks"):
             material = "WoodLog"
-        result = post_blueprint(client, map_id, anchor, weapon_shelves_blueprint(material), dx=-8, dz=9)
+        layout = weapon_shelves_blueprint(material)
+        near = position(int(anchor["x"]) - 8, int(anchor["z"]) + 9)
+        site = find_clear_layout_site(client, map_id, near, layout, dev, map_state)
+        if site is None:
+            return {"applied": False, "reason": "No clear dry site for weapon shelves"}
+        result = post_blueprint(client, map_id, site, layout)
         issued["weapon_shelves"] = tick
-        return {"applied": True, "phase": "build", "response": result}
+        return {"applied": True, "phase": "build", "site": site, "response": result}
     if choice == "equip_colonists":
         fighters = [pawn for pawn in snapshot.get("combat", {}).get("colonists", [])
                     if not pawn.get("is_dead") and not pawn.get("is_downed")
@@ -7240,9 +7384,18 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         options = details.get("animal_barn_options") or {}
         material = str(details.get("animal_barn_material") or (map_state.get("doctrine") or {}).get("material") or "WoodLog")
         floor_choice = str(details.get("animal_barn_floor") or "bare")
-        result = post_blueprint(client, map_id, anchor, animal_barn_blueprint(material, int(options.get("animal_count") or len(snapshot.get("animals", []))), straw_floor=floor_choice == "straw", powered="Electricity" in set(map(str, snapshot["development"].get("finished_research", []))), climate=str(options.get("climate") or "temperate")), dx=-22, dz=18)
+        layout = animal_barn_blueprint(material, int(options.get("animal_count") or len(snapshot.get("animals", []))),
+                                       straw_floor=floor_choice == "straw",
+                                       powered="Electricity" in set(map(str, snapshot["development"].get("finished_research", []))),
+                                       climate=str(options.get("climate") or "temperate"))
+        near = position(int(anchor["x"]) - 22, int(anchor["z"]) + 18)
+        site = find_clear_layout_site(client, map_id, near, layout, dev, map_state)
+        if site is None:
+            return {"applied": False, "reason": "No stable unoccupied site for the barn"}
+        result = post_blueprint(client, map_id, site, layout)
         issued["animal_barn"] = tick
-        return {"applied": True, "material": material, "floor": floor_choice, "response": result}
+        return {"applied": True, "material": material, "floor": floor_choice,
+                "site": site, "response": result}
     if choice == "build_animal_pen":
         options = details.get("animal_pen_options") or {}
         material = str(details.get("animal_pen_material") or "")
@@ -7901,9 +8054,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["finish_freezer_entrance"] = tick
         return {"applied": True, "position": sealed["position"], "material": material, "response": response}
     if choice == "build_freezer":
-        result = post_blueprint(client, map_id, anchor, freezer_blueprint(include_generator=bool(details.get("freezer_include_generator", True))))
+        layout = freezer_blueprint()
+        near = position(int(anchor["x"]) + 12, int(anchor["z"]))
+        site = find_clear_layout_site(client, map_id, near, layout, dev, map_state, radius=28)
+        if site is None:
+            return {"applied": False, "reason": "No clear, dry freezer site is available"}
+        response = post_blueprint(client, map_id, site, layout)
         issued["freezer"] = tick
-        return result
+        return {"applied": True, "site": site, "response": response}
     if choice == "create_stockpile":
         result = client.post("/api/v1/map/zone/stockpile", body={
             "map_id": map_id,
@@ -7950,14 +8108,17 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["starter_base"] = tick
         return result
     if choice == "build_campfire":
-        terrain = client.get("/api/v1/map/terrain", map_id=map_id)
-        site = open_bed_site(terrain, anchor, snapshot["development"])
-        if site is None:
-            return {"applied": False, "reason": "No clear dry place for a campfire near the house"}
-        result = post_blueprint(client, map_id, site, blueprint([building("Campfire", 0, 0)], 1, 1))
-        issued["campfire"] = tick
-        map_state["campfire_attempts"] = int(map_state.get("campfire_attempts") or 0) + 1
-        return {"applied": True, "site": site, "response": result}
+        catalog = next((row for row in dev.get("building_catalog") or []
+                        if row.get("def_name") == "Campfire" and row.get("available_now")), None)
+        if catalog is None:
+            return {"applied": False, "reason": "Campfire is not available in the live building catalog"}
+        result = place_checked_building(client, map_id, {
+            "def_name": "Campfire", "size_x": 1, "size_z": 1,
+        }, anchor, snapshot=snapshot)
+        if result.get("applied"):
+            issued["campfire"] = tick
+            map_state["campfire_attempts"] = int(map_state.get("campfire_attempts") or 0) + 1
+        return result
     if choice == "configure_food_bills":
         result = configure_food_bills(client, snapshot["development"]["work_tables"])
         issued["food_bills"] = tick
@@ -7982,9 +8143,55 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         result = client.post("/api/v1/research/target", query={"name": target, "force": False})
         issued[f"research:{target}"] = tick
         return {"applied": True, "target": target, "doctrine": map_state.get("doctrine"), "response": result}
+    if choice == "connect_power_consumer":
+        key = str(details.get("power_consumer") or "")
+        plan = (details.get("power_consumer_options") or {}).get(key)
+        if plan is None or not plan.get("route"):
+            return {"applied": False, "reason": "Selected disconnected consumer has no valid conduit route"}
+        origin, layout = wired_heater_blueprint(plan["position"], plan["route"], include_heater=False)
+        response = post_blueprint(client, map_id, origin, layout)
+        projects_raw = client.get("/api/v1/builder/projects", map_id=map_id)
+        projects = projects_raw.get("projects") or [] if isinstance(projects_raw, dict) else []
+        built = client.get("/api/v1/map/buildings", map_id=map_id)
+        present = {(int((row.get("position") or {}).get("x") or -1),
+                    int((row.get("position") or {}).get("z") or -1))
+                   for row in list(projects) + list(built or [])
+                   if str(row.get("def_name") or row.get("def")) in
+                   {"PowerConduit", "HiddenConduit", "WaterproofConduit"}}
+        missing = [cell for cell in plan["route"]
+                   if (int(cell["x"]), int(cell["z"])) not in present]
+        if missing:
+            return {"applied": False, "reason": "Conduit route was only partly placed",
+                    "missing_cells": missing[:8], "response": response}
+        issued[f"power_connection:{key}"] = tick
+        return {"applied": True, "consumer": key, "conduit_count": len(plan["route"]),
+                "response": response}
     if choice == "build_power":
-        result = post_blueprint(client, map_id, anchor, power_blueprint(), dx=1, dz=13)
-        issued["power"] = tick
+        options = details.get("power_source_options") or {}
+        selected = str(details.get("power_source") or "")
+        if selected not in (options.get("choices") or {}):
+            return {"applied": False, "reason": "Laya did not select a live power option"}
+        if selected == "defer":
+            issued["power_strategy"] = tick
+            return {"applied": True, "power_strategy": "defer"}
+        if selected.startswith("research:"):
+            target = selected.removeprefix("research:")
+            if target not in live_research_options(snapshot):
+                return {"applied": False, "reason": "Power research is no longer startable"}
+            response = client.post("/api/v1/research/target", query={"name": target, "force": False})
+            issued["power_strategy"] = tick
+            issued[f"research:{target}"] = tick
+            return {"applied": True, "power_strategy": selected, "response": response}
+        name = selected.removeprefix("build:")
+        plan = (options.get("plans") or {}).get(name)
+        if plan is None:
+            return {"applied": False, "reason": "Selected generator is unavailable"}
+        materials = plan.get("materials") or {}
+        stuff = next(iter(materials), None)
+        result = place_checked_building(client, map_id, plan, anchor, stuff, snapshot=snapshot)
+        if result.get("applied"):
+            issued["power_strategy"] = tick
+            issued[f"power_generator:{name}"] = tick
         return result
     if choice == "build_battery_shelter":
         options = dev.get("battery_shelter_options") or {}
@@ -8402,6 +8609,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 project_id = options[0].get("thing_id")
         if project_id is None or worker_id is None:
             return {"applied": False, "reason": "Laya did not select both an exact project and builder"}
+        project = next((row for row in dev.get("construction_projects") or []
+                        if str(row.get("thing_id")) == str(project_id)), None)
+        worker = next((row for row in snapshot.get("colonists") or []
+                       if str(row.get("id")) == str(worker_id)), None)
+        if (project is not None and worker is not None and
+                int(((worker.get("skills") or {}).get("Construction") or {}).get("level") or 0)
+                < int(project.get("minimum_construction_skill") or 0)):
+            return {"applied": False, "reason": "Selected builder cannot complete this project's skill requirement"}
         doctor_change = free_cold_shelter_builder(client, snapshot, int(worker_id))
         priority = prioritize(client, snapshot, "Construction", int(worker_id))
         response = client.post("/api/v1/builder/prioritize", body={
@@ -8419,6 +8634,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                     "responses": [priority, response]}
         issued["thermal_project_priority" if choice == "prioritize_thermal_project"
                else "construction_project_priority"] = tick
+        issued[f"construction_project:{project_id}"] = tick
         return {"applied": True, "project_id": int(project_id), "builder_id": int(worker_id),
                 "cold_shelter_staffing": doctor_change, "responses": [priority, response]}
     if choice == "prioritize_research":
@@ -8647,6 +8863,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                      squared_distance((plants_by_id.get(plant_id) or {}).get("position") or anchor, anchor))[:8]
         if not ids:
             return {"applied": False, "reason": "Selected trees have already been cut"}
+        live_raw = client.get("/api/v1/map/plants", map_id=map_id)
+        live = {int(row["thing_id"]): row for row in live_raw if row.get("thing_id") is not None}
+        ids = [plant_id for plant_id in ids if plant_id in live
+               and live[plant_id].get("harvestable_now")
+               and not live[plant_id].get("is_designated_for_harvest")]
+        if not ids:
+            issued["wood_harvest"] = tick
+            return {"applied": False, "reason": "The selected trees are already designated or no longer mature"}
         result = client.post("/api/v1/map/plants/harvest", body={"map_id": map_id, "plant_ids": ids})
         issued["wood_harvest"] = tick
         for plant_id in ids:
@@ -9813,7 +10037,7 @@ def combat_positioning_finished(snapshot: dict[str, Any], record: dict[str, Any]
         for index, command in enumerate(commands)
         if command.get("endpoint") == "/api/v1/combat/tactic"
         and command.get("body", {}).get("tactic") in {
-            "focus_fire", "advance_to_range", "backstep_fire", "kite",
+            "focus_fire", "intercept_kidnapper", "advance_to_range", "backstep_fire", "kite",
         }
         for pawn_id in ((responses[index] if index < len(responses) else {}) or {}).get("positioned_pawn_ids", [])
     }

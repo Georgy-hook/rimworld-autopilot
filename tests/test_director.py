@@ -781,7 +781,8 @@ class DirectorTests(unittest.TestCase):
         }}
         options = colony_combat.available_tactics(snapshot)
         self.assertIn("focus_fire", options)
-        self.assertNotIn("intercept_kidnapper", options)
+        self.assertIn("intercept_kidnapper", options)
+        self.assertIn("Pursue the carrier", options["intercept_kidnapper"])
         self.assertNotIn("killbox_hold", options)
         self.assertIn("fallback_line", options)
 
@@ -2691,6 +2692,7 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("harvest_nearby_trees", choices)
         self.assertEqual(details["tree_options"]["Plant_TreeOak"]["count"], 2)
         client = mock.Mock()
+        client.get.return_value = snapshot["development"]["plants"]
         result = director.execute_action(client, snapshot, state, "harvest_nearby_trees",
                                          {**details, "tree_type": "Plant_TreeOak"})
         self.assertTrue(result["applied"])
@@ -2798,6 +2800,7 @@ class DirectorTests(unittest.TestCase):
         choices, details = director.candidate_actions(None, snapshot, state)
         self.assertIn("harvest_nearby_trees", choices)
         client = mock.Mock()
+        client.get.return_value = trees
         director.execute_action(client, snapshot, state, "harvest_nearby_trees",
                                 {**details, "tree_type": "Plant_TreeOak"})
         snapshot["game"]["tick"] = 7001
@@ -3180,6 +3183,7 @@ class DirectorTests(unittest.TestCase):
         defs = [row["def_name"] for row in layout["buildings"]]
         self.assertIn("Cooler", defs)
         self.assertNotIn("WoodFiredGenerator", defs)
+        self.assertNotIn("WoodFiredGenerator", [row["def_name"] for row in director.freezer_blueprint()["buildings"]])
 
     def test_freezer_is_not_offered_without_components(self):
         missing = director.freezer_resource_plan(
@@ -4676,22 +4680,53 @@ class DirectorTests(unittest.TestCase):
                                               {**status, "detected_tick": 200})
         self.assertEqual(len(captured), 1)
 
-    def test_power_blueprint_roofs_battery_and_existing_battery_can_be_sheltered(self):
-        plan = director.power_blueprint()
-        cells = {(row["rel_x"], row["rel_z"]): row["def_name"] for row in plan["buildings"]}
-        wall_cells = {(row["rel_x"], row["rel_z"]) for row in plan["buildings"]
-                      if row["def_name"] == "Wall"}
-        self.assertEqual(cells[(5, 1)], "Battery")
-        self.assertEqual(cells[(6, 0)], "Door")
-        self.assertTrue(all(cells[(x, 0)] in {"Wall", "Door"} for x in range(4, 8)))
-        self.assertTrue(all(cells[(x, 4)] == "Wall" for x in range(4, 8)))
-        self.assertTrue(all((4, z) in wall_cells and (7, z) in wall_cells
-                            for z in range(1, 4)))
+    def test_existing_battery_can_be_sheltered(self):
         shelter = director.battery_shelter_blueprint("Steel")
         self.assertEqual(shelter["width"], 4)
         self.assertEqual(shelter["height"], 5)
         self.assertTrue(all(row.get("stuff_def_name") == "Steel"
                             for row in shelter["buildings"]))
+
+    def test_power_strategy_exposes_solar_research_and_defer_without_wood(self):
+        snapshot = {"colonists": [{"skills": {"Construction": {"level": 5}}}],
+                    "development": {"item_counts": {"Steel": 300, "ComponentIndustrial": 10},
+                                    "building_counts": {}, "current_research": {"name": "none"},
+                                    "research_tree": [{"name": "GeothermalPower", "label": "Geothermal",
+                                                       "can_start_now": True,
+                                                       "player_has_any_appropriate_research_bench": True}],
+                                    "buildings": [{"def": "StandingLamp", "requires_power": True,
+                                                   "power_on": False}],
+                                    "building_catalog": [
+                                        {"def_name": "WoodFiredGenerator", "available_now": True,
+                                         "is_power_generator": True, "requires_fuel": True,
+                                         "cost_list": [{"thing_def": "WoodLog", "count": 100}]},
+                                        {"def_name": "SolarGenerator", "available_now": True,
+                                         "is_power_generator": True, "requires_fuel": False,
+                                         "nominal_power_output": 1700,
+                                         "cost_list": [{"thing_def": "Steel", "count": 100}]},
+                                        {"def_name": "GeothermalGenerator", "available_now": False,
+                                         "is_power_generator": True,
+                                         "research_prerequisites": ["GeothermalPower"]}]}}
+        options = director.power_strategy_options(snapshot)
+        self.assertIn("build:SolarGenerator", options["choices"])
+        self.assertNotIn("build:WoodFiredGenerator", options["choices"])
+        self.assertIn("research:GeothermalPower", options["choices"])
+        self.assertIn("defer", options["choices"])
+        self.assertEqual(options["demand"]["unpowered"], ["StandingLamp"])
+
+    def test_power_route_ignores_nearby_cable_on_other_net(self):
+        terrain = {"width": 40, "height": 40, "palette": ["Soil"], "grid": [1600, 0]}
+        development = {"power_info": {"current_power": 1000},
+                       "buildings": [
+                           {"def": "SolarGenerator", "position": {"x": 12, "z": 12}, "power_net_id": 1},
+                           {"def": "PowerConduit", "position": {"x": 13, "z": 12}, "power_net_id": 1},
+                           {"def": "PowerConduit", "position": {"x": 16, "z": 12}, "power_net_id": 2},
+                           {"def": "StandingLamp", "position": {"x": 17, "z": 12},
+                            "power_net_id": 2, "requires_power": True}],
+                       "construction_projects": []}
+        route = director.power_conduit_route(development, {"x": 17, "z": 12}, terrain)
+        self.assertTrue(route)
+        self.assertEqual(route[0], {"x": 14, "z": 12})
 
     def test_exposed_battery_requires_complete_roof_and_is_reported(self):
         battery = {"id": 9, "def": "Battery", "position": {"x": 20, "z": 20}}

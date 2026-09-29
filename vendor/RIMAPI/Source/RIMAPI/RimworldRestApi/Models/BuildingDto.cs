@@ -28,6 +28,9 @@ namespace RIMAPI.Models
         public PositionDto Position { get; set; }
         public int Rotation { get; set; }
         public PositionDto Size { get; set; }
+        public bool RequiresPower { get; set; }
+        public bool PowerOn { get; set; }
+        public int? PowerNetId { get; set; }
         public string Type { get; set; }
         public bool Medical { get; set; }
         public bool ForPrisoners { get; set; }
@@ -36,7 +39,7 @@ namespace RIMAPI.Models
     public class PowerGeneratorInfoDto : BuildingDto
     {
         public float PowerOutput { get; set; }
-        public bool PowerOn { get; set; }
+        public new bool PowerOn { get; set; }
         public bool TransmitsPower { get; set; }
         public bool ShortCircuitInRain { get; set; }
         public float IdlePowerDraw { get; set; }
@@ -61,7 +64,7 @@ namespace RIMAPI.Models
         public int MaxAmmoCapacity { get; set; }
 
         // Power
-        public bool RequiresPower { get; set; }
+        public new bool RequiresPower { get; set; }
         public float PowerConsumption { get; set; }
         public bool IsPowered { get; set; }
 

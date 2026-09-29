@@ -33,6 +33,7 @@ namespace RIMAPI.Services
                             Kind = t is Frame ? "frame" : "blueprint",
                             StuffDefName = t.Stuff?.defName,
                             PercentComplete = frame?.PercentComplete ?? 0f,
+                            MinimumConstructionSkill = (target as ThingDef)?.constructionSkillPrerequisite ?? 0,
                             Position = new PositionDto { X = t.Position.x, Y = t.Position.y, Z = t.Position.z },
                         };
                     })
@@ -440,7 +441,10 @@ namespace RIMAPI.Services
                     // A planned floor is a Blueprint/Frame too. It must not
                     // block beds, lamps or workstations in the same room;
                     // only an existing building or another *thing* plan does.
-                    bool conflictsWithPlan = occupied.Any(cell => cell.InBounds(map) && cell.GetThingList(map).Any(t =>
+                    bool isConduit = thingDef.defName == "PowerConduit"
+                        || thingDef.defName == "HiddenConduit"
+                        || thingDef.defName == "WaterproofConduit";
+                    bool conflictsWithPlan = !isConduit && occupied.Any(cell => cell.InBounds(map) && cell.GetThingList(map).Any(t =>
                         t is Building || ((t is Blueprint || t is Frame)
                             && t.def.entityDefToBuild is ThingDef)));
                     if (conflictsWithPlan)

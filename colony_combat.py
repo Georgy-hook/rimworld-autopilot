@@ -480,9 +480,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     if any("gun" in text or "sniper" in text or "lancer" in text for text in hostile_text) and armored_melee:
         names.append("rush_ranged")
     if has_kidnapper and ranged:
-        # Focus fire already prioritizes the carrier; the old intercept
-        # positioning did not know the escape route and could move away.
-        names.insert(0, "focus_fire")
+        names.insert(0, "intercept_kidnapper")
     if psycasts:
         if any(ability.get("hostile") for ability in psycasts):
             names.append("psycast_control")
@@ -531,6 +529,9 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
                                 "the rest will seek trap-free firing lanes, which may expose them.")
             if name == "focus_fire" and len(in_range) < len(hostiles):
                 description += " Risk: fewer shooters are in range than active enemies; other fighters may be left exposed."
+            if name == "intercept_kidnapper":
+                description += (" Pursue the carrier in long trap-free moves and fire whenever a shot opens; "
+                                "this exposes the pursuer and may leave the base undefended.")
             if name in {"focus_fire", "hold_cover", "firing_line"} and any(
                 float(row.get("distance_to_nearest_opponent") or 9999) <= 6 for row in ranged
             ):
