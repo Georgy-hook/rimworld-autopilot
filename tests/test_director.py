@@ -46,6 +46,10 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
                          ["prioritize_construction_project"])
         self.assertEqual([row["thing_id"] for row in details["construction_project_options"]], [1])
+        snapshot["colonists"][0]["current_job"] = "FinishFrame"
+        self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
+                         ["hold_survival"])
+        snapshot["colonists"][0]["current_job"] = "Wait_Wander"
         snapshot["development"]["construction_projects"] = projects
         self.assertEqual(director.focus_cold_start_choices(
             snapshot, ["leave_wildlife_alone", "tend_colonist"], {}), ["hold_survival"])
@@ -2984,12 +2988,97 @@ class DirectorTests(unittest.TestCase):
     def test_cold_starter_blueprint_is_a_heated_shell_without_floor_work(self):
         layout = director.starter_base_blueprint(3, cold=True)
         defs = [row["def_name"] for row in layout["buildings"]]
-        self.assertEqual(defs.count("Wall"), 23)
+        self.assertEqual(defs.count("Wall"), 17)
         self.assertEqual(defs.count("Door"), 1)
         self.assertEqual(defs.count("Campfire"), 1)
         self.assertEqual(defs.count("SleepingSpot"), 3)
         self.assertNotIn("Bed", defs)
         self.assertEqual(layout["floors"], [])
+        self.assertEqual((layout["width"], layout["height"]), (5, 6))
+        self.assertEqual({(row["rel_x"], row["rel_z"]) for row in layout["buildings"]
+                          if row["def_name"] == "SleepingSpot"}, {(1, 2), (2, 2), (3, 2)})
+
+    def test_cold_shelter_assigns_every_capable_builder_at_placement(self):
+        client = mock.Mock()
+        client.post.return_value = {"success": True, "warnings": []}
+        snapshot = {
+            "game": {"tick": 1000}, "map": {"id": 1},
+            "colonists": [
+                {"id": 1, "name": "One", "work_priorities": {
+                    "Construction": {"priority": 0}, "Doctor": {"priority": 1}}},
+                {"id": 2, "name": "Two", "work_priorities": {
+                    "Construction": {"priority": 3}}},
+                {"id": 3, "name": "Three", "work_priorities": {
+                    "Construction": {"disabled": True}}},
+            ],
+            "development": {"weather": {"temperature": -15},
+                            "item_counts": {"WoodLog": 150}},
+        }
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        result = director.execute_action(client, snapshot, state, "build_starter_base", {})
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["cold_shelter_staffing"]), 3)
+        work_orders = [call.kwargs["body"] for call in client.post.call_args_list
+                       if call.args[0] == "/api/v1/colonist/work-priority"]
+        self.assertIn({"id": 1, "work": "Doctor", "priority": 2}, work_orders)
+        self.assertIn({"id": 1, "work": "Construction", "priority": 1}, work_orders)
+        self.assertIn({"id": 2, "work": "Construction", "priority": 1}, work_orders)
+        self.assertFalse(any(row["id"] == 3 for row in work_orders))
+
+    def test_roofed_temporary_spot_can_be_replaced_by_real_bed(self):
+        spots = [{"id": 20 + x, "def": "SleepingSpot",
+                  "position": {"x": x, "z": 2}, "size": {"x": 1, "z": 2}}
+                 for x in (1, 2, 3)]
+        room = {"id": 1, "touches_map_edge": False, "open_roof_count": 0,
+                "contained_beds_ids": [21, 22, 23],
+                "cells": [{"x": x, "z": z} for x in (1, 2, 3)
+                          for z in (1, 2, 3, 4)]}
+        development = {"buildings": [*spots, {"id": 30, "def": "Campfire",
+                                                "position": {"x": 2, "z": 4}}],
+                       "rooms": [room], "construction_projects": [],
+                       "item_counts": {"WoodLog": 200},
+                       "weather": {"temperature": 10}}
+        self.assertIsNone(director.empty_indoor_sleeping_spot(
+            development, {"x": 0, "z": 0}))
+        self.assertEqual(director.replaceable_indoor_sleeping_spot(
+            development, {"x": 0, "z": 0}, [])["id"], 21)
+
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 1,
+                    "resources": {"food": 30, "meals": 30}},
+                    "colonists": [{"id": 1, "name": "Builder", "health": 1.0,
+                                   "skills": {"Construction": {"level": 10}},
+                                   "work_priorities": {"Construction": {"priority": 1}}}],
+                    "animals": [], "wild_animals": [], "combat": {},
+                    "development": {**development, "building_counts": {"SleepingSpot": 3,
+                                                                  "Campfire": 1},
+                                    "zones": [], "work_tables": [], "plants": []}}
+        state = {"anchor": {"x": 0, "z": 0}, "issued": {"starter_base": 1}}
+        choices, details = director.candidate_actions(None, snapshot, state)
+        self.assertIn("build_basic_beds", choices)
+        self.assertEqual(details["replace_sleeping_spot_id"], 21)
+
+        client = mock.Mock()
+        client.post.return_value = {"success": True, "warnings": []}
+        client.get.side_effect = [
+            {"projects": [{"def_name": "Bed", "position": {"x": 1, "z": 2}}]}, []]
+        result = director.execute_action(client, snapshot, state, "build_basic_beds",
+                                         {"basic_bed_materials": {"WoodLog": "200 available"},
+                                          "bed_material": "WoodLog"})
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["replaced_sleeping_spot_id"], 21)
+        self.assertEqual(client.post.call_args_list[0].args[0],
+                         "/api/v1/order/designate/area")
+        self.assertEqual(client.post.call_args_list[0].kwargs["body"]["type"],
+                         "remove-sleeping-spot")
+        client.reset_mock()
+        client.post.return_value = {"success": True, "warnings": []}
+        client.get.side_effect = [{"projects": []}, []]
+        failed = director.execute_action(client, snapshot, state, "build_basic_beds",
+                                         {"basic_bed_materials": {"WoodLog": "200 available"},
+                                          "bed_material": "WoodLog"})
+        self.assertFalse(failed["applied"])
+        self.assertEqual(client.post.call_args_list[-1].kwargs["body"]["blueprint"]["buildings"][0]["def_name"],
+                         "SleepingSpot")
 
     def test_emergency_sleeping_spots_do_not_consume_materials(self):
         layout = director.sleeping_spots_blueprint(3)

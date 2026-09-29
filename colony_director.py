@@ -420,6 +420,23 @@ def starter_base_blueprint(colonist_count: int, *, cold: bool = False,
     Workstations belong in later dedicated rooms: crowding the first house
     with them previously exhausted the starting wood before it gained a roof.
     """
+    if cold:
+        # At severe subzero temperatures the original 7x7 room took longer
+        # to enclose and roof than the founders could remain conscious. Keep
+        # three sleeping spots entirely inside this smaller heated shell.
+        items = []
+        for x in range(5):
+            if x != 2:
+                items.append(building("Wall", x, 0, stuff=wall_stuff))
+            items.append(building("Wall", x, 5, stuff=wall_stuff))
+        for z in range(1, 5):
+            items.append(building("Wall", 0, z, stuff=wall_stuff))
+            items.append(building("Wall", 4, z, stuff=wall_stuff))
+        items.append(building("Door", 2, 0, stuff=wall_stuff))
+        items.append(building("Campfire", 2, 4))
+        for index in range(min(3, max(1, colonist_count))):
+            items.append(building("SleepingSpot", 1 + index, 2))
+        return blueprint(items, 5, 6)
     items: list[dict[str, Any]] = []
     for x in range(7):
         if x != 3:
@@ -429,14 +446,6 @@ def starter_base_blueprint(colonist_count: int, *, cold: bool = False,
         items.append(building("Wall", 0, z, stuff=wall_stuff))
         items.append(building("Wall", 6, z, stuff=wall_stuff))
     items.append(building("Door", 3, 0, stuff=wall_stuff))
-    if cold:
-        # Complete the shell before comfort work. The central fire has a
-        # three-cell clearance from wooden walls; sleeping spots cost no work
-        # or wood. Real beds and flooring can follow once the room is warm.
-        items.append(building("Campfire", 3, 3))
-        for index in range(min(3, max(1, colonist_count))):
-            items.append(building("SleepingSpot", 1 + 2 * index, 5))
-        return blueprint(items, 7, 7)
     for index in range(min(3, max(1, colonist_count))):
         items.append(building("Bed", 1 + 2 * index, 2, stuff="WoodLog"))
     items.append(building("TorchLamp", 3, 5))
@@ -2520,6 +2529,39 @@ def empty_indoor_sleeping_spot(dev: dict[str, Any],
     return None
 
 
+def replaceable_indoor_sleeping_spot(dev: dict[str, Any], anchor: dict[str, int],
+                                    colonists: list[dict[str, Any]],
+                                    excluded: set[tuple[int, int]] | None = None) -> dict[str, Any] | None:
+    """Find a roofed temporary spot that a real bed can replace in place."""
+    sheltered_ids = {
+        int(bed_id)
+        for room in dev.get("rooms") or []
+        if not room.get("touches_map_edge") and not room.get("is_prison_cell")
+        and not room.get("is_doorway") and not room_is_ancient_danger(room)
+        and int(room.get("open_roof_count") or 0) == 0
+        for bed_id in room.get("contained_beds_ids") or []
+    }
+    occupied_ids = {
+        int(pawn.get("current_job_target_id") or 0)
+        for pawn in colonists
+        if str(pawn.get("current_job") or "").lower() == "laydown"
+    }
+    for spot in dev.get("buildings") or []:
+        if spot.get("def") != "SleepingSpot" or spot.get("id") is None:
+            continue
+        spot_id = int(spot["id"])
+        point = spot.get("position") or {}
+        if (spot_id not in sheltered_ids or spot_id in occupied_ids
+                or point.get("x") is None or point.get("z") is None):
+            continue
+        x, z = int(point["x"]), int(point["z"])
+        if (abs(x - int(anchor["x"])) > 12 or abs(z - int(anchor["z"])) > 12
+                or (x, z) in (excluded or set())):
+            continue
+        return {"id": spot_id, "position": {"x": x, "z": z}}
+    return None
+
+
 def colonist_is_idle(colonist: dict[str, Any]) -> bool:
     """RimWorld reports ordinary idle wandering as an actual job name."""
     if colonist.get("downed") or colonist.get("in_mental_state"):
@@ -2613,6 +2655,9 @@ def focus_cold_start_choices(snapshot: dict[str, Any], actions: list[str],
         if focused:
             dev["cold_start_focus"] = "heat_occupied_room"
             return focused
+    if "unforbid_supplies" in actions:
+        dev["cold_start_focus"] = "unlock_shelter_materials"
+        return ["unforbid_supplies"]
     if "build_starter_base" in actions:
         dev["cold_start_focus"] = "place_heated_shelter"
         return ["build_starter_base"]
@@ -2626,6 +2671,15 @@ def focus_cold_start_choices(snapshot: dict[str, Any], actions: list[str],
     if "prioritize_construction" in actions and urgent_projects:
         dev["cold_start_focus"] = "assign_builder"
         return ["prioritize_construction"]
+    if urgent_projects and any(
+        str(pawn.get("current_job") or "").lower() in {
+            "finishframe", "haultocontainer", "constructdeliverresourcestoframes",
+            "constructdeliverresourcestoblueprints", "constructfinishframes",
+        }
+        for pawn in snapshot.get("colonists") or [] if not pawn.get("downed")
+    ):
+        dev["cold_start_focus"] = "builders_working"
+        return ["hold_survival"]
     if "prioritize_construction_project" in actions and urgent_projects:
         dev["cold_start_focus"] = "finish_shell" if shell else "finish_heat"
         return ["prioritize_construction_project"]
@@ -3702,6 +3756,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     )
     failed_bed_sites = {(int(row["x"]), int(row["z"])) for row in map_state.get("failed_bed_sites") or []}
     indoor_bed_site = empty_indoor_sleeping_spot(dev, anchor, failed_bed_sites)
+    replacement_spot = (replaceable_indoor_sleeping_spot(
+        dev, anchor, snapshot["colonists"], failed_bed_sites)
+        if indoor_bed_site is None else None)
     sheltered_real_beds = sheltered_real_bed_count(dev, anchor) or 0
     missing_beds = max(0, len(snapshot["colonists"]) - sheltered_real_beds - pending_beds)
     bed_materials = {
@@ -3710,12 +3767,15 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         if int(item_counts.get(material) or 0) >= 45
     }
     if (
-        missing_beds and indoor_bed_site is not None and bed_materials and best_builder >= 3
+        missing_beds and (indoor_bed_site is not None or replacement_spot is not None)
+        and bed_materials and best_builder >= 3
         and not issued_recently(map_state, "basic_beds", tick, retry_ticks=5000)
     ):
         details["basic_bed_count"] = 1
         details["basic_bed_materials"] = bed_materials
-        details["indoor_bed_site"] = indoor_bed_site
+        details["indoor_bed_site"] = indoor_bed_site or replacement_spot["position"]
+        if replacement_spot is not None:
+            details["replace_sleeping_spot_id"] = replacement_spot["id"]
         dev["basic_bed_materials"] = bed_materials
         one_time.append("build_basic_beds")
 
@@ -3871,8 +3931,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     existing_starter_house = nearby_shell >= 6
     cold_start = starter_outdoor_c(dev) <= 5
     starter_materials_ready = not cold_start or (
-        int(item_counts.get("WoodLog") or 0) >= 160
-        or (int(item_counts.get("Steel") or 0) >= 140
+        int(item_counts.get("WoodLog") or 0) >= 130
+        or (int(item_counts.get("Steel") or 0) >= 110
             and int(item_counts.get("WoodLog") or 0) >= 20)
     )
     if (can_work("Construction") and starter_materials_ready
@@ -7811,14 +7871,33 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             snapshot["development"], anchor,
             excluded={(int(row["x"]), int(row["z"])) for row in failed_sites},
         )
+        replacement = None
+        if site is None:
+            replacement = replaceable_indoor_sleeping_spot(
+                snapshot["development"], anchor, snapshot["colonists"],
+                {(int(row["x"]), int(row["z"])) for row in failed_sites},
+            )
+            if replacement is not None:
+                site = replacement["position"]
         issued["basic_beds"] = tick
         if site is None:
-            return {"applied": False, "reason": "No clear two-cell bed site inside a completed roofed room"}
+            return {"applied": False, "reason": "No clear or replaceable two-cell bed site inside a completed roofed room"}
         materials = details.get("basic_bed_materials") or {}
         material = details.get("bed_material") or next(iter(materials), None)
         if material not in materials:
             return {"applied": False, "reason": "Selected bed material is no longer available"}
-        result = post_blueprint(client, map_id, site, basic_beds_blueprint(1, stuff=material))
+        if replacement is not None:
+            client.post("/api/v1/order/designate/area", body={
+                "map_id": map_id, "point_a": position(site["x"], site["z"]),
+                "point_b": position(site["x"], site["z"]), "type": "remove-sleeping-spot",
+            })
+        try:
+            result = post_blueprint(client, map_id, site, basic_beds_blueprint(1, stuff=material))
+        except bridge.RimApiError:
+            if replacement is not None:
+                post_blueprint(client, map_id, site,
+                               blueprint([building("SleepingSpot", 0, 0)], 1, 2))
+            raise
         projects = client.get("/api/v1/builder/projects", map_id=map_id)
         rows = projects.get("projects", []) if isinstance(projects, dict) else []
         buildings = client.get("/api/v1/map/buildings", map_id=map_id)
@@ -7830,9 +7909,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         )
         if not bed_at_site:
             failed_sites.append(site)
+            if replacement is not None:
+                post_blueprint(client, map_id, site,
+                               blueprint([building("SleepingSpot", 0, 0)], 1, 2))
             return {"applied": False, "reason": "RIMAPI accepted the request but placed no bed blueprint",
                     "site": site, "material": material}
-        return {"applied": True, "beds": 1, "material": material, "site": site, "response": result}
+        return {"applied": True, "beds": 1, "material": material, "site": site,
+                "replaced_sleeping_spot_id": replacement["id"] if replacement else None,
+                "response": result}
     if choice == "build_recreation_pin":
         terrain = client.get("/api/v1/map/terrain", map_id=map_id)
         site = open_recreation_site(terrain, anchor, snapshot["development"])
@@ -8098,14 +8182,31 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         use_heated_shelter = starter_outdoor_c(snapshot["development"]) <= 5
         stock = snapshot["development"].get("item_counts") or {}
         if use_heated_shelter and not (
-            int(stock.get("WoodLog") or 0) >= 160
-            or (int(stock.get("Steel") or 0) >= 140 and int(stock.get("WoodLog") or 0) >= 20)
+            int(stock.get("WoodLog") or 0) >= 130
+            or (int(stock.get("Steel") or 0) >= 110 and int(stock.get("WoodLog") or 0) >= 20)
         ):
             return {"applied": False, "reason": "Not enough wood or steel for a heated shelter"}
-        wall_stuff = "WoodLog" if int(stock.get("WoodLog") or 0) >= 160 else "Steel"
+        wall_stuff = "WoodLog" if int(stock.get("WoodLog") or 0) >= 130 else "Steel"
         result = post_blueprint(client, map_id, anchor, starter_base_blueprint(
             len(snapshot["colonists"]), cold=use_heated_shelter, wall_stuff=wall_stuff))
         issued["starter_base"] = tick
+        if use_heated_shelter and not (isinstance(result, dict) and result.get("success") is False):
+            staffing = []
+            for pawn in snapshot["colonists"]:
+                construction = (pawn.get("work_priorities") or {}).get("Construction") or {}
+                if pawn.get("downed") or construction.get("disabled"):
+                    continue
+                pawn_id = int(pawn["id"])
+                doctor_change = free_cold_shelter_builder(
+                    client, {**snapshot, "development": {**snapshot["development"],
+                            "cold_start_focus": "assign_builder"}}, pawn_id)
+                if int(construction.get("priority") or 0) != 1:
+                    staffing.append(prioritize(client, snapshot, "Construction", pawn_id))
+                if doctor_change is not None:
+                    staffing.append(doctor_change)
+            issued["priority:Construction"] = tick
+            if isinstance(result, dict):
+                result["cold_shelter_staffing"] = staffing
         return result
     if choice == "build_campfire":
         catalog = next((row for row in dev.get("building_catalog") or []
