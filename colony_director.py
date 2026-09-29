@@ -3358,8 +3358,12 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     corpse_actions: list[str] = []
     if human_corpses and not human_dump_exists and "human_corpse_dump" not in issued:
         corpse_actions.append("create_human_corpse_dump")
-    if human_corpses and counts.get("Grave", 0) < min(4, len(human_corpses)) and "cemetery" not in issued:
-        details["grave_count"] = min(8, max(2, len(human_corpses)))
+    grave_projects = sum(str(row.get("def_name") or "") == "Grave"
+                         for row in dev.get("construction_projects") or [])
+    existing_graves = int(counts.get("Grave") or 0) + grave_projects
+    if (human_corpses and existing_graves < min(4, len(human_corpses))
+            and not issued_recently(map_state, "cemetery", tick, retry_ticks=6000)):
+        details["grave_count"] = min(8, max(2, len(human_corpses))) - existing_graves
         corpse_actions.append("build_cemetery")
     stone_blocks = [name for name, amount in item_counts.items() if name.startswith("Blocks") and int(amount or 0) >= 170]
     if (
@@ -6358,14 +6362,17 @@ def post_blueprint(client: bridge.RimApiClient, map_id: int, anchor: dict[str, i
 
 
 def place_checked_building(client: bridge.RimApiClient, map_id: int, plan: dict[str, Any],
-                           near: dict[str, int], stuff: str | None = None) -> dict[str, Any]:
+                           near: dict[str, int], stuff: str | None = None, *,
+                           radius: int = 80, expand_search: bool = True,
+                           snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     """Place one exact catalog def only at a site approved by RimWorld."""
     name = str(plan["def_name"])
     lookup = {"map_id": map_id, "def_name": name, "stuff_def_name": stuff,
-              "near": position(int(near["x"]), int(near["z"])), "radius": 80, "limit": 8}
+              "near": position(int(near["x"]), int(near["z"])), "radius": radius,
+              "limit": 24 if snapshot is not None else 8}
     try:
         site_result = client.post("/api/v1/builder/site-options", body=lookup)
-        if not site_result.get("sites"):
+        if expand_search and not site_result.get("sites"):
             lookup["radius"] = 250
             site_result = client.post("/api/v1/builder/site-options", body=lookup)
         sites = site_result.get("sites") or []
@@ -6377,6 +6384,8 @@ def place_checked_building(client: bridge.RimApiClient, map_id: int, plan: dict[
             target = site.get("position") or {}
             x, z = target.get("x"), target.get("z")
             if x is None or z is None:
+                continue
+            if snapshot is not None and bridge.combat_planner.errand_exposed(snapshot, target):
                 continue
             rotation = int(site.get("rotation") or 0)
             try:
@@ -6407,7 +6416,8 @@ def place_checked_building(client: bridge.RimApiClient, map_id: int, plan: dict[
                 errors.append(f"{x},{z}: API accepted the request but no blueprint or building appeared")
             except bridge.RimApiError as error:
                 errors.append(f"{x},{z}: {error}")
-        return {"applied": False, "building": name, "reason": "; ".join(errors[:3])}
+        return {"applied": False, "building": name,
+                "reason": "; ".join(errors[:3]) or "No safe valid site found"}
     except bridge.RimApiError as error:
         return {"applied": False, "building": name, "reason": str(error)}
 
@@ -7048,16 +7058,23 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["unforbid_corpses"] = tick
         return {"applied": True, "corpses_unforbidden": len(ids), "response": result}
     if choice == "build_cemetery":
-        result = post_blueprint(
-            client,
-            map_id,
-            anchor,
-            cemetery_blueprint(int(details.get("grave_count") or 8)),
-            dx=-12,
-            dz=14,
-        )
+        plan = next((row for row in snapshot.get("development", {}).get("building_catalog") or []
+                     if row.get("def_name") == "Grave"),
+                    {"def_name": "Grave", "size_x": 1, "size_z": 2})
+        graveyard = position(int(anchor["x"]) - 12, int(anchor["z"]) + 14)
+        placed = []
+        failure = None
+        for _ in range(max(1, min(8, int(details.get("grave_count") or 2)))):
+            result = place_checked_building(client, map_id, plan, graveyard,
+                                            radius=25, expand_search=False,
+                                            snapshot=snapshot)
+            if not result.get("applied"):
+                failure = result.get("reason")
+                break
+            placed.append(result)
         issued["cemetery"] = tick
-        return result
+        return {"applied": bool(placed), "placed_graves": len(placed),
+                "sites": [row["site"] for row in placed], "reason": failure}
     if choice == "create_human_corpse_dump":
         dump_x = max(6, min(240, int(anchor["x"]) + (50 if int(anchor["x"]) < 125 else -50)))
         dump_z = max(6, min(240, int(anchor["z"]) + (45 if int(anchor["z"]) < 125 else -45)))

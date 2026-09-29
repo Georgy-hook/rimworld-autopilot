@@ -2917,6 +2917,47 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(all(row["def_name"] == "Grave" for row in layout["buildings"]))
         self.assertEqual(len({(row["rel_x"], row["rel_z"]) for row in layout["buildings"]}), 8)
 
+    def test_cemetery_uses_live_valid_sites_instead_of_overlapping_blueprint(self):
+        class Client:
+            def __init__(self):
+                self.projects = []
+                self.posted = []
+
+            def post(self, endpoint, body=None, query=None):
+                if endpoint == "/api/v1/builder/site-options":
+                    candidates = ({"x": 128, "z": 146}, {"x": 131, "z": 146})
+                    return {"sites": [{"position": cell, "rotation": 0} for cell in candidates
+                                      if not any(all(cell[axis] == row["position"][axis]
+                                                     for axis in ("x", "z"))
+                                                 for row in self.projects)]}
+                if endpoint == "/api/v1/builder/blueprint":
+                    site = body["position"]
+                    if site in [row["position"] for row in self.projects]:
+                        raise AssertionError("Cemetery site overlaps an existing plan")
+                    self.posted.append(body)
+                    self.projects.append({"def_name": "Grave", "position": site})
+                    return {"success": True}
+                raise AssertionError(endpoint)
+
+            def get(self, endpoint, **query):
+                if endpoint == "/api/v1/builder/projects":
+                    return {"projects": self.projects}
+                raise AssertionError(endpoint)
+
+        client = Client()
+        snapshot = {"game": {"tick": 50000}, "map": {"id": 0},
+                    "combat": {"hostiles": []},
+                    "development": {"building_catalog": [{"def_name": "Grave",
+                                                          "size_x": 1, "size_z": 2}]}}
+        state = {"anchor": {"x": 140, "z": 132}, "issued": {}}
+        result = director.execute_action(client, snapshot, state, "build_cemetery",
+                                         {"grave_count": 2})
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["placed_graves"], 2)
+        self.assertEqual(len(client.posted), 2)
+        self.assertEqual({tuple((row["position"][axis] for axis in ("x", "z")))
+                          for row in client.posted}, {(128, 146), (131, 146)})
+
     def test_prison_is_enclosed_and_uses_normal_sleeping_spots(self):
         layout = director.prison_blueprint()
         defs = [row["def_name"] for row in layout["buildings"]]
