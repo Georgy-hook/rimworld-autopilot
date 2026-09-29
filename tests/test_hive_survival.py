@@ -166,6 +166,16 @@ class HiveSurvivalTests(unittest.TestCase):
         self.assertNotIn("preemptive_strike", criteria)
         self.assertIn("prepare_undrafted", criteria)
         self.assertEqual(bridge.plan_action(snapshot, {"choice": "focus_fire"})["kind"], "noop")
+        snapshot["combat"]["available_weapons"] = [
+            {"id": 10, "label": "safe spare rifle", "is_ranged": True,
+             "position": {"x": 140, "z": 134}},
+        ]
+        snapshot["combat"]["colonists"][2].update(
+            has_ranged_weapon=False, weapon_def=None)
+        self.assertIn("equip_ranged_weapon", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+        self.assertTrue(any(command.get("body", {}).get("job_def") == "Equip"
+                            for command in bridge.plan_action(
+                                snapshot, {"choice": "equip_ranged_weapon"}).get("commands", [])))
         snapshot["combat"]["hostiles"][0].update(
             current_job="AttackMelee", distance_to_nearest_opponent=4)
         self.assertFalse(colony_combat.guarded_hive_outside_contact(snapshot))

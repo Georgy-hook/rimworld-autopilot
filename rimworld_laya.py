@@ -886,7 +886,9 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             # toward its target. At a passive hive that is an attack order,
             # even when the model's text says to hold cover.
             allowed = {"civilian_retreat", "withdraw_and_regroup", "backstep_fire",
-                       "prepare_undrafted", "continue_safe_colony_work", "hold_and_observe"}
+                       "prepare_undrafted", "continue_safe_colony_work", "hold_and_observe",
+                       "emergency_self_tend", "equip_ranged_weapon", "equip_melee_weapon",
+                       "equip_emp_weapon"}
             criteria = {name: description for name, description in criteria.items() if name in allowed}
             if not criteria:
                 criteria["hold_and_observe"] = "Watch the guarded hive without sending colonists into its territory."
@@ -1331,7 +1333,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             "engage_ranged", "engage_melee", "draft_best_defender", "preemptive_strike",
             "focus_mechanoids", "focus_insects", "equip_melee_weapon", "equip_emp_weapon",
         }
-    ) - {"stand_down", "withdraw_and_regroup", "civilian_retreat", "backstep_fire"}:
+    ) - {"stand_down", "withdraw_and_regroup", "civilian_retreat", "backstep_fire",
+         "equip_melee_weapon", "equip_emp_weapon"}:
         return {"kind": "noop", "description": "Avoid advancing into a passive guarded hive"}
     resume_command = None
     if snapshot["map"]["enemies"] > 0 and snapshot["game"].get("is_paused"):
