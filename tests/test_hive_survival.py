@@ -286,6 +286,27 @@ class HiveSurvivalTests(unittest.TestCase):
         safe["combat"]["hostiles"] = []
         self.assertEqual(len(director.relevant_forbidden(safe)), 1)
 
+    def test_hazard_guard_releases_its_food_ban_when_threat_clears(self):
+        snapshot = hive_snapshot()
+        client = RecordingClient([{"thing_id": 42, "def_name": "MealSurvivalPack",
+                                  "position": {"x": 180, "z": 113}, "is_forbidden": False}])
+        state = {}
+        with tempfile.TemporaryDirectory() as folder:
+            log = pathlib.Path(folder) / "guard.jsonl"
+            first = director.run_hazard_exclusion_cycle(client, snapshot, log, state)
+            self.assertEqual([row["id"] for row in first["items"]], [42])
+            self.assertIn("42", state["hazard_forbidden"])
+            client.things[0]["is_forbidden"] = True
+            self.assertIsNone(director.run_hazard_exclusion_cycle(client, snapshot, log, state))
+            self.assertIn("42", state["hazard_forbidden"])
+            snapshot["combat"]["hostiles"] = []
+            final = director.run_hazard_exclusion_cycle(client, snapshot, log, state)
+        self.assertEqual(final["released"], [42])
+        self.assertEqual(state["hazard_forbidden"], {})
+        self.assertTrue(any(endpoint == "/api/v1/things/set-forbidden"
+                            and body["thing_ids"] == [42] and body["forbidden"] is False
+                            for endpoint, body, _ in client.posts))
+
 
 if __name__ == "__main__":
     unittest.main()

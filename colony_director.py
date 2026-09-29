@@ -1671,21 +1671,42 @@ def unsafe_active_errand_pawns(snapshot: dict[str, Any],
 
 
 def run_hazard_exclusion_cycle(client: bridge.RimApiClient, snapshot: dict[str, Any],
-                               log_path: Path) -> dict[str, Any] | None:
-    """Forbid exposed pickups before vanilla hauling or another Laya order can take them."""
-    if not bridge.combat_planner.live_hostiles(snapshot):
+                               log_path: Path,
+                               map_state: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Forbid exposed pickups and release our bans once the item becomes safe."""
+    tracked = map_state.setdefault("hazard_forbidden", {}) if map_state is not None else {}
+    if not bridge.combat_planner.live_hostiles(snapshot) and not tracked:
         return None
     map_id = int((snapshot.get("map") or {}).get("id") or 0)
     things = client.get("/api/v1/map/things", map_id=map_id) or []
     things = things if isinstance(things, list) else []
+    by_id = {int(row["thing_id"]): row for row in things if isinstance(row, dict)
+             and row.get("thing_id") is not None}
+    released = []
+    for key in list(tracked):
+        row = by_id.get(int(key))
+        if row is None or not row.get("is_forbidden"):
+            tracked.pop(key, None)
+        elif not bridge.combat_planner.errand_exposed(snapshot, row.get("position")):
+            released.append(int(key))
+    release_response = None
+    if released:
+        release_response = client.post("/api/v1/things/set-forbidden", body={
+            "map_id": map_id, "thing_ids": sorted(released), "forbidden": False,
+        })
+        if release_response.get("success", True):
+            for item_id in released:
+                tracked.pop(str(item_id), None)
     rows = hazardous_haul_items(snapshot, things)
     unsafe_pawns = unsafe_active_errand_pawns(snapshot, things)
-    if not rows and not unsafe_pawns:
+    if not rows and not unsafe_pawns and not released:
         return None
     ids = sorted({int(row["thing_id"]) for row in rows})
     response = (client.post("/api/v1/things/set-forbidden", body={
         "map_id": map_id, "thing_ids": ids, "forbidden": True,
     }) if ids else None)
+    if ids and response.get("success", True):
+        tracked.update({str(item_id): True for item_id in ids})
     retreats = []
     stopped = []
     for pawn in unsafe_pawns:
@@ -1711,7 +1732,9 @@ def run_hazard_exclusion_cycle(client: bridge.RimApiClient, snapshot: dict[str, 
     record = {"timestamp": bridge.utc_now(), "mode": "hazard-guard",
               "items": [{"id": int(row["thing_id"]), "def": row.get("def_name"),
                          "position": row.get("position")} for row in rows],
-              "result": response, "retreats": retreats, "stopped": stopped}
+              "result": response, "released": sorted(released),
+              "release_result": release_response,
+              "retreats": retreats, "stopped": stopped}
     bridge.append_log(log_path, record)
     return record
 
@@ -10372,12 +10395,17 @@ def main() -> int:
             write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
             try:
                 snapshot = bridge.collect_snapshot(client)
-                if bridge.combat_planner.live_hostiles(snapshot) and time.monotonic() >= next_hazard_scan:
-                    hazard_record = run_hazard_exclusion_cycle(client, snapshot, args.log)
+                map_state = map_state_for_snapshot(state, snapshot)
+                if (bridge.combat_planner.live_hostiles(snapshot)
+                        or map_state.get("hazard_forbidden")) and time.monotonic() >= next_hazard_scan:
+                    hazard_record = run_hazard_exclusion_cycle(
+                        client, snapshot, args.log, map_state)
                     next_hazard_scan = time.monotonic() + 8.0
                     if hazard_record is not None:
+                        save_state(args.state, state)
                         print(f"[{hazard_record['timestamp']}] hazard guard: forbade "
-                              f"{len(hazard_record['items'])} exposed item(s)", flush=True)
+                              f"{len(hazard_record['items'])} exposed item(s), released "
+                              f"{len(hazard_record['released'])} safe item(s)", flush=True)
                 if not care_bootstrapped:
                     # A restart must not forget an unfinished wound from the
                     # previous session. Laya still chooses whether to treat it.
