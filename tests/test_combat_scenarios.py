@@ -166,6 +166,17 @@ class CombatScenarioTests(unittest.TestCase):
         self.assertEqual(next(row["body"]["tactic"] for row in action["commands"]
                               if row.get("body", {}).get("tactic")), "backstep_fire")
 
+    def test_isolated_gunner_backsteps_from_healthy_wolf_before_distant_support_arrives(self):
+        snapshot = raid([
+            fighter(1, distance=2, weapon="Gun_AssaultRifle"),
+            fighter(2, distance=67), fighter(3, distance=69),
+        ], [{"id": 99, "kind_def": "Wolf_Timber", "health": 1.0,
+             "has_ranged_weapon": False, "position": {"x": 13, "z": 10}}])
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertEqual(list(criteria), ["backstep_fire"])
+        snapshot["combat"]["hostiles"][0]["health"] = 0.48
+        self.assertIn("engage_melee", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+
     def test_unsupported_sword_charge_gets_a_real_model_support_choice(self):
         class SupportAgent:
             def __init__(self):
@@ -285,7 +296,8 @@ class CombatScenarioTests(unittest.TestCase):
             [fighter(1, ranged=False, weapon=None, distance=80)],
             [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Wander", "position": {"x": 100, "z": 100}}],
         )
-        snapshot["combat"]["available_weapons"] = [{"id": 71, "def_name": "Gun_BoltActionRifle", "is_ranged": True, "is_forbidden": True}]
+        snapshot["combat"]["available_weapons"] = [{"id": 71, "def_name": "Gun_BoltActionRifle", "is_ranged": True,
+                                                     "is_forbidden": True, "position": {"x": 14, "z": 10}}]
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertIn("equip_ranged_weapon", options)
         action = bridge.plan_action(snapshot, {"choice": "equip_ranged_weapon"})
@@ -295,7 +307,7 @@ class CombatScenarioTests(unittest.TestCase):
     def test_equipping_ranged_weapon_replaces_a_melee_weapon_instead_of_noop(self):
         snapshot = raid(
             [fighter(1, distance=12), fighter(2, ranged=False, weapon="MeleeWeapon_Gladius", distance=25)],
-            [{"id": 99, "kind_def": "Megascarab", "health": 1.0, "position": {"x": 25, "z": 10}}],
+            [{"id": 99, "kind_def": "Megascarab", "health": 1.0, "position": {"x": 50, "z": 10}}],
         )
         snapshot["combat"]["available_weapons"] = [
             {"id": 71, "def_name": "Gun_BoltActionRifle", "label": "bolt-action rifle",
@@ -557,7 +569,8 @@ class CombatScenarioTests(unittest.TestCase):
                                     "distance_to_nearest_opponent": 120, "weapon_range": 0,
                                     "position": {"x": 120, "z": 120}}])
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
-        self.assertTrue({"prepare_undrafted", "hold_and_observe", "advance_to_range", "hold_cover"}.issubset(criteria))
+        self.assertTrue({"hold_and_observe", "advance_to_range", "hold_cover"}.issubset(criteria))
+        self.assertNotIn("prepare_undrafted", criteria)
         shooters[0]["distance_to_nearest_opponent"] = 22
         snapshot["combat"]["hostiles"][0]["distance_to_nearest_opponent"] = 22
         self.assertIn("focus_fire", bridge.make_questions(snapshot)["threat_action"]["criteria"])
@@ -748,7 +761,7 @@ class CombatScenarioTests(unittest.TestCase):
             [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Combat", "position": {"x": 100, "z": 100}}],
         )
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
-        self.assertIn("prepare_undrafted", options)
+        self.assertNotIn("prepare_undrafted", options)
         self.assertIn("hold_and_observe", options)
         self.assertIn("advance_to_range", options)
         self.assertNotIn("preemptive_strike", options)
@@ -781,7 +794,7 @@ class CombatScenarioTests(unittest.TestCase):
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertIn("preemptive_strike", options)
         self.assertIn("outnumbered=True", options["preemptive_strike"])
-        self.assertIn("prepare_undrafted", options)
+        self.assertNotIn("prepare_undrafted", options)
 
     def test_ranged_raider_does_not_hide_preemptive_strike(self):
         snapshot = raid(

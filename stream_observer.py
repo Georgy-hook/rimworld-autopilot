@@ -1,7 +1,9 @@
 """Independent, opt-in camera director for an unattended RimWorld stream.
 
 The observer never orders pawns or changes Laya's decisions. Its only game
-writes are camera moves, zoom, an English death caption, and pacing at 3x.
+writes are camera moves, zoom, an English death caption, and pacing at 3x
+outside a home fire, critical bleeding, or an attack on a downed colonist,
+when it slows to 1x.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ TOUR_INTERVAL = 600.0
 TOUR_STOP_SECONDS = 5.0
 RAID_SECONDS = 30.0
 TARGET_GAME_SPEED = 3
+EMERGENCY_GAME_SPEED = 1
 SPEED_RETRY_SECONDS = 5.0
 
 
@@ -69,6 +72,18 @@ def _fighting(pawn: dict[str, Any], hostiles: list[dict[str, Any]]) -> bool:
         return False
     distance = float(pawn.get("distance_to_nearest_opponent") or 9999)
     return bool(pawn.get("is_drafted")) and distance <= max(22.0, float(pawn.get("weapon_range") or 0) + 5)
+
+
+def _downed_under_attack(colonists: list[dict[str, Any]], hostiles: list[dict[str, Any]]) -> bool:
+    """Slow only when an active enemy is near a colony with downed pawns."""
+    if not any(pawn.get("is_downed") and not pawn.get("is_dead") for pawn in colonists):
+        return False
+    return any(
+        not hostile.get("is_dead") and not hostile.get("is_downed")
+        and isinstance(hostile.get("distance_to_nearest_opponent"), (int, float))
+        and hostile["distance_to_nearest_opponent"] <= 40
+        for hostile in hostiles
+    )
 
 
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
@@ -139,6 +154,7 @@ class ObserverPlanner:
         self.shot: Shot | None = None
         self.last_unpause = -9999.0
         self.last_speed_request = -9999.0
+        self.last_requested_speed: int | None = None
         self.last_shown: dict[int, float] = {}
         self.medical_last_shown: dict[int, float] = {}
         self.seen_hostiles: set[int] = set()
@@ -328,16 +344,21 @@ class ObserverPlanner:
             actions.extend(self._maintain_focus(now, FAR_ZOOM))
         return actions
 
-    def pacing_actions(self, game: dict[str, Any], now: float) -> list[dict[str, Any]]:
-        """Restore 3x after events force 1x, independently of shot wall time."""
+    def pacing_actions(self, game: dict[str, Any], now: float, *, home_fire: bool = False,
+                       critical_bleeding: bool = False,
+                       downed_under_attack: bool = False) -> list[dict[str, Any]]:
+        """Run at 3x normally and give Laya more cycles during live emergencies."""
+        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED
+        changed = target != self.last_requested_speed
         if game.get("is_paused"):
-            if now - self.last_unpause < SPEED_RETRY_SECONDS:
+            if not changed and now - self.last_unpause < SPEED_RETRY_SECONDS:
                 return []
             self.last_unpause = now
-        elif now - self.last_speed_request < SPEED_RETRY_SECONDS:
+        elif not changed and now - self.last_speed_request < SPEED_RETRY_SECONDS:
             return []
         self.last_speed_request = now
-        return [{"kind": "ensure_speed", "speed": TARGET_GAME_SPEED}]
+        self.last_requested_speed = target
+        return [{"kind": "ensure_speed", "speed": target}]
 
     def _maintain_focus(self, now: float, zoom_out: int) -> list[dict[str, Any]]:
         shot = self.shot
@@ -470,6 +491,14 @@ def main() -> None:
                     stop.wait(2)
                     continue
                 combat = api.request("/api/v1/combat/state?" + urlencode({"map_id": current_map["id"]})) or {}
+                fires = api.request("/api/v1/map/fire/situation?" + urlencode({"map_id": current_map["id"]})) or {}
+                home_fire = any(fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
+                                for fire in fires.get("fires") or [])
+                critical_bleeding = any(pawn.get("tendable_now") and not pawn.get("is_dead")
+                                        and float(pawn.get("bleeding_rate") or 0) >= 1.5
+                                        for pawn in combat.get("colonists") or [])
+                downed_under_attack = _downed_under_attack(
+                    combat.get("colonists") or [], combat.get("hostiles") or [])
                 events: list[dict[str, Any]] = []
                 while True:
                     try:
@@ -484,12 +513,14 @@ def main() -> None:
                 snapshot = {"game": game, "map": current_map, "colonists": combat.get("colonists") or [],
                             "hostiles": combat.get("hostiles") or [], "corpses": corpses}
                 actions = planner.step(snapshot, events, now)
-                actions = planner.pacing_actions(game, now) + actions
+                actions = planner.pacing_actions(game, now, home_fire=home_fire,
+                                                 critical_bleeding=critical_bleeding,
+                                                 downed_under_attack=downed_under_attack) + actions
                 death_until = time.time() + max(0, DEATH_SECONDS - (now - planner.shot.started)) if planner.shot and planner.shot.kind == "death" else 0
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
-                          "target_speed": TARGET_GAME_SPEED,
+                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}
                 # Mark the death spotlight before announcing it so Laya's HUD

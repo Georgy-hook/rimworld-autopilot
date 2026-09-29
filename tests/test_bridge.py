@@ -339,11 +339,11 @@ class BridgeTests(unittest.TestCase):
                 "id": 10, "name": "Ada", "health": 1.0, "is_dead": False,
                 "is_downed": False, "has_ranged_weapon": True,
                 "shooting_skill": 12, "melee_skill": 3,
-                "distance_to_nearest_opponent": 8, "position": {"x": 10, "z": 10},
+                "distance_to_nearest_opponent": 30, "position": {"x": 10, "z": 10},
             }],
             "hostiles": [{
                 "id": 99, "name": "Raider", "health": 1.0,
-                "is_dead": False, "is_downed": False, "position": {"x": 18, "z": 10},
+                "is_dead": False, "is_downed": False, "position": {"x": 40, "z": 10},
             }],
             "available_weapons": [],
         }
@@ -366,7 +366,7 @@ class BridgeTests(unittest.TestCase):
             }],
             "hostiles": [{
                 "id": 99, "name": "Raider", "health": 1.0,
-                "is_dead": False, "is_downed": False, "position": {"x": 18, "z": 10},
+                "is_dead": False, "is_downed": False, "position": {"x": 40, "z": 10},
             }],
             "available_weapons": [{
                 "id": 77, "label": "rifle", "is_ranged": True,
