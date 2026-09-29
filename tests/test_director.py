@@ -24,6 +24,92 @@ SPEC.loader.exec_module(director)
 
 
 class DirectorTests(unittest.TestCase):
+    def test_cold_start_finishes_shelter_before_tending_or_optional_work(self):
+        snapshot = {
+            "map": {"resources": {"nutrition": 12}},
+            "colonists": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "development": {"cold_threat": {"outside_c": -13,
+                                              "warmest_roofed_c": -13,
+                                              "patients": [{"name": "Wash"}]},
+                            "rooms": []},
+        }
+        actions = ["tend_colonist", "leave_wildlife_alone", "build_temple",
+                   "build_starter_base", "hold_survival"]
+        self.assertEqual(director.focus_cold_start_choices(snapshot, actions, {}),
+                         ["build_starter_base"])
+        projects = [{"thing_id": 1, "def_name": "Wall"},
+                    {"thing_id": 2, "def_name": "WoodPlankFloor"},
+                    {"thing_id": 3, "def_name": "Campfire"}]
+        details = {"construction_project_options": projects}
+        actions.remove("build_starter_base")
+        actions.append("prioritize_construction_project")
+        self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
+                         ["prioritize_construction_project"])
+        self.assertEqual([row["thing_id"] for row in details["construction_project_options"]], [1])
+        snapshot["development"]["construction_projects"] = projects
+        self.assertEqual(director.focus_cold_start_choices(
+            snapshot, ["leave_wildlife_alone", "tend_colonist"], {}), ["hold_survival"])
+        snapshot["development"]["rooms"] = [{"contained_beds_ids": [10],
+                                                   "open_roof_count": 0,
+                                                   "temperature": -4}]
+        actions.append("build_room_campfire")
+        self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
+                         ["build_room_campfire"])
+
+    def test_cold_start_candidate_skips_medical_and_catalog_distractions(self):
+        builder = {"id": 1, "name": "Builder", "health": 1.0,
+                   "skills": {"Construction": {"level": 3}},
+                   "work_priorities": {"Construction": {"priority": 1}}}
+        patient = {"id": 2, "name": "Patient", "health": 0.7,
+                   "health_conditions": [{"def_name": "Hypothermia", "severity": 0.2}]}
+        snapshot = {
+            "game": {"tick": 1000},
+            "map": {"id": 1, "resources": {"food": 30, "meals": 30,
+                                               "nutrition": 18}},
+            "colonists": [builder, patient], "animals": [], "wild_animals": [], "combat": {},
+            "development": {"building_counts": {}, "zones": [], "buildings": [],
+                            "rooms": [], "work_tables": [], "item_counts": {"WoodLog": 180},
+                            "weather": {"temperature": -13},
+                            "building_catalog": [{"def_name": "Campfire", "available_now": True}],
+                            "construction_projects": [], "plants": []},
+        }
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        choices, _ = director.candidate_actions(None, snapshot, state)
+        self.assertEqual(choices, ["build_starter_base"])
+        snapshot["development"]["item_counts"] = {"WoodLog": 10}
+        choices, _ = director.candidate_actions(None, snapshot, state)
+        self.assertNotIn("build_starter_base", choices)
+        snapshot["development"]["item_counts"] = {"WoodLog": 20, "Steel": 140}
+        choices, _ = director.candidate_actions(None, snapshot, state)
+        self.assertEqual(choices, ["build_starter_base"])
+
+    def test_cold_builder_can_finish_shell_before_nonbleeding_tending(self):
+        client = mock.Mock()
+        client.post.return_value = {"success": True}
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 1},
+                    "colonists": [{"id": 1, "name": "Maker", "health": 1.0,
+                                   "work_priorities": {
+                                       "Construction": {"priority": 1},
+                                       "Doctor": {"priority": 1}}},
+                                  {"id": 2, "name": "Wash", "health": 0.5,
+                                   "bleeding_rate": 0.0}],
+                    "development": {"cold_start_focus": "finish_shell"}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        result = director.execute_action(client, snapshot, state,
+                                         "prioritize_construction_project",
+                                         {"worker_pawn": 1, "construction_project": 90})
+        self.assertTrue(result["applied"])
+        self.assertEqual(client.post.call_args_list[0].kwargs["body"],
+                         {"id": 1, "work": "Doctor", "priority": 2})
+        self.assertEqual(client.post.call_args_list[-1].args[0], "/api/v1/builder/prioritize")
+        client.reset_mock()
+        snapshot["colonists"][1]["bleeding_rate"] = 0.1
+        director.execute_action(client, snapshot, state,
+                                "prioritize_construction_project",
+                                {"worker_pawn": 1, "construction_project": 91})
+        self.assertFalse(any(call.kwargs.get("body", {}).get("work") == "Doctor"
+                             for call in client.post.call_args_list))
+
     def test_stonecutting_bill_uses_recipe_exposed_by_live_table(self):
         class Client:
             def __init__(self):
@@ -2892,6 +2978,16 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(len(layout["floors"]), 25)
         self.assertEqual((layout["width"], layout["height"]), (7, 7))
 
+    def test_cold_starter_blueprint_is_a_heated_shell_without_floor_work(self):
+        layout = director.starter_base_blueprint(3, cold=True)
+        defs = [row["def_name"] for row in layout["buildings"]]
+        self.assertEqual(defs.count("Wall"), 23)
+        self.assertEqual(defs.count("Door"), 1)
+        self.assertEqual(defs.count("Campfire"), 1)
+        self.assertEqual(defs.count("SleepingSpot"), 3)
+        self.assertNotIn("Bed", defs)
+        self.assertEqual(layout["floors"], [])
+
     def test_emergency_sleeping_spots_do_not_consume_materials(self):
         layout = director.sleeping_spots_blueprint(3)
         self.assertEqual(
@@ -4787,6 +4883,30 @@ class DirectorTests(unittest.TestCase):
 
 
 class BuildingCatalogTests(unittest.TestCase):
+    def test_altar_is_known_but_deferred_until_housing_and_prison(self):
+        altar = {"def_name": "Altar_Grand", "label": "Grand altar",
+                 "designation_category": "Misc", "available_now": True,
+                 "cost_list": [{"thing_def": "WoodLog", "count": 50}],
+                 "cost_stuff_count": 0, "size_x": 2, "size_z": 2}
+        snapshot = {
+            "game": {"tick": 1000}, "map": {"id": 1, "resources": {"nutrition": 30}},
+            "colonists": [{"id": 1, "name": "Builder", "health": 1.0,
+                           "skills": {"Construction": {"level": 5}},
+                           "work_priorities": {"Construction": {"priority": 1}}},
+                          {"id": 2, "name": "Friend", "health": 1.0},
+                          {"id": 3, "name": "Friend 2", "health": 1.0}],
+            "animals": [], "wild_animals": [], "combat": {},
+            "development": {"building_counts": {}, "buildings": [], "rooms": [],
+                            "item_counts": {"WoodLog": 700}, "building_catalog": [altar],
+                            "ideology": {"ritual_buildings": [altar]},
+                            "construction_projects": [], "zones": []},
+        }
+        choices, _ = director.candidate_actions(
+            None, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}})
+        self.assertNotIn("build_temple", choices)
+        self.assertNotIn("build_catalog_building", choices)
+        self.assertEqual(snapshot["development"]["catalog_access_audit"]["affordable_now"], 1)
+
     def test_existing_concrete_is_not_ordered_as_a_new_floor(self):
         class Client:
             def __init__(self, grid):
@@ -4795,7 +4915,7 @@ class BuildingCatalogTests(unittest.TestCase):
 
             def get(self, endpoint, **query):
                 self_outer.assertEqual(endpoint, "/api/v1/map/terrain")
-                return {"width": 3, "height": 2, "palette": ["Soil", "Concrete"],
+                return {"width": 3, "height": 2, "palette": ["Soil", "Concrete", "WoodPlankFloor"],
                         "grid": self.grid}
 
             def post(self, endpoint, *, body):
@@ -4823,6 +4943,22 @@ class BuildingCatalogTests(unittest.TestCase):
         self.assertEqual(len(mixed.posts), 1)
         self.assertEqual(mixed.posts[0][1]["position"]["x"], 2)
         self.assertEqual(len(mixed.posts[0][1]["blueprint"]["floors"]), 1)
+
+        state["issued"].clear()
+        wooden = Client([1, 0, 1, 2, 1, 1, 3, 0])
+        result = director.execute_action(wooden, snapshot, state, "floor_critical_room", details)
+        self.assertFalse(result["applied"])
+        self.assertFalse(wooden.posts)
+
+        state["issued"].clear()
+        snapshot["development"]["construction_projects"] = [
+            {"def_name": "WoodPlankFloor", "kind": "blueprint",
+             "position": {"x": 1, "z": 0}},
+        ]
+        planned = Client([1, 0, 2, 1, 1, 0])
+        result = director.execute_action(planned, snapshot, state, "floor_critical_room", details)
+        self.assertFalse(result["applied"])
+        self.assertFalse(planned.posts)
 
     def test_first_research_bench_is_actionable_before_a_full_lab_is_affordable(self):
         bench = {"def_name": "SimpleResearchBench", "label": "Simple research bench",

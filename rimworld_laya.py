@@ -1472,6 +1472,9 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                 "commands": commands}
     if choice in combat_planner.TACTICS:
         protected = combat_planner.protected_emergency_care_ids(snapshot)
+        choke_door_id = combat_planner.insect_choke_door(snapshot) if choice == "infestation_choke" else None
+        if choice == "infestation_choke" and choke_door_id is None:
+            return plan_action(snapshot, {**decision, "choice": "withdraw_and_regroup"})
         fighters = [
             pawn for pawn in snapshot["combat"].get("colonists", [])
             if not pawn.get("is_dead") and not pawn.get("is_downed")
@@ -1554,15 +1557,27 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             covering_shooters = [pawn for pawn in snapshot["combat"].get("colonists", [])
                                 if not pawn.get("is_dead") and not pawn.get("is_downed")
                                 and not pawn.get("is_in_mental_state") and pawn.get("can_fight", True)
+                                and pawn.get("id") not in protected
                                 and pawn.get("has_ranged_weapon")
                                 and first_number(pawn.get("manipulation"), 1) >= 0.65
                                 and first_number(pawn.get("sight"), 1) >= 0.65]
             if covering_shooters and target_id is not None:
-                melee_commands.append({"endpoint": "/api/v1/combat/tactic", "body": {
-                    "map_id": snapshot["map"]["id"], "tactic": "focus_fire",
-                    "fighter_ids": [int(pawn["id"]) for pawn in covering_shooters],
-                    "target_pawn_id": target_id,
-                }})
+                groups = [("focus_fire", covering_shooters)]
+                if choice == "infestation_choke":
+                    live_enemies = combat_planner.live_hostiles(snapshot)
+                    ready = [pawn for pawn in covering_shooters
+                             if combat_planner.has_clear_shot(pawn, live_enemies)]
+                    groups = [("focus_fire", ready), ("fallback_line", [
+                        pawn for pawn in covering_shooters if pawn not in ready])]
+                for support_tactic, support_pawns in groups:
+                    if not support_pawns:
+                        continue
+                    support_body = {"map_id": snapshot["map"]["id"], "tactic": support_tactic,
+                                    "fighter_ids": [int(pawn["id"]) for pawn in support_pawns],
+                                    "target_pawn_id": target_id}
+                    if choice == "infestation_choke":
+                        support_body["defense_building_id"] = choke_door_id
+                    melee_commands.append({"endpoint": "/api/v1/combat/tactic", "body": support_body})
                 active_ids.update(int(pawn["id"]) for pawn in covering_shooters)
         reserve_commands = [] if choice in {"psycast_control", "psycast_support"} else combat_reserve_commands(
             snapshot, active_ids
@@ -1593,6 +1608,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             "fighter_ids": [int(pawn["id"]) for pawn in fighters],
             "target_pawn_id": target_id,
         }
+        if choke_door_id is not None:
+            body["defense_building_id"] = choke_door_id
         psycast = decision.get("psycast_plan") or {}
         if psycast:
             body.update({
