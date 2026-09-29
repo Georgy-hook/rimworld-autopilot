@@ -1316,6 +1316,15 @@ def architecture_occupied_cells(development: dict[str, Any], map_state: dict[str
         for dx in range(max(1, int(size.get("x") or 1))):
             for dz in range(max(1, int(size.get("z") or 1))):
                 occupied.add((int(pos["x"]) + dx, int(pos["z"]) + dz))
+    # Loose stone/slag chunks are not edifices in terrain.edifice_grid, but
+    # they can block a campfire's interaction cell and prevent whole layouts
+    # from placing. Reserve their cells until a hauler actually clears them.
+    for row in development.get("things") or []:
+        if not str(row.get("def_name") or "").startswith("Chunk"):
+            continue
+        pos = row.get("position") or {}
+        if pos.get("x") is not None and pos.get("z") is not None:
+            occupied.add((int(pos["x"]), int(pos["z"])))
     for project in map_state.get("architecture_projects") or []:
         pos = project.get("origin") or {}
         if "x" not in pos or "z" not in pos:
@@ -1383,6 +1392,12 @@ def find_dry_starter_site(terrain: dict[str, Any], center: dict[str, int],
         or str(name).startswith(("Rough", "Smooth", "Flagstone", "Paved", "Concrete"))
     )}
     blocked = architecture_occupied_cells(development or {}, map_state or {})
+    blocked.update((int((plant.get("position") or {})["x"]),
+                    int((plant.get("position") or {})["z"]))
+                   for plant in (development or {}).get("plants") or []
+                   if "Tree" in str(plant.get("def_name") or "")
+                   and (plant.get("position") or {}).get("x") is not None
+                   and (plant.get("position") or {}).get("z") is not None)
     edifice_grid = terrain.get("edifice_grid") or []
     if edifice_grid:
         width, height, _ = decode_terrain(terrain)
@@ -10377,6 +10392,14 @@ def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
         name.startswith("tend_") for name in post_combat_care_options(snapshot))
 
 
+def post_combat_care_retry_delay(snapshot: dict[str, Any], applied: bool,
+                                 interval: float) -> float:
+    """Give an accepted nonurgent tend job time to finish while colony work runs."""
+    if urgent_care_actionable(snapshot):
+        return 2.0
+    return max(60.0, interval * 3) if applied else interval
+
+
 def live_threat_care_needed(snapshot: dict[str, Any]) -> bool:
     """A free civilian doctor can make a real triage decision before an ally bleeds out."""
     if not bridge.combat_planner.live_hostiles(snapshot) or not urgent_care_unassigned(snapshot):
@@ -10992,8 +11015,8 @@ def main() -> int:
                                 post_combat_pending = recurring_entity_unresolved(snapshot)
                                 next_post_combat_care_cycle = now + args.interval
                             else:
-                                next_post_combat_care_cycle = now + (2.0 if urgent_care_actionable(snapshot)
-                                                                      else args.interval)
+                                next_post_combat_care_cycle = now + post_combat_care_retry_delay(
+                                    snapshot, bool(care_record["result"].get("applied")), args.interval)
                                 if care_record["result"].get("deferred"):
                                     post_combat_pending = bool(care_record["result"].get("revisit"))
                                     if post_combat_pending:
@@ -11125,9 +11148,8 @@ def main() -> int:
                             post_combat_pending = False
                             post_combat_care_failures = 0
                         else:
-                            next_post_combat_care_cycle = now + (2.0 if urgent_care_actionable(snapshot)
-                                                                  else args.interval)
-                            next_colony_cycle = now + args.interval
+                            next_post_combat_care_cycle = now + post_combat_care_retry_delay(
+                                snapshot, bool(care_record["result"].get("applied")), args.interval)
                             if care_record["result"].get("deferred"):
                                 post_combat_pending = bool(care_record["result"].get("revisit"))
                                 if post_combat_pending:

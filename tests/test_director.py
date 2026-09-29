@@ -114,6 +114,13 @@ class DirectorTests(unittest.TestCase):
         self.assertFalse(any(call.kwargs.get("body", {}).get("work") == "Doctor"
                              for call in client.post.call_args_list))
 
+    def test_accepted_nonurgent_tending_does_not_starve_colony_decisions(self):
+        with mock.patch.object(director, "urgent_care_actionable", return_value=False):
+            self.assertEqual(director.post_combat_care_retry_delay({}, True, 10), 60)
+            self.assertEqual(director.post_combat_care_retry_delay({}, False, 10), 10)
+        with mock.patch.object(director, "urgent_care_actionable", return_value=True):
+            self.assertEqual(director.post_combat_care_retry_delay({}, True, 10), 2)
+
     def test_stonecutting_bill_uses_recipe_exposed_by_live_table(self):
         class Client:
             def __init__(self):
@@ -2435,10 +2442,14 @@ class DirectorTests(unittest.TestCase):
                    "edifice_grid": [15 * width + 15, 0, 1, 1,
                                     width * height - 15 * width - 16, 0]}
         development = {"construction_projects": [{"position": {"x": 10, "z": 10},
-                                                     "size": {"x": 1, "z": 1}}]}
+                                                     "size": {"x": 1, "z": 1}}],
+                       "things": [{"def_name": "ChunkLimestone",
+                                   "position": {"x": 12, "z": 17}}],
+                       "plants": [{"def_name": "Plant_TreeOak",
+                                   "position": {"x": 20, "z": 20}}]}
         result = director.find_dry_starter_site(terrain, {"x": 10, "z": 10}, development)
         self.assertIsNotNone(result)
-        for blocked_x, blocked_z in ((10, 10), (15, 15)):
+        for blocked_x, blocked_z in ((10, 10), (15, 15), (12, 17), (20, 20)):
             self.assertFalse(result["x"] - 2 <= blocked_x <= result["x"] + 8
                              and result["z"] - 2 <= blocked_z <= result["z"] + 8)
 
