@@ -4203,6 +4203,36 @@ class DirectorTests(unittest.TestCase):
                                                "current_job_target_id": 65}]
         self.assertFalse(director.rescue_order_safe(patient, snapshot, beds))
 
+    def test_focused_downed_care_repeats_tending_without_other_choices(self):
+        class Client:
+            def __init__(self):
+                self.posts = []
+
+            def get(self, _endpoint, **_query):
+                return [{"id": 7, "def": "Bed", "position": {"x": 10, "z": 10}}]
+
+            def post(self, endpoint, body=None, query=None):
+                self.posts.append((endpoint, body, query))
+                return {"success": True}
+
+        snapshot = {"combat": {"hostiles": [], "colonists": [
+            {"id": 65, "name": "Andersen", "is_downed": True,
+             "tendable_now": True, "bleeding_rate": 2.335,
+             "position": {"x": 55, "z": 10}},
+            {"id": 69, "name": "Trip", "medicine_skill": 8,
+             "moving": 0.6, "manipulation": 0.9,
+             "position": {"x": 15, "z": 10}},
+        ]}, "game": {"is_paused": False}, "map": {"id": 0, "resources": {"medicine": 36}}}
+        client = Client()
+        agent = self.FakeAgent(["tend_65_69"])
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_post_combat_care_cycle(
+                client, agent, snapshot, pathlib.Path(folder) / "care.jsonl",
+                focus_downed=True)
+        self.assertEqual(record["decision"]["choice"], "tend_65_69")
+        self.assertEqual(set(record["candidates"]), {"tend_65_69"})
+        self.assertEqual(client.posts[-1][0], "/api/v1/pawn/medical/tend")
+
     def test_post_combat_care_excludes_doctor_with_disabled_medicine(self):
         snapshot = {"combat": {"colonists": [
             {"id": 1, "name": "Patient", "tendable_now": True, "is_downed": True},
