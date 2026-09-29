@@ -33,8 +33,11 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
 def threat_radius(hostile: dict[str, Any]) -> float:
     """Keep ordinary errands outside a hostile's reach and a hive's guard area."""
     radius = max(22.0, min(55.0, float(hostile.get("weapon_range") or 0) + 8.0))
-    if "DefendAndExpandHive" in str(hostile.get("lord_job_type") or ""):
-        radius = max(radius, 30.0)
+    if "defendandexpandhive" in str(hostile.get("lord_job_type") or "").lower() \
+            and hostile_is_preparing(hostile):
+        # A passive hive should not make the colony's food store unusable
+        # while still denying pickup of guns and jelly in its defended area.
+        return 20.0
     return radius
 
 
@@ -283,6 +286,18 @@ def hostile_is_preparing(row: dict[str, Any]) -> bool:
     )
 
 
+def guarded_hive_outside_contact(snapshot: dict[str, Any]) -> bool:
+    """Do not approach a hive that is defending its own territory at a distance."""
+    hostiles = live_hostiles(snapshot)
+    return bool(hostiles) and all(
+        "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
+        and hostile_is_preparing(row)
+        and float(row.get("distance_to_nearest_opponent")
+                  if row.get("distance_to_nearest_opponent") is not None else 9999) > 8
+        for row in hostiles
+    )
+
+
 def has_clear_shot(shooter: dict[str, Any], hostiles: list[dict[str, Any]]) -> bool:
     """Range alone is not a firing lane: walls and closed doors can block it."""
     if not shooter.get("has_ranged_weapon"):
@@ -474,6 +489,14 @@ def choose_default_target(snapshot: dict[str, Any], tactic: str) -> int | None:
     hostiles = [row for row in snapshot.get("combat", {}).get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
     if not hostiles:
         return None
+    active_threats = [row for row in hostiles if not (
+        "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
+        and hostile_is_preparing(row)
+        and float(row.get("distance_to_nearest_opponent")
+                  if row.get("distance_to_nearest_opponent") is not None else 9999) > 8
+    )]
+    if active_threats:
+        hostiles = active_threats
     if tactic == "intercept_kidnapper":
         kidnapping = [row for row in hostiles if "kidnap" in _text(row) or row.get("carrying_pawn_id")]
         if kidnapping:

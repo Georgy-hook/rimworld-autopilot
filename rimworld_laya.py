@@ -881,6 +881,15 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             }
             if drafted:
                 criteria["prepare_undrafted"] = "Undraft exhausted or defenseless colonists so they can seek safety."
+        if combat_planner.guarded_hive_outside_contact(snapshot):
+            # A generic focus-fire order repositions out-of-range shooters
+            # toward its target. At a passive hive that is an attack order,
+            # even when the model's text says to hold cover.
+            allowed = {"civilian_retreat", "withdraw_and_regroup", "backstep_fire",
+                       "prepare_undrafted", "continue_safe_colony_work", "hold_and_observe"}
+            criteria = {name: description for name, description in criteria.items() if name in allowed}
+            if not criteria:
+                criteria["hold_and_observe"] = "Watch the guarded hive without sending colonists into its territory."
         return {
             "threat_action": {
                 "type": "choice",
@@ -1317,6 +1326,13 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
 
 def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
     choice = decision["choice"]
+    if combat_planner.guarded_hive_outside_contact(snapshot) and choice in (
+        set(combat_planner.TACTICS) | {
+            "engage_ranged", "engage_melee", "draft_best_defender", "preemptive_strike",
+            "focus_mechanoids", "focus_insects", "equip_melee_weapon", "equip_emp_weapon",
+        }
+    ) - {"stand_down", "withdraw_and_regroup", "civilian_retreat", "backstep_fire"}:
+        return {"kind": "noop", "description": "Avoid advancing into a passive guarded hive"}
     resume_command = None
     if snapshot["map"]["enemies"] > 0 and snapshot["game"].get("is_paused"):
         resume_command = {"endpoint": "/api/v1/game/speed", "query": {"speed": 1}}

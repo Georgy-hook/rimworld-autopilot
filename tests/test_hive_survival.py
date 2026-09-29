@@ -148,6 +148,54 @@ class HiveSurvivalTests(unittest.TestCase):
         snapshot["combat"]["colonists"][0]["distance_to_nearest_opponent"] = 25
         self.assertFalse(director.staging_development_allowed(snapshot, decision))
 
+    def test_armed_colonists_do_not_advance_into_passive_hive_for_a_firing_line(self):
+        snapshot = hive_snapshot()
+        for index, pawn in enumerate(snapshot["combat"]["colonists"][1:]):
+            pawn.update(is_downed=False, tendable_now=False, bleeding_rate=0,
+                        can_fight=True, is_drafted=index == 0,
+                        has_ranged_weapon=True, weapon_def="Gun_Revolver",
+                        weapon_range=26, manipulation=1.0, sight=1.0,
+                        position={"x": 142 + index, "z": 134},
+                        distance_to_nearest_opponent=37 + index)
+        for hostile in snapshot["combat"]["hostiles"]:
+            hostile.update(current_job="GotoWander", distance_to_nearest_opponent=37)
+        self.assertTrue(colony_combat.guarded_hive_outside_contact(snapshot))
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertNotIn("focus_fire", criteria)
+        self.assertNotIn("hold_cover", criteria)
+        self.assertNotIn("preemptive_strike", criteria)
+        self.assertIn("prepare_undrafted", criteria)
+        self.assertEqual(bridge.plan_action(snapshot, {"choice": "focus_fire"})["kind"], "noop")
+        snapshot["combat"]["hostiles"][0].update(
+            current_job="AttackMelee", distance_to_nearest_opponent=4)
+        self.assertFalse(colony_combat.guarded_hive_outside_contact(snapshot))
+        self.assertTrue(any(command.get("body", {}).get("tactic") == "focus_fire"
+                            for command in bridge.plan_action(
+                                snapshot, {"choice": "focus_fire"}).get("commands", [])))
+
+    def test_passive_hive_guard_keeps_nearby_home_food_usable(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["hostiles"] = [{
+            "id": 1, "kind_def": "Megascarab", "position": {"x": 171, "z": 121},
+            "lord_job_type": "LordJob_DefendAndExpandHive", "current_job": "GotoWander",
+        }]
+        self.assertTrue(colony_combat.errand_exposed(
+            snapshot, {"x": 168, "z": 123}, {"x": 140, "z": 134}))
+        self.assertFalse(colony_combat.errand_exposed(
+            snapshot, {"x": 150, "z": 133}, {"x": 140, "z": 134}))
+
+    def test_non_hive_threat_is_targeted_before_passive_hive_guards(self):
+        snapshot = hive_snapshot()
+        for hostile in snapshot["combat"]["hostiles"]:
+            hostile.update(current_job="GotoWander", distance_to_nearest_opponent=20,
+                           combat_power=100)
+        snapshot["combat"]["hostiles"].append({
+            "id": 2222, "kind_def": "Monkey", "current_job": "AttackMelee",
+            "position": {"x": 140, "z": 134}, "distance_to_nearest_opponent": 2,
+            "combat_power": 1,
+        })
+        self.assertEqual(colony_combat.choose_default_target(snapshot, "focus_fire"), 2222)
+
     def test_forbid_hive_jelly_and_break_existing_fetch_order(self):
         snapshot = hive_snapshot()
         snapshot["combat"]["colonists"][0].update(
