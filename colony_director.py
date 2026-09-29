@@ -1687,7 +1687,16 @@ def run_hazard_exclusion_cycle(client: bridge.RimApiClient, snapshot: dict[str, 
         "map_id": map_id, "thing_ids": ids, "forbidden": True,
     }) if ids else None)
     retreats = []
+    stopped = []
     for pawn in unsafe_pawns:
+        if not bridge.combat_planner.errand_exposed(snapshot, pawn.get("position")):
+            # Cancel a dangerous route without moving a currently safe helper
+            # farther from bleeding patients or normal colony work.
+            stop_response = client.post("/api/v1/pawn/job", body={
+                "pawn_id": int(pawn["id"]), "job_def": "Wait_MaintainPosture",
+            })
+            stopped.append({"pawn_id": int(pawn["id"]), "response": stop_response})
+            continue
         choice = ("withdraw_and_regroup" if pawn.get("can_fight", True) and pawn.get("weapon_def")
                   else "civilian_retreat")
         action = bridge.plan_action(snapshot, {
@@ -1702,7 +1711,7 @@ def run_hazard_exclusion_cycle(client: bridge.RimApiClient, snapshot: dict[str, 
     record = {"timestamp": bridge.utc_now(), "mode": "hazard-guard",
               "items": [{"id": int(row["thing_id"]), "def": row.get("def_name"),
                          "position": row.get("position")} for row in rows],
-              "result": response, "retreats": retreats}
+              "result": response, "retreats": retreats, "stopped": stopped}
     bridge.append_log(log_path, record)
     return record
 
@@ -9875,6 +9884,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                    and not pawn.get("is_in_mental_state")
                    and bridge.first_number(pawn.get("moving"), 1) >= 0.65
                    and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))
+                   and bridge.combat_planner.errand_exposed(snapshot, pawn.get("position"))
                    for pawn in snapshot.get("combat", {}).get("colonists", [])):
             alternatives.pop("withdraw_civilian")
     elif urgent_care_actionable(snapshot):
@@ -10326,7 +10336,7 @@ def main() -> int:
                             client, agent, snapshot, args.log, live_threat=True)
                         care_choice = str((care_record or {}).get("decision", {}).get("choice") or "")
                         next_live_threat_care_cycle = time.monotonic() + (
-                            60.0 if care_choice in {"withdraw_civilian", "defer_care"}
+                            8.0 if care_choice in {"withdraw_civilian", "defer_care"}
                             else 4.0 if care_record and care_record["result"].get("applied") else 8.0)
                         if care_record is not None:
                             print(f"[{care_record['timestamp']}] live-threat care: "

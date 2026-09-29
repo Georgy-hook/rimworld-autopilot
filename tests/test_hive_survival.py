@@ -105,11 +105,8 @@ class HiveSurvivalTests(unittest.TestCase):
         snapshot = hive_snapshot()
         self.assertTrue(director.live_threat_care_needed(snapshot))
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
-        self.assertIn("civilian_retreat", criteria)
-        retreat = bridge.plan_action(snapshot, {"choice": "civilian_retreat"})
-        tactic = next(command["body"] for command in retreat["commands"]
-                      if command["endpoint"] == "/api/v1/combat/tactic")
-        self.assertEqual(tactic["fighter_ids"], [984])
+        self.assertNotIn("civilian_retreat", criteria)
+        self.assertEqual(bridge.plan_action(snapshot, {"choice": "civilian_retreat"})["kind"], "noop")
         client = RecordingClient()
         agent = ChoosingAgent("tend_987_984")
         with tempfile.TemporaryDirectory() as folder:
@@ -118,11 +115,27 @@ class HiveSurvivalTests(unittest.TestCase):
                 live_threat=True)
         self.assertEqual(record["decision"]["choice"], "tend_987_984")
         self.assertIn("defer_care", agent.questions[0]["post_combat_care"]["criteria"])
-        self.assertIn("withdraw_civilian", agent.questions[0]["post_combat_care"]["criteria"])
+        self.assertNotIn("withdraw_civilian", agent.questions[0]["post_combat_care"]["criteria"])
         self.assertTrue(any(endpoint == "/api/v1/pawn/medical/tend"
                             and body["patient_pawn_id"] == 987
                             and body["doctor_pawn_id"] == 984
                             for endpoint, body, _ in client.posts))
+
+    def test_civilian_inside_hive_guard_area_can_withdraw(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"][0]["position"] = {"x": 168, "z": 129}
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertIn("civilian_retreat", criteria)
+        retreat = bridge.plan_action(snapshot, {"choice": "civilian_retreat"})
+        tactic = next(command["body"] for command in retreat["commands"]
+                      if command["endpoint"] == "/api/v1/combat/tactic")
+        self.assertEqual(tactic["fighter_ids"], [984])
+        client = RecordingClient()
+        agent = ChoosingAgent("withdraw_civilian")
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_post_combat_care_cycle(
+                client, agent, snapshot, pathlib.Path(folder) / "care.jsonl", live_threat=True)
+        self.assertTrue(record["result"]["applied"])
 
     def test_started_critical_treatment_is_not_replaced_by_retreat(self):
         snapshot = hive_snapshot()
@@ -219,10 +232,10 @@ class HiveSurvivalTests(unittest.TestCase):
             record = director.run_hazard_exclusion_cycle(
                 client, snapshot, pathlib.Path(folder) / "guard.jsonl")
         self.assertEqual({row["id"] for row in record["items"]}, {49400, 34892})
-        self.assertEqual(record["retreats"][0]["pawn_id"], 984)
-        self.assertTrue(any(endpoint == "/api/v1/combat/tactic"
-                            and body["tactic"] == "civilian_retreat"
-                            and body["fighter_ids"] == [984]
+        self.assertEqual(record["stopped"][0]["pawn_id"], 984)
+        self.assertTrue(any(endpoint == "/api/v1/pawn/job"
+                            and body["job_def"] == "Wait_MaintainPosture"
+                            and body["pawn_id"] == 984
                             for endpoint, body, _ in client.posts))
         self.assertTrue(any(endpoint == "/api/v1/things/set-forbidden"
                             and set(body["thing_ids"]) == {49400, 34892}

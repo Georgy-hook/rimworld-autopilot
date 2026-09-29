@@ -746,7 +746,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                             and pawn.get("id") not in protected
                             and first_number(pawn.get("moving"), 1) >= 0.65
                             and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))]
-        if any(first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 45
+        if any(combat_planner.errand_exposed(snapshot, pawn.get("position"))
                for pawn in mobile_civilians):
             criteria["civilian_retreat"] = (
                 "Move mobile civilians, including pacifists, away from the threat instead of leaving them to sleep or haul nearby."
@@ -1499,7 +1499,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                         and (choice in {"melee_assault", "melee_hold_line", "screen_melee"} or first_number(pawn.get("armor_sharp")) >= 0.4)]
         elif choice == "civilian_retreat":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65
-                        and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))]
+                        and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))
+                        and combat_planner.errand_exposed(snapshot, pawn.get("position"))]
         elif choice == "withdraw_and_regroup":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65]
         if choice == "backstep_fire":
