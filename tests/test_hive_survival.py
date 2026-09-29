@@ -137,6 +137,33 @@ class HiveSurvivalTests(unittest.TestCase):
                 client, agent, snapshot, pathlib.Path(folder) / "care.jsonl", live_threat=True)
         self.assertTrue(record["result"]["applied"])
 
+    def test_remote_hive_does_not_delay_safe_treatment_of_bleeding_colonist(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"] = [
+            {"id": 928, "name": "Fixer", "position": {"x": 128, "z": 121},
+             "is_downed": False, "moving": 1.0, "manipulation": 1.0,
+             "can_fight": False, "is_drafted": False, "weapon_def": None},
+            {"id": 50204, "name": "Glasses", "position": {"x": 155, "z": 124},
+             "is_downed": True, "tendable_now": True, "bleeding_rate": 2.77},
+        ]
+        snapshot["colonists"] = [{"id": 928, "skills": {"Medicine": {"disabled": False}}}]
+        snapshot["combat"]["hostiles"] = [
+            {"id": 48599, "kind_def": "Spelopede", "position": {"x": 194, "z": 108},
+             "lord_job_type": "LordJob_DefendAndExpandHive", "current_job": "LayDown"},
+        ]
+        client = RecordingClient()
+        agent = ChoosingAgent("tend_50204_928")
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_post_combat_care_cycle(
+                client, agent, snapshot, pathlib.Path(folder) / "care.jsonl", live_threat=True)
+        self.assertEqual(set(record["decision"]["raw"]["question"]["criteria"]),
+                         {"tend_50204_928"})
+        self.assertEqual(agent.questions, [])
+        self.assertTrue(record["result"]["applied"])
+        self.assertTrue(any(endpoint == "/api/v1/pawn/medical/tend"
+                            and body["patient_pawn_id"] == 50204
+                            for endpoint, body, _ in client.posts))
+
     def test_started_critical_treatment_is_not_replaced_by_retreat(self):
         snapshot = hive_snapshot()
         snapshot["combat"]["colonists"][0].update(

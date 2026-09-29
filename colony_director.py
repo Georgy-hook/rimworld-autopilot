@@ -9886,11 +9886,27 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     delay_risk = ("Untreated infection can kill even when displayed health is full and bleeding is zero."
                   if active_infection else
                   "A severely bleeding colonist can die before the next review.")
+    safe_urgent_tends = {}
+    if live_threat and urgent_care_unassigned(snapshot):
+        pawns = {int(pawn["id"]): pawn for pawn in snapshot.get("combat", {}).get("colonists", [])
+                 if pawn.get("id") is not None}
+        safe_urgent_tends = {name: row for name, row in options.items()
+                             if row.get("kind") == "tend"
+                             and (doctor := pawns.get(int(row.get("doctor_id") or 0)))
+                             and (patient := pawns.get(int(row.get("patient_id") or 0)))
+                             and not bridge.combat_planner.errand_exposed(
+                                 snapshot, patient.get("position"), doctor.get("position"))}
+        if safe_urgent_tends:
+            # An enemy elsewhere on the map is not a reason to leave a
+            # reachable, severely bleeding patient untreated.
+            options = safe_urgent_tends
     alternatives = {
         "defer_care": f"Do not treat now. {delay_risk} Choose only if delay is worth that risk.",
         "resume_colony_decisions": f"Return to other colony work without a treatment order. {delay_risk}",
     }
-    if live_threat:
+    if safe_urgent_tends:
+        alternatives = {}
+    elif live_threat:
         alternatives = {
             "defer_care": ("Leave the bleeding patient exposed for now. The nearby enemy may kill the doctor, "
                            "but untreated blood loss can kill the patient."),
