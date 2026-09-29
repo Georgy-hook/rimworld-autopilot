@@ -175,6 +175,16 @@ class HiveSurvivalTests(unittest.TestCase):
         self.assertFalse(any(command["endpoint"] == "/api/v1/combat/tactic"
                              for command in forced.get("commands", [])))
 
+    def test_started_treatment_stays_protected_after_bleeding_drops(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"][0].update(
+            current_job="TendPatient", current_job_target_id=987,
+            distance_to_nearest_opponent=40)
+        patient = next(row for row in snapshot["combat"]["colonists"] if row["id"] == 987)
+        patient["bleeding_rate"] = 0.88
+        self.assertEqual(colony_combat.protected_emergency_care_ids(snapshot), {984})
+        self.assertNotIn("civilian_retreat", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+
     def test_distant_guarding_insects_do_not_freeze_safe_colony_work(self):
         snapshot = hive_snapshot()
         snapshot["combat"]["colonists"] = [snapshot["combat"]["colonists"][0]]

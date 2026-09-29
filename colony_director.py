@@ -2455,6 +2455,29 @@ def focus_active_fire_choices(actions: list[str], home_fire: bool = False) -> li
     return actions
 
 
+def focus_cooking_gap_choices(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
+    """Complete a meal source before scarce ready meals become starvation."""
+    resources = (snapshot.get("map") or {}).get("resources") or {}
+    development = snapshot.get("development") or {}
+    counts = development.get("building_counts") or {}
+    if (not development.get("cooking_gap_urgent")
+            or int(resources.get("raw_food") or 0) < 40
+            or any(int(counts.get(name) or 0) > 0 for name in
+                   ("Campfire", "FueledStove", "ElectricStove"))):
+        return actions
+    if development.get("urgent_cooking_projects") and "prioritize_construction_project" in actions:
+        selected = "prioritize_construction_project"
+    elif "build_campfire" in actions:
+        selected = "build_campfire"
+    else:
+        return actions
+    # Direct care and access to existing meals still outrank a new kitchen.
+    concurrent = {"rescue_downed_colonist", "tend_colonist", "feed_hungry_colonist",
+                  "eat_available_meal", "open_blocked_food_path", "unforbid_supplies"}
+    development["cooking_gap_focus"] = selected
+    return [action for action in actions if action == selected or action in concurrent]
+
+
 def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
     """Offer only actionable survival work when stored food is nearly gone.
 
@@ -2509,6 +2532,8 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "prioritize_thermal_project", "build_passive_cooler",
         "expand_home_area", "hold_survival",
     }
+    if (snapshot.get("development") or {}).get("urgent_cooking_projects"):
+        related.add("prioritize_construction_project")
     # A newly arrived worker can add to food production only if they can rest
     # safely. One indoor bed is quick to finish while several days of food
     # remain; keep it visible beside gathering and cooking choices.
@@ -3042,6 +3067,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     counts = dev["building_counts"]
     cooking_defs = {"Campfire", "FueledStove", "ElectricStove"}
     has_cooking_station = any(int(counts.get(name) or 0) > 0 for name in cooking_defs)
+    dev.pop("urgent_cooking_projects", None)
+    dev.pop("construction_project_options", None)
     zones = dev["zones"]
     tick = int(snapshot["game"].get("tick") or 0)
     finished = set(map(str, dev["finished_research"]))
@@ -3057,6 +3084,18 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     rolled_back_orders = reconcile_issued_timeline(map_state, tick)
     if rolled_back_orders:
         details["discarded_future_orders"] = rolled_back_orders
+    resources = (snapshot.get("map") or {}).get("resources") or {}
+    pending_cooking = any(str(row.get("def_name") or "") in cooking_defs
+                          for row in dev.get("construction_projects") or [])
+    campfire_issued = int((map_state.get("issued") or {}).get("campfire") or 0)
+    old_cooking_plan = (pending_cooking and campfire_issued > 0
+                        and tick - campfire_issued >= 30000)
+    meal_threshold = max(12, (18 if old_cooking_plan else 8)
+                         * len(snapshot.get("colonists") or []))
+    cooking_gap = (not has_cooking_station
+                   and int(resources.get("raw_food") or 0) >= 40
+                   and int(resources.get("meals") or 0) <= meal_threshold)
+    dev["cooking_gap_urgent"] = cooking_gap
 
     if relevant_forbidden(snapshot) and not issued_recently(
         map_state, "unforbid_supplies", tick, retry_ticks=2500
@@ -3411,14 +3450,6 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     )
     if not food_zone and not issued_recently(map_state, "food_stockpile", tick, retry_ticks=3000):
         one_time.append("create_food_stockpile")
-    cooking_project_pending = any(str(project.get("def_name") or "") in cooking_defs
-                                  for project in dev.get("construction_projects") or [])
-    if (not has_cooking_station and not cooking_project_pending
-            and int(item_counts.get("WoodLog") or 0) >= 20
-            and can_work("Construction")
-            and not issued_recently(map_state, "campfire", tick, retry_ticks=5000)):
-        one_time.append("build_campfire")
-
     pending_sleeping_spots = sum(str(project.get("def_name") or "") == "SleepingSpot"
                                  for project in dev.get("construction_projects") or [])
     usable_beds, sheltered_beds = sleeping_place_counts(dev)
@@ -4644,6 +4675,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if (dev.get("cold_threat") or {}).get("patients"):
         project_rank["Campfire"] = -1
         project_rank["Heater"] = -1
+    if cooking_gap:
+        project_rank.update({"Campfire": -1, "FueledStove": -1, "ElectricStove": -1})
     projects.sort(key=lambda row: (
         project_rank.get(str(row.get("def_name")), 11),
         0 if row.get("kind") == "frame" else 1,
@@ -4662,9 +4695,28 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             break
     if (projects and worker_criteria(snapshot, "Construction")
             and not issued_recently(map_state, "construction_project_priority", tick, retry_ticks=2500)):
+        cooking_shortlist = [row for row in shortlist
+                             if str(row.get("def_name") or "") in cooking_defs]
+        if cooking_gap and cooking_shortlist:
+            dev["urgent_cooking_projects"] = cooking_shortlist
+            shortlist = cooking_shortlist
         details["construction_project_options"] = shortlist
         dev["construction_project_options"] = shortlist
         one_time.append("prioritize_construction_project")
+    all_cooking_projects = [row for row in dev.get("construction_projects") or []
+                            if str(row.get("def_name") or "") in cooking_defs]
+    actionable_cooking_project = any(str(row.get("def_name") or "") in cooking_defs
+                                     for row in projects)
+    last_campfire = int((map_state.get("issued") or {}).get("campfire") or 0)
+    retry_stalled_campfire = (bool(all_cooking_projects) and not actionable_cooking_project
+                              and last_campfire > 0 and tick - last_campfire >= 30000
+                              and int(map_state.get("campfire_attempts") or 1) < 2)
+    if (not has_cooking_station and not actionable_cooking_project
+            and (not all_cooking_projects or retry_stalled_campfire)
+            and int(item_counts.get("WoodLog") or 0) >= 20
+            and can_work("Construction")
+            and not issued_recently(map_state, "campfire", tick, retry_ticks=5000)):
+        one_time.append("build_campfire")
     threatened_rooms: list[tuple[set[tuple[int, int]], set[str], str]] = []
     for threat_key, source_defs, label in (
         ("heat_threat", {"PassiveCooler"}, "heatstroke"),
@@ -4958,6 +5010,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     actionable = defer_new_construction_when_backlogged(snapshot, actionable)
     actionable = focus_active_fire_choices(actionable, bool(home_fires))
     actionable = focus_imminent_food_choices(snapshot, actionable)
+    actionable = focus_cooking_gap_choices(snapshot, actionable)
     actionable = focus_misaligned_research_choice(snapshot, actionable)
     if dev.get("blocked_food_emergency") and "open_blocked_food_path" in actionable:
         # A pawn surrounded by completed walls cannot walk to food, escape a
@@ -7705,6 +7758,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             return {"applied": False, "reason": "No clear dry place for a campfire near the house"}
         result = post_blueprint(client, map_id, site, blueprint([building("Campfire", 0, 0)], 1, 1))
         issued["campfire"] = tick
+        map_state["campfire_attempts"] = int(map_state.get("campfire_attempts") or 0) + 1
         return {"applied": True, "site": site, "response": result}
     if choice == "configure_food_bills":
         result = configure_food_bills(client, snapshot["development"]["work_tables"])
@@ -10169,8 +10223,23 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     tick = int(snapshot["game"].get("tick") or 0)
     map_state = map_state_for_snapshot(state, snapshot)
     handled = map_state.setdefault("handled_choice_letters", {})
-    for letter in context.get("letters") or []:
+    letters = context.get("letters") or []
+    terminal = next((row for row in letters
+                     if str(row.get("label") or "").strip().casefold() == "game over"
+                     or "everyone is dead or gone" in str(row.get("text") or "").casefold()), None)
+    if terminal is not None:
+        # This is the colony's terminal screen, not a joiner/quest offer.
+        # Preserve the final screen and stop issuing orders.
+        record = {"timestamp": bridge.utc_now(), "mode": "game-over",
+                  "letter": {"id": terminal.get("id"), "label": terminal.get("label"),
+                             "details": str(terminal.get("text") or "")[:750]},
+                  "decision": {"choice": "stop_director"},
+                  "result": {"applied": False, "reason": "Colony ended"}}
+        bridge.append_log(log_path, record)
+        return record
+    for letter in letters:
         letter_id = str(letter.get("id")) if letter.get("id") is not None else ""
+        letter_text = str(letter.get("text") or "")
         options = list(dict.fromkeys(str(label) for label in letter.get("enabled_options") or [] if label))
         meaningful = [label for label in options
                       if label.strip().casefold() not in {
@@ -10187,7 +10256,6 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
         criteria = {f"option_{index}": label for index, label in enumerate(options)}
         criteria["defer"] = "Leave the offer unanswered for now; it may expire."
         labor = growth.trade_population_context(snapshot)
-        letter_text = str(letter.get("text") or "")
         immobile_arrival = any(token in letter_text.casefold() for token in (
             "paralytic abasia", "unable to walk", "cannot walk", "paralyzed", "paralysed"))
         model_state = {
@@ -10345,6 +10413,8 @@ def main() -> int:
                     save_state(args.state, state)
                     print(f"[{letter_record['timestamp']}] letter: "
                           f"{letter_record['decision']['choice']} | {letter_record['result']}", flush=True)
+                    if letter_record.get("mode") == "game-over":
+                        return 0
                     if letter_record["decision"]["choice"] != "defer":
                         elapsed = time.monotonic() - started
                         time.sleep(max(0.0, 2.0 - elapsed))

@@ -16,17 +16,16 @@ def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
-    """Do not cancel active treatment of critical bleeding for a distant combat order."""
+    """Do not cancel an active tend job for a distant combat order."""
     colonists = (snapshot.get("combat") or {}).get("colonists") or []
-    critical_patients = {int(row["id"]) for row in colonists
-                         if row.get("id") is not None and not row.get("is_dead")
-                         and row.get("tendable_now")
-                         and float(row.get("bleeding_rate") or 0) >= 1.5}
+    untreated_patients = {int(row["id"]) for row in colonists
+                          if row.get("id") is not None and not row.get("is_dead")
+                          and row.get("tendable_now")}
     return {int(row["id"]) for row in colonists
             if row.get("id") is not None and not row.get("is_dead") and not row.get("is_downed")
             and str(row.get("current_job") or "").lower() == "tendpatient"
             and row.get("current_job_target_id") is not None
-            and int(row["current_job_target_id"]) in critical_patients
+            and int(row["current_job_target_id"]) in untreated_patients
             and float(row.get("distance_to_nearest_opponent") or 9999) > 4}
 
 

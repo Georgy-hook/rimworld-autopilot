@@ -2009,6 +2009,51 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_campfire", actions)
         self.assertIn("configure_food_bills", actions)
 
+    def test_low_meals_prioritize_queued_campfire_over_unrelated_work(self):
+        snapshot = {
+            "game": {"tick": 100000},
+            "map": {"id": 1, "resources": {"food": 108, "meals": 33,
+                                            "raw_food": 75, "nutrition": 15}},
+            "colonists": [{"id": 1, "name": "Builder", "health": 1,
+                           "work_priorities": {"Construction": {"priority": 2}}},
+                          {"id": 2, "name": "Cook", "health": 1,
+                           "work_priorities": {"Construction": {"priority": 3}}}],
+            "animals": [], "wild_animals": [], "combat": {},
+            "development": {"building_counts": {}, "buildings": [], "rooms": [],
+                            "zones": [], "forbidden": [], "things": [], "plants": [],
+                            "work_tables": [], "item_counts": {"WoodLog": 54},
+                            "construction_projects": [{"thing_id": 50, "def_name": "Campfire",
+                                                       "kind": "blueprint", "position": {"x": 12, "z": 12}}]},
+        }
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {"campfire": 1000}}
+        actions, details = director.candidate_actions(None, snapshot, state)
+        self.assertEqual(actions, ["prioritize_construction_project"])
+        self.assertEqual([row["def_name"] for row in details["construction_project_options"]],
+                         ["Campfire"])
+
+    def test_failed_old_campfire_plan_allows_one_safe_replacement(self):
+        snapshot = {
+            "game": {"tick": 100000},
+            "map": {"id": 1, "resources": {"food": 108, "meals": 0,
+                                            "raw_food": 108, "nutrition": 5}},
+            "colonists": [{"id": 1, "name": "Builder", "health": 1,
+                           "work_priorities": {"Construction": {"priority": 2}}}],
+            "animals": [], "wild_animals": [], "combat": {},
+            "development": {"building_counts": {}, "buildings": [], "rooms": [],
+                            "zones": [], "forbidden": [], "things": [], "plants": [],
+                            "work_tables": [], "item_counts": {"WoodLog": 54},
+                            "construction_projects": [{"thing_id": 50, "def_name": "Campfire",
+                                                       "kind": "blueprint", "position": {"x": 12, "z": 12}}]},
+        }
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {"campfire": 1000},
+                 "failed_construction_projects": {"50": {"tick": 99000, "wood": 54}},
+                 "campfire_attempts": 1}
+        actions, _ = director.candidate_actions(None, snapshot, state)
+        self.assertEqual(actions, ["build_campfire"])
+        state["campfire_attempts"] = 2
+        actions, _ = director.candidate_actions(None, snapshot, state)
+        self.assertNotIn("build_campfire", actions)
+
     def test_configured_food_bill_is_not_offered_again(self):
         table = {"id": 7, "thing_def": "Campfire", "bills_count": 1}
         client = mock.Mock()
@@ -4303,6 +4348,26 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(client.posts, [("/api/v1/events/letter/choose", {
             "letter_id": 17, "option_label": "Accept", "letter_text": "A refugee asks to stay."})])
         self.assertEqual(record["decision"]["choice"], "option_0")
+
+    def test_game_over_letter_stops_without_choosing_main_menu(self):
+        client = mock.Mock()
+        client.get.return_value = {"letters": [
+            {"id": 20, "arrival_tick": 621000, "label": "Joiner",
+             "text": "A refugee asks to stay.", "enabled_options": ["Accept", "Reject"]},
+            {"id": 21, "arrival_tick": 622000, "label": "Game Over",
+             "text": "Everyone is dead or gone. This story is over.",
+             "enabled_options": ["Main menu", "defer"]},
+        ]}
+        snapshot = {"map": {"id": 1, "resources": {}},
+                    "game": {"tick": 623000}, "colonists": []}
+        agent = self.FakeAgent([])
+        with tempfile.TemporaryDirectory() as folder:
+            log = pathlib.Path(folder) / "test.jsonl"
+            record = director.run_letter_cycle(client, agent, snapshot, {}, log)
+            self.assertIn('"mode": "game-over"', log.read_text(encoding="utf-8"))
+        self.assertEqual(record["decision"]["choice"], "stop_director")
+        client.post.assert_not_called()
+        self.assertEqual(agent.calls, [])
 
     def test_letter_housekeeping_buttons_are_not_offer_answers(self):
         client = mock.Mock()
