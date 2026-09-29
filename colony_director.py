@@ -1498,20 +1498,24 @@ def reconcile_issued_timeline(map_state: dict[str, Any], tick: int) -> list[str]
 
 
 def relevant_forbidden(snapshot: dict[str, Any], radius: int = 80) -> list[dict[str, Any]]:
-    pawn_positions = [
-        (int((pawn.get("position") or {}).get("x", -1000)), int((pawn.get("position") or {}).get("z", -1000)))
-        for pawn in snapshot.get("colonists", [])
-    ]
+    mobile_pawns = [pawn for pawn in snapshot.get("colonists", [])
+                    if not pawn.get("downed") and not pawn.get("in_mental_state")
+                    and (pawn.get("position") or {}).get("x") is not None
+                    and (pawn.get("position") or {}).get("z") is not None]
     radius_squared = radius * radius
     result = []
     for thing in snapshot.get("development", {}).get("forbidden", []):
         categories = {str(value) for value in thing.get("categories") or []}
-        if categories & {"CorpsesHumanlike", "CorpsesAnimal", "CorpsesMechanoid"}:
+        if any(category.startswith("Corpses") for category in categories):
             continue
         pos = thing.get("position") or {}
-        x = int(pos.get("x", -1000))
-        z = int(pos.get("z", -1000))
-        if any((x - px) ** 2 + (z - pz) ** 2 <= radius_squared for px, pz in pawn_positions):
+        if pos.get("x") is None or pos.get("z") is None:
+            continue
+        x, z = int(pos["x"]), int(pos["z"])
+        if any((x - int((pawn.get("position") or {})["x"])) ** 2
+               + (z - int((pawn.get("position") or {})["z"])) ** 2 <= radius_squared
+               and not bridge.combat_planner.errand_exposed(snapshot, pos, pawn.get("position"))
+               for pawn in mobile_pawns):
             result.append(thing)
     return result
 
@@ -1547,6 +1551,7 @@ def available_meals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in (snapshot.get("development") or {}).get("things") or []
             if isinstance(row, dict) and "FoodMeals" in (row.get("categories") or [])
             and not row.get("is_forbidden") and row.get("thing_id") is not None
+            and not bridge.combat_planner.errand_exposed(snapshot, row.get("position"))
             and int(row.get("stack_count") or 0) > 0]
 
 
@@ -1631,7 +1636,75 @@ def corpse_rows(snapshot: dict[str, Any], category: str | None = None) -> list[d
 
 
 def forbidden_corpses(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    return [row for row in corpse_rows(snapshot) if row.get("is_forbidden")]
+    hostiles = bridge.combat_planner.live_hostiles(snapshot)
+    mobile = [pawn for pawn in snapshot.get("colonists", [])
+              if not pawn.get("downed") and not pawn.get("in_mental_state")
+              and pawn.get("position")]
+    return [row for row in corpse_rows(snapshot) if row.get("is_forbidden")
+            and (not hostiles or any(not bridge.combat_planner.errand_exposed(
+                snapshot, row.get("position"), pawn.get("position")) for pawn in mobile))]
+
+
+def hazardous_haul_items(snapshot: dict[str, Any], things: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Loose items beside live enemies must not become automatic hauling jobs."""
+    if not bridge.combat_planner.live_hostiles(snapshot):
+        return []
+    return [row for row in things if isinstance(row, dict)
+            and row.get("thing_id") is not None and not row.get("is_forbidden")
+            and bridge.combat_planner.errand_exposed(snapshot, row.get("position"))]
+
+
+def unsafe_active_errand_pawns(snapshot: dict[str, Any],
+                               things: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """An already issued pickup can remain dangerous after its item is forbidden."""
+    by_id = {int(row["thing_id"]): row for row in things
+             if isinstance(row, dict) and row.get("thing_id") is not None}
+    errands = {"equip", "haultocell", "haultocontainer", "ingest", "takeinventory"}
+    return [pawn for pawn in (snapshot.get("combat") or {}).get("colonists") or []
+            if not pawn.get("is_dead") and not pawn.get("is_downed")
+            and str(pawn.get("current_job") or "").lower() in errands
+            and pawn.get("current_job_target_id") is not None
+            and int(pawn["current_job_target_id"]) in by_id
+            and bridge.combat_planner.errand_exposed(
+                snapshot, by_id[int(pawn["current_job_target_id"])].get("position"),
+                pawn.get("position"))]
+
+
+def run_hazard_exclusion_cycle(client: bridge.RimApiClient, snapshot: dict[str, Any],
+                               log_path: Path) -> dict[str, Any] | None:
+    """Forbid exposed pickups before vanilla hauling or another Laya order can take them."""
+    if not bridge.combat_planner.live_hostiles(snapshot):
+        return None
+    map_id = int((snapshot.get("map") or {}).get("id") or 0)
+    things = client.get("/api/v1/map/things", map_id=map_id) or []
+    things = things if isinstance(things, list) else []
+    rows = hazardous_haul_items(snapshot, things)
+    unsafe_pawns = unsafe_active_errand_pawns(snapshot, things)
+    if not rows and not unsafe_pawns:
+        return None
+    ids = sorted({int(row["thing_id"]) for row in rows})
+    response = (client.post("/api/v1/things/set-forbidden", body={
+        "map_id": map_id, "thing_ids": ids, "forbidden": True,
+    }) if ids else None)
+    retreats = []
+    for pawn in unsafe_pawns:
+        choice = ("withdraw_and_regroup" if pawn.get("can_fight", True) and pawn.get("weapon_def")
+                  else "civilian_retreat")
+        action = bridge.plan_action(snapshot, {
+            "choice": choice, "selected_fighter_ids": [int(pawn["id"])],
+        })
+        commands = [command for command in action.get("commands") or []
+                    if command["endpoint"] == "/api/v1/combat/tactic"]
+        if commands:
+            retreat_response = client.post(commands[0]["endpoint"], body=commands[0]["body"])
+            retreats.append({"pawn_id": int(pawn["id"]), "choice": choice,
+                             "response": retreat_response})
+    record = {"timestamp": bridge.utc_now(), "mode": "hazard-guard",
+              "items": [{"id": int(row["thing_id"]), "def": row.get("def_name"),
+                         "position": row.get("position")} for row in rows],
+              "result": response, "retreats": retreats}
+    bridge.append_log(log_path, record)
+    return record
 
 
 def animal_needs_tending(animal: dict[str, Any]) -> bool:
@@ -2985,7 +3058,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                         if not pawn.get("is_dead") and not pawn.get("is_downed")
                         and not pawn.get("has_ranged_weapon") and bridge.first_number(pawn.get("manipulation"), 1) >= 0.65]
     free_weapons = [weapon for weapon in (snapshot.get("combat") or {}).get("available_weapons", [])
-                    if weapon.get("is_ranged") and weapon.get("id") is not None]
+                    if weapon.get("is_ranged") and weapon.get("id") is not None
+                    and any(not bridge.combat_planner.errand_exposed(
+                        snapshot, weapon.get("position"), pawn.get("position"))
+                        for pawn in unarmed_fighters)]
     if unarmed_fighters and free_weapons and not issued_recently(map_state, "equip_colonists", tick, retry_ticks=2500):
         details["equip_context"] = {"unarmed": len(unarmed_fighters), "available_ranged": len(free_weapons)}
         one_time.append("equip_colonists")
@@ -3191,6 +3267,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                 continue
             pos = plant.get("position") or {}
             if (int(pos.get("x") or 0) - int(anchor["x"])) ** 2 + (int(pos.get("z") or 0) - int(anchor["z"])) ** 2 > radius_squared:
+                continue
+            if bridge.combat_planner.errand_exposed(snapshot, pos):
                 continue
             name = str(plant.get("def_name") or harvested)
             group = wild_food_groups.setdefault(name, {
@@ -4790,6 +4868,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             continue
         pos = plant.get("position") or {}
         if (int(pos.get("x") or 0) - int(anchor["x"])) ** 2 + (int(pos.get("z") or 0) - int(anchor["z"])) ** 2 > 45 ** 2:
+            continue
+        if bridge.combat_planner.errand_exposed(snapshot, pos):
             continue
         plant_id = int(plant.get("thing_id") or -1)
         if plant_id < 0 or issued_recently(map_state, f"wild_plant:{plant_id}", tick, retry_ticks=120000):
@@ -6849,10 +6929,12 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         responses = []
         assignments = []
         for pawn in fighters:
-            if not weapons:
-                break
+            safe_weapons = [weapon for weapon in weapons if not bridge.combat_planner.errand_exposed(
+                snapshot, weapon.get("position"), pawn.get("position"))]
+            if not safe_weapons:
+                continue
             pos = pawn.get("position") or {}
-            weapon = min(weapons, key=lambda row: (
+            weapon = min(safe_weapons, key=lambda row: (
                 bridge.first_number((row.get("position") or {}).get("x")) - bridge.first_number(pos.get("x"))
             ) ** 2 + (
                 bridge.first_number((row.get("position") or {}).get("z")) - bridge.first_number(pos.get("z"))
@@ -6873,7 +6955,12 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         unarmed = [p for p in snapshot.get("combat", {}).get("colonists", []) if not p.get("has_ranged_weapon") and not p.get("is_dead") and not p.get("is_downed")]
         weapons = [w for w in snapshot.get("combat", {}).get("available_weapons", []) if w.get("is_ranged")]
         responses = []
-        for pawn, weapon in zip(unarmed, weapons):
+        for pawn in unarmed:
+            weapon = next((row for row in weapons if not bridge.combat_planner.errand_exposed(
+                snapshot, row.get("position"), pawn.get("position"))), None)
+            if weapon is None:
+                continue
+            weapons.remove(weapon)
             if weapon.get("is_forbidden"):
                 responses.append(client.post("/api/v1/things/set-forbidden", body={"map_id": map_id, "thing_ids": [int(weapon["id"])], "forbidden": False}))
             responses.append(client.post("/api/v1/pawn/job", body={"pawn_id": int(pawn["id"]), "job_def": "Equip", "target_thing_id": int(weapon["id"])}))
@@ -7475,7 +7562,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         if selected_id not in options or eater is None or eater.get("downed"):
             return {"applied": False, "reason": "The selected hungry colonist can no longer eat independently"}
         meals = [meal for meal in reachable_meals(snapshot)
-                 if squared_distance(eater.get("position") or {}, meal.get("position") or {}) <= 60 ** 2]
+                 if squared_distance(eater.get("position") or {}, meal.get("position") or {}) <= 60 ** 2
+                 and not bridge.combat_planner.errand_exposed(
+                     snapshot, meal.get("position"), eater.get("position"))]
         if not meals:
             return {"applied": False, "reason": "No unlocked meal stack remains"}
         meal = min(meals, key=lambda row: squared_distance(eater.get("position") or {}, row.get("position") or {}))
@@ -8237,7 +8326,17 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         selected = (details.get("wild_plant_options") or {}).get(plant_type)
         if not selected:
             return {"applied": False, "reason": "Laya did not select an available mature wild plant type"}
-        plant_ids = list(map(int, selected.get("ids", [])[:60]))
+        worker_id = details.get("wild_plant_worker")
+        worker = next((pawn for pawn in snapshot.get("colonists", [])
+                       if str(pawn.get("id")) == str(worker_id)), None)
+        plants_by_id = {int(plant["thing_id"]): plant for plant in snapshot["development"].get("plants", [])
+                        if plant.get("thing_id") is not None}
+        plant_ids = [int(plant_id) for plant_id in selected.get("ids", [])
+                     if int(plant_id) in plants_by_id and not bridge.combat_planner.errand_exposed(
+                         snapshot, plants_by_id[int(plant_id)].get("position"),
+                         worker.get("position") if worker else None)][:60]
+        if not plant_ids:
+            return {"applied": False, "reason": "Selected plants are exposed to live hostiles"}
         result = client.post("/api/v1/map/plants/harvest", body={
             "map_id": map_id,
             "plant_ids": plant_ids,
@@ -9666,6 +9765,16 @@ def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
         name.startswith("tend_") for name in post_combat_care_options(snapshot))
 
 
+def live_threat_care_needed(snapshot: dict[str, Any]) -> bool:
+    """A free civilian doctor can make a real triage decision before an ally bleeds out."""
+    if not bridge.combat_planner.live_hostiles(snapshot) or not urgent_care_unassigned(snapshot):
+        return False
+    drafted = {int(row["id"]) for row in snapshot.get("combat", {}).get("colonists", [])
+               if row.get("id") is not None and row.get("is_drafted")}
+    return any(row.get("kind") == "tend" and int(row.get("doctor_id") or 0) not in drafted
+               for row in post_combat_care_options(snapshot).values())
+
+
 def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict[str, Any],
                                      choice: str, raw: dict[str, Any],
                                      options: dict[str, dict[str, Any]]) -> None:
@@ -9677,6 +9786,8 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
     def label(name: str) -> str:
         if name == "defer_care":
             return "Defer care" if english else "Отложить лечение"
+        if name == "withdraw_civilian":
+            return "Withdraw helper" if english else "Отвести помощника"
         if name == "resume_colony_decisions":
             return "Resume colony work" if english else "Вернуться к делам колонии"
         row = options.get(name) or {}
@@ -9690,12 +9801,15 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
 
     answer = ((raw.get("answers") or {}).get("post_combat_care") or {})
     probabilities = answer.get("probabilities") or {}
+    status = (("Care order in progress" if english else "Помощь выполняется") if selected else
+              ("Helper withdrawing" if english else "Помощник отступает") if choice == "withdraw_civilian" else
+              ("Care deferred" if english else "Помощь отложена"))
     show_overlay(
         client,
         compact_lines=(["LAYA — MEDICAL", f"Chosen: {label(choice)}",
-                        "Care order in progress" if selected else "Care deferred"] if english else [
+                        status] if english else [
                         "LAYA — МЕДИЦИНА", f"Выбрано: {label(choice)}",
-                        "Помощь выполняется" if selected else "Помощь отложена"]),
+                        status]),
         full_lines=(["LAYA — MEDICAL", f"Chosen: {label(choice)}"] if english else [
                     "LAYA — МЕДИЦИНА", f"Выбрано: {label(choice)}"]),
         bars=probability_bars(probabilities, {name: label(name) for name in probabilities}, choice, 8),
@@ -9705,9 +9819,10 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
 
 
 def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
-                               snapshot: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
-    if any(not pawn.get("is_dead") and not pawn.get("is_downed")
-           for pawn in snapshot.get("combat", {}).get("hostiles", [])):
+                               snapshot: dict[str, Any], log_path: Path,
+                               *, live_threat: bool = False) -> dict[str, Any] | None:
+    hostiles = bridge.combat_planner.live_hostiles(snapshot)
+    if hostiles and not live_threat:
         return None
     buildings = []
     if any(pawn.get("is_downed") for pawn in snapshot.get("combat", {}).get("colonists", [])) and hasattr(client, "get"):
@@ -9718,6 +9833,13 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
         except bridge.RimApiError:
             pass
     options = post_combat_care_options(snapshot, buildings)
+    if live_threat:
+        # Do not pull a drafted defender out of an active fight to tend; a
+        # mobile civilian may still choose to risk a field treatment.
+        drafted_ids = {int(pawn["id"]) for pawn in snapshot.get("combat", {}).get("colonists", [])
+                       if pawn.get("id") is not None and pawn.get("is_drafted")}
+        options = {name: row for name, row in options.items()
+                   if int(row.get("doctor_id") or 0) not in drafted_ids}
     if not options:
         return None
     if recurring_entity_unresolved(snapshot) and not any(
@@ -9742,11 +9864,35 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
         "defer_care": f"Do not treat now. {delay_risk} Choose only if delay is worth that risk.",
         "resume_colony_decisions": f"Return to other colony work without a treatment order. {delay_risk}",
     }
-    if urgent_care_actionable(snapshot):
+    if live_threat:
+        alternatives = {
+            "defer_care": ("Leave the bleeding patient exposed for now. The nearby enemy may kill the doctor, "
+                           "but untreated blood loss can kill the patient."),
+            "withdraw_civilian": ("Move the mobile civilian away from the hostile. This protects the last helper "
+                                  "but the bleeding patient may die without treatment."),
+        }
+        if not any(not pawn.get("is_dead") and not pawn.get("is_downed")
+                   and not pawn.get("is_in_mental_state")
+                   and bridge.first_number(pawn.get("moving"), 1) >= 0.65
+                   and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))
+                   for pawn in snapshot.get("combat", {}).get("colonists", [])):
+            alternatives.pop("withdraw_civilian")
+    elif urgent_care_actionable(snapshot):
         alternatives = {}
-    care_options = {**{key: row["summary"] for key, row in options.items()}, **alternatives}
+    def danger_distance(patient_id: int) -> int | None:
+        patient = next((row for row in snapshot.get("combat", {}).get("colonists", [])
+                        if row.get("id") == patient_id), None)
+        if patient is None or not (patient.get("position") or {}) or not hostiles:
+            return None
+        distances = [squared_distance(patient["position"], hostile["position"]) ** 0.5
+                     for hostile in hostiles if hostile.get("position")]
+        return round(min(distances)) if distances else None
+    care_options = {**{key: (row["summary"] + (
+        f" Nearest live enemy {danger_distance(int(row['patient_id']))} cells from patient; "
+        "approach may expose the doctor." if live_threat else ""))
+        for key, row in options.items()}, **alternatives}
     choice, raw = ask_laya_choice(agent, {
-        "task": "Choose treatment, rescue or another action after combat",
+        "task": "Emergency field care under live threat" if live_threat else "Choose treatment, rescue or another action after combat",
         "triage": ("A successful API order is not a completed treatment. Severe bleeding can kill "
                    "while a rescuer travels or while a doctor is reassigned. Verify bleeding falls before "
                    "moving the only doctor to a stable patient."),
@@ -9766,6 +9912,9 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
             for row in snapshot.get("combat", {}).get("hostiles", []) if not row.get("is_dead")],
         "medicine": (snapshot.get("map", {}).get("resources") or {}).get("medicine"),
     }, "post_combat_care", (
+        "Choose whether an undrafted helper should risk field treatment or retreat from live hostiles. "
+        "Compare the patient's bleed time with enemy distance; sleeping while an ally bleeds is not care. "
+        if live_threat else
         "Choose whether to tend on the ground, carry a downed ally to a bed, defer, or return to colony work. "
         "Travel delays treatment; leaving a patient exposed can also be fatal. "
         "The wounds, bleeding, distance, doctor skill and supplies are context, not a forced choice."
@@ -9775,7 +9924,14 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     try:
         if snapshot.get("game", {}).get("is_paused"):
             client.post("/api/v1/game/speed", query={"speed": 1})
-        if selected is None:
+        if selected is None and choice == "withdraw_civilian":
+            retreat = bridge.plan_action(snapshot, {"choice": "civilian_retreat"})
+            responses = [client.post(command["endpoint"], query=command.get("query"),
+                                     body=command.get("body"))
+                         for command in retreat.get("commands") or []]
+            result = {"applied": bool(responses), "retreat": retreat.get("description"),
+                      "responses": responses}
+        elif selected is None:
             result = {"applied": False, "deferred": True,
                       "revisit": choice == "defer_care", "reason": alternatives[choice]}
         else:
@@ -9812,7 +9968,8 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                     result["patient_hold"] = patient_hold
     except bridge.RimApiError as exc:
         result = {"applied": False, "error": str(exc)}
-    record = {"timestamp": bridge.utc_now(), "mode": "post-combat-care",
+    record = {"timestamp": bridge.utc_now(),
+              "mode": "live-threat-care" if live_threat else "post-combat-care",
               "candidates": list(options), "decision": {"choice": choice, "raw": raw},
               "plan": selected, "result": result}
     bridge.append_log(log_path, record)
@@ -10033,10 +10190,18 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
 
 def staging_development_allowed(snapshot: dict[str, Any], combat_record: dict[str, Any] | None) -> bool:
     """Laya may keep planning normal work after choosing to stand down during staging."""
-    if (combat_record or {}).get("decision", {}).get("choice") != "prepare_undrafted":
+    if (combat_record or {}).get("decision", {}).get("choice") not in {
+        "prepare_undrafted", "continue_safe_colony_work",
+    }:
         return False
     combat = snapshot.get("combat") or {}
     hostiles = [row for row in combat.get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
+    if any(row.get("is_downed") or bridge.first_number(row.get("bleeding_rate")) > 0.05
+           for row in combat.get("colonists", []) if not row.get("is_dead")):
+        return False
+    if any(bridge.first_number(row.get("distance_to_nearest_opponent"), 9999) <= 35
+           for row in combat.get("colonists", []) if not row.get("is_dead")):
+        return False
     return bool(hostiles) and all(bridge.combat_planner.hostile_is_preparing(row) for row in hostiles) \
         and not any(row.get("is_drafted") for row in combat.get("colonists", []))
 
@@ -10076,6 +10241,8 @@ def main() -> int:
     next_colony_cycle = 0.0
     next_downed_cycle = 0.0
     next_post_combat_care_cycle = 0.0
+    next_live_threat_care_cycle = 0.0
+    next_hazard_scan = 0.0
     post_combat_pending = False
     care_bootstrapped = False
     post_combat_care_failures = 0
@@ -10094,6 +10261,12 @@ def main() -> int:
             write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
             try:
                 snapshot = bridge.collect_snapshot(client)
+                if bridge.combat_planner.live_hostiles(snapshot) and time.monotonic() >= next_hazard_scan:
+                    hazard_record = run_hazard_exclusion_cycle(client, snapshot, args.log)
+                    next_hazard_scan = time.monotonic() + 8.0
+                    if hazard_record is not None:
+                        print(f"[{hazard_record['timestamp']}] hazard guard: forbade "
+                              f"{len(hazard_record['items'])} exposed item(s)", flush=True)
                 if not care_bootstrapped:
                     # A restart must not forget an unfinished wound from the
                     # previous session. Laya still chooses whether to treat it.
@@ -10147,6 +10320,20 @@ def main() -> int:
                     living_hostiles = [h for h in snapshot["combat"]["hostiles"] if not h.get("is_dead")]
                     if any(not hostile.get("is_downed") for hostile in living_hostiles):
                         post_combat_pending = True
+                    now = time.monotonic()
+                    if live_threat_care_needed(snapshot) and now >= next_live_threat_care_cycle:
+                        care_record = run_post_combat_care_cycle(
+                            client, agent, snapshot, args.log, live_threat=True)
+                        care_choice = str((care_record or {}).get("decision", {}).get("choice") or "")
+                        next_live_threat_care_cycle = time.monotonic() + (
+                            60.0 if care_choice in {"withdraw_civilian", "defer_care"}
+                            else 4.0 if care_record and care_record["result"].get("applied") else 8.0)
+                        if care_record is not None:
+                            print(f"[{care_record['timestamp']}] live-threat care: "
+                                  f"{care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                            elapsed = time.monotonic() - started
+                            time.sleep(max(0.0, 2.0 - elapsed))
+                            continue
                     if living_hostiles and all(h.get("is_downed") for h in living_hostiles):
                         now = time.monotonic()
                         if post_combat_pending and now >= next_post_combat_care_cycle:
@@ -10234,7 +10421,9 @@ def main() -> int:
                         last_combat_order_time = now
                         last_combat_step_time = now
                         print(f"[{record['timestamp']}] combat: {record['action']['description']}", flush=True)
-                    if now >= next_colony_cycle and (last_combat_record or {}).get("decision", {}).get("choice") == "prepare_undrafted":
+                    if now >= next_colony_cycle and (last_combat_record or {}).get("decision", {}).get("choice") in {
+                        "prepare_undrafted", "continue_safe_colony_work",
+                    }:
                         # Refresh after the combat order; the enemy may have begun
                         # advancing while Laya was deciding.
                         staging_snapshot = bridge.collect_snapshot(client)

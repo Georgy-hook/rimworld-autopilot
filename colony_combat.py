@@ -3,6 +3,74 @@ from __future__ import annotations
 from typing import Any
 
 
+def _cell(row: dict[str, Any] | None) -> tuple[float, float] | None:
+    position = (row or {}).get("position") or {}
+    if position.get("x") is None or position.get("z") is None:
+        return None
+    return float(position["x"]), float(position["z"])
+
+
+def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    return [row for row in (snapshot.get("combat") or {}).get("hostiles") or []
+            if not row.get("is_dead") and not row.get("is_downed")]
+
+
+def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
+    """Do not cancel active treatment of critical bleeding for a distant combat order."""
+    colonists = (snapshot.get("combat") or {}).get("colonists") or []
+    critical_patients = {int(row["id"]) for row in colonists
+                         if row.get("id") is not None and not row.get("is_dead")
+                         and row.get("tendable_now")
+                         and float(row.get("bleeding_rate") or 0) >= 1.5}
+    return {int(row["id"]) for row in colonists
+            if row.get("id") is not None and not row.get("is_dead") and not row.get("is_downed")
+            and str(row.get("current_job") or "").lower() == "tendpatient"
+            and row.get("current_job_target_id") is not None
+            and int(row["current_job_target_id"]) in critical_patients
+            and float(row.get("distance_to_nearest_opponent") or 9999) > 4}
+
+
+def threat_radius(hostile: dict[str, Any]) -> float:
+    """Keep ordinary errands outside a hostile's reach and a hive's guard area."""
+    radius = max(22.0, min(55.0, float(hostile.get("weapon_range") or 0) + 8.0))
+    if "DefendAndExpandHive" in str(hostile.get("lord_job_type") or ""):
+        radius = max(radius, 30.0)
+    return radius
+
+
+def errand_exposed(snapshot: dict[str, Any], destination: dict[str, Any] | None,
+                   origin: dict[str, Any] | None = None) -> bool:
+    """Reject a pickup, harvest or haul when its target or direct route meets a live threat.
+
+    RimWorld may choose a longer path around terrain, so this is a conservative
+    feasibility check, not proof that a route is safe. Missing coordinates also
+    cannot justify ordering a civilian into an active threat.
+    """
+    hostiles = live_hostiles(snapshot)
+    if not hostiles:
+        return False
+    target = _cell({"position": destination})
+    start = _cell({"position": origin}) if origin is not None else None
+    if target is None or (origin is not None and start is None):
+        return True
+    for hostile in hostiles:
+        enemy = _cell(hostile)
+        if enemy is None:
+            return True
+        radius_squared = threat_radius(hostile) ** 2
+        if (target[0] - enemy[0]) ** 2 + (target[1] - enemy[1]) ** 2 <= radius_squared:
+            return True
+        if start is None:
+            continue
+        dx, dz = target[0] - start[0], target[1] - start[1]
+        fraction = max(0.0, min(1.0, ((enemy[0] - start[0]) * dx
+                                       + (enemy[1] - start[1]) * dz) / max(1.0, dx * dx + dz * dz)))
+        closest = (start[0] + fraction * dx, start[1] + fraction * dz)
+        if (closest[0] - enemy[0]) ** 2 + (closest[1] - enemy[1]) ** 2 <= radius_squared:
+            return True
+    return False
+
+
 # These are strategic templates, not scripts with fixed coordinates.  RIMAPI
 # resolves positions against the live map and rejects every route that crosses
 # a friendly trap.  Keeping the catalogue here lets the model compare tactics
@@ -209,7 +277,8 @@ def hostile_is_preparing(row: dict[str, Any]) -> bool:
     if job == "goto" or any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
         return False
     lord_toil = str(row.get("lord_toil_name") or "").lower()
-    return any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
+    hive_guard = "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
+    return hive_guard or any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
         token in lord_toil for token in ("stage", "siege")
     )
 
@@ -231,9 +300,10 @@ def has_clear_shot(shooter: dict[str, Any], hostiles: list[dict[str, Any]]) -> b
 def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     combat = snapshot.get("combat", {})
     hostiles = [row for row in combat.get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
+    protected = protected_emergency_care_ids(snapshot)
     fighters = [row for row in combat.get("colonists", []) if not row.get("is_dead")
                 and not row.get("is_downed") and not row.get("is_in_mental_state")
-                and row.get("can_fight", True)]
+                and row.get("can_fight", True) and row.get("id") not in protected]
     if not hostiles:
         return {"stand_down": TACTICS["stand_down"]["description"]} if any(row.get("is_drafted") for row in fighters) else {}
     if not fighters:

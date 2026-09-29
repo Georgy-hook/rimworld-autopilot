@@ -1,0 +1,183 @@
+"""Regression for the hive pickup and untreated casualty seen in the long run."""
+
+import copy
+import pathlib
+import sys
+import tempfile
+import unittest
+
+
+ROOT = pathlib.Path(__file__).parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import colony_combat
+import colony_director as director
+import rimworld_laya as bridge
+
+
+def hive_snapshot():
+    fumiko = {"id": 984, "name": "Fumiko", "position": {"x": 161, "z": 134},
+              "is_dead": False, "is_downed": False, "can_fight": False,
+              "is_drafted": False, "moving": 1.0, "manipulation": 1.0,
+              "current_job": "LayDown", "distance_to_nearest_opponent": 26,
+              "medicine_skill": 3, "weapon_def": None}
+    kings = {"id": 987, "name": "Kings", "position": {"x": 167, "z": 123},
+             "is_dead": False, "is_downed": True, "tendable_now": True,
+             "bleeding_rate": 5.8, "health": 0.35}
+    mitch = {"id": 990, "name": "Mitch", "position": {"x": 169, "z": 116},
+             "is_dead": False, "is_downed": True, "tendable_now": True,
+             "bleeding_rate": 3.8, "health": 0.42}
+    insects = [{"id": 1500 + index, "kind_def": "Megaspider",
+                "position": {"x": 180 + index, "z": 115},
+                "lord_job_type": "LordJob_DefendAndExpandHive"}
+               for index in range(3)]
+    return {
+        "game": {"is_paused": False}, "map": {"id": 1, "enemies": 3, "resources": {"medicine": 1}},
+        "colonists": [{"id": 984, "name": "Fumiko", "skills": {"Medicine": {"disabled": False}},
+                       "position": fumiko["position"]}],
+        "combat": {"available": True, "colonists": [fumiko, kings, mitch],
+                   "hostiles": insects, "available_weapons": [
+                       {"id": 34892, "label": "bolt-action rifle", "is_ranged": True,
+                        "position": {"x": 170, "z": 116}},
+                       {"id": 34893, "label": "revolver", "is_ranged": True,
+                        "position": {"x": 168, "z": 123}},
+                   ]},
+        "development": {"forbidden": [], "things": [], "corpses": []},
+    }
+
+
+class ChoosingAgent:
+    def __init__(self, choice):
+        self.choice = choice
+        self.questions = []
+
+    def predict(self, state, questions):
+        self.questions.append(questions)
+        question_id = next(iter(questions))
+        assert self.choice in questions[question_id]["criteria"]
+        return {"answers": {question_id: {"choice": self.choice, "confidence": 0.9,
+                                         "probabilities": {self.choice: 1.0}}}}
+
+
+class RecordingClient:
+    def __init__(self, things=()):
+        self.things = list(things)
+        self.posts = []
+
+    def get(self, endpoint, **query):
+        if endpoint == "/api/v1/map/things":
+            return self.things
+        if endpoint == "/api/v1/map/buildings":
+            return []
+        if endpoint == "/api/v1/game/settings":
+            return {"language": "English"}
+        raise AssertionError(endpoint)
+
+    def post(self, endpoint, *, body=None, query=None):
+        self.posts.append((endpoint, body, query))
+        return {"success": True}
+
+
+class HiveSurvivalTests(unittest.TestCase):
+    def test_hive_weapons_are_not_offered_or_assigned_even_if_forced(self):
+        snapshot = hive_snapshot()
+        for pawn in snapshot["combat"]["colonists"][1:]:
+            pawn.update(is_downed=False, can_fight=True, weapon_def=None,
+                        has_ranged_weapon=False, moving=1.0, manipulation=1.0,
+                        sight=1.0, distance_to_nearest_opponent=20,
+                        tendable_now=False, bleeding_rate=0)
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertEqual(set(criteria), {"civilian_retreat"})
+        self.assertNotIn("equip_ranged_weapon", criteria)
+        self.assertNotIn("prepare_undrafted", criteria)
+        action = bridge.plan_action(snapshot, {"choice": "equip_ranged_weapon"})
+        self.assertFalse(any(command.get("body", {}).get("job_def") == "Equip"
+                             for command in action.get("commands", [])))
+        self.assertTrue(colony_combat.errand_exposed(
+            snapshot, {"x": 170, "z": 116}, {"x": 140, "z": 140}))
+        snapshot["combat"]["available_weapons"] = [{"id": 10, "is_ranged": True,
+                                                       "position": {"x": 130, "z": 140}}]
+        self.assertFalse(colony_combat.errand_exposed(
+            snapshot, {"x": 130, "z": 140}, {"x": 140, "z": 140}))
+
+    def test_sleeping_pacifist_can_choose_field_tending_without_bed(self):
+        snapshot = hive_snapshot()
+        self.assertTrue(director.live_threat_care_needed(snapshot))
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertIn("civilian_retreat", criteria)
+        retreat = bridge.plan_action(snapshot, {"choice": "civilian_retreat"})
+        tactic = next(command["body"] for command in retreat["commands"]
+                      if command["endpoint"] == "/api/v1/combat/tactic")
+        self.assertEqual(tactic["fighter_ids"], [984])
+        client = RecordingClient()
+        agent = ChoosingAgent("tend_987_984")
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_post_combat_care_cycle(
+                client, agent, snapshot, pathlib.Path(folder) / "care.jsonl",
+                live_threat=True)
+        self.assertEqual(record["decision"]["choice"], "tend_987_984")
+        self.assertIn("defer_care", agent.questions[0]["post_combat_care"]["criteria"])
+        self.assertIn("withdraw_civilian", agent.questions[0]["post_combat_care"]["criteria"])
+        self.assertTrue(any(endpoint == "/api/v1/pawn/medical/tend"
+                            and body["patient_pawn_id"] == 987
+                            and body["doctor_pawn_id"] == 984
+                            for endpoint, body, _ in client.posts))
+
+    def test_started_critical_treatment_is_not_replaced_by_retreat(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"][0].update(
+            current_job="TendPatient", current_job_target_id=987)
+        self.assertEqual(colony_combat.protected_emergency_care_ids(snapshot), {984})
+        self.assertNotIn("civilian_retreat", bridge.make_questions(snapshot)["threat_action"]["criteria"])
+        self.assertEqual(bridge.combat_reserve_commands(snapshot, set()), [])
+        forced = bridge.plan_action(snapshot, {"choice": "civilian_retreat"})
+        self.assertFalse(any(command["endpoint"] == "/api/v1/combat/tactic"
+                             for command in forced.get("commands", [])))
+
+    def test_distant_guarding_insects_do_not_freeze_safe_colony_work(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"] = [snapshot["combat"]["colonists"][0]]
+        snapshot["combat"]["colonists"][0].update(
+            distance_to_nearest_opponent=60, current_job="CookFillHopper")
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertIn("continue_safe_colony_work", criteria)
+        self.assertNotIn("prepare_undrafted", criteria)
+        decision = {"decision": {"choice": "continue_safe_colony_work"}}
+        self.assertTrue(director.staging_development_allowed(snapshot, decision))
+        snapshot["combat"]["colonists"][0]["distance_to_nearest_opponent"] = 25
+        self.assertFalse(director.staging_development_allowed(snapshot, decision))
+
+    def test_forbid_hive_jelly_and_break_existing_fetch_order(self):
+        snapshot = hive_snapshot()
+        snapshot["combat"]["colonists"][0].update(
+            current_job="Ingest", current_job_target_id=49400)
+        items = [{"thing_id": 49400, "def_name": "InsectJelly",
+                  "position": {"x": 180, "z": 113}, "is_forbidden": False},
+                 {"thing_id": 34892, "def_name": "Gun_BoltActionRifle",
+                  "position": {"x": 170, "z": 116}, "is_forbidden": False}]
+        client = RecordingClient(items)
+        with tempfile.TemporaryDirectory() as folder:
+            record = director.run_hazard_exclusion_cycle(
+                client, snapshot, pathlib.Path(folder) / "guard.jsonl")
+        self.assertEqual({row["id"] for row in record["items"]}, {49400, 34892})
+        self.assertEqual(record["retreats"][0]["pawn_id"], 984)
+        self.assertTrue(any(endpoint == "/api/v1/combat/tactic"
+                            and body["tactic"] == "civilian_retreat"
+                            and body["fighter_ids"] == [984]
+                            for endpoint, body, _ in client.posts))
+        self.assertTrue(any(endpoint == "/api/v1/things/set-forbidden"
+                            and set(body["thing_ids"]) == {49400, 34892}
+                            for endpoint, body, _ in client.posts))
+        snapshot["development"]["forbidden"] = [
+            {"thing_id": 49400, "def_name": "InsectJelly", "categories": ["AnimalProductRaw"],
+             "position": {"x": 180, "z": 113}},
+        ]
+        self.assertEqual(director.relevant_forbidden(snapshot), [])
+        safe = copy.deepcopy(snapshot)
+        safe["combat"]["hostiles"] = []
+        self.assertEqual(len(director.relevant_forbidden(safe)), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
