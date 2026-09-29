@@ -288,6 +288,25 @@ def annotate_combat_capability(colonists: list[dict[str, Any]], combat: Any) -> 
         pawn["can_fight"] = not combat_skills or any(not row.get("disabled") for row in combat_skills)
 
 
+def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) -> None:
+    """Use the live combat rate instead of the detailed API's wound placeholder."""
+    if not isinstance(combat, dict):
+        return
+    by_id = {int(row["id"]): row for row in colonists if row.get("id") is not None}
+    for pawn in combat.get("colonists") or []:
+        detail = by_id.get(int(pawn.get("id") or 0))
+        if detail is None:
+            continue
+        if pawn.get("bleeding_rate") is not None:
+            detail["bleeding_rate"] = round(first_number(pawn["bleeding_rate"]), 3)
+        if pawn.get("tendable_now") is not None:
+            detail["tendable_now"] = bool(pawn["tendable_now"])
+        if pawn.get("is_downed") is not None:
+            detail["downed"] = bool(pawn["is_downed"])
+        if pawn.get("current_job") is not None:
+            detail["current_job"] = str(pawn["current_job"])
+
+
 def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     warnings: list[str] = []
     game = client.get("/api/v1/game/state")
@@ -322,6 +341,7 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     weapons = combat.get("available_weapons") if isinstance(combat, dict) else []
     annotate_mental_states(colonists, fighters)
     annotate_combat_capability(colonists, combat)
+    annotate_combat_medical_state(colonists, combat)
 
     return {
         "captured_at": utc_now(),

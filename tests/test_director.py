@@ -4152,6 +4152,57 @@ class DirectorTests(unittest.TestCase):
         patient["tendable_now"] = False
         self.assertFalse(director.treatment_job_in_progress(snapshot))
 
+    def test_downed_patient_stays_in_care_until_tended_and_rescued(self):
+        class Client:
+            def get(self, endpoint, **_query):
+                self_outer.assertEqual(endpoint, "/api/v1/map/buildings")
+                return [{"id": 7, "def": "Bed", "position": {"x": 10, "z": 10}},
+                        {"id": 8, "def": "Bed", "position": {"x": 12, "z": 10}}]
+
+        self_outer = self
+        patient = {"id": 65, "name": "Andersen", "is_downed": True,
+                   "tendable_now": True, "bleeding_rate": 2.858,
+                   "position": {"x": 55, "z": 10}}
+        doctor = {"id": 69, "name": "Trip", "moving": 0.6, "manipulation": 0.9,
+                  "position": {"x": 15, "z": 10}}
+        snapshot = {"combat": {"hostiles": [], "colonists": [patient, doctor]},
+                    "colonists": [{"id": 65, "position": patient["position"]},
+                                  {"id": 69, "capacities": {"moving": 0.6}}],
+                    "map": {"id": 0}}
+        client = Client()
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        self.assertEqual(set(director.post_combat_care_options(snapshot, client.get("/api/v1/map/buildings"))),
+                         {"tend_65_69"})
+        doctor.update(current_job="TendPatient", current_job_target_id=65)
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "wait")
+        doctor.update(current_job="LayDown", current_job_target_id=7)
+        patient["bleeding_rate"] = 2.335
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        doctor.update(current_job="Rescue", current_job_target_id=65)
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        doctor.update(current_job="LayDown", current_job_target_id=7)
+        patient.update(bleeding_rate=0, tendable_now=False)
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        doctor.update(current_job="Rescue", current_job_target_id=65)
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "wait")
+        doctor.update(current_job="LayDown", current_job_target_id=7)
+        patient.update(position={"x": 10, "z": 10}, current_job="LayDown", current_job_target_id=7)
+        snapshot["colonists"][0]["position"] = patient["position"]
+        self.assertIsNone(director.downed_colonist_care_gate(client, snapshot))
+
+    def test_development_rescue_does_not_interrupt_field_tending(self):
+        patient = {"id": 65, "position": {"x": 55, "z": 10},
+                   "tendable_now": True, "bleeding_rate": 2.858}
+        beds = [{"id": 7, "position": {"x": 10, "z": 10}}]
+        snapshot = {"colonists": [patient, {"id": 69, "capacities": {"moving": 0.6}}],
+                    "combat": {"colonists": []}}
+        self.assertFalse(director.rescue_order_safe(patient, snapshot, beds))
+        patient["bleeding_rate"] = 0.1
+        self.assertTrue(director.rescue_order_safe(patient, snapshot, beds))
+        snapshot["combat"]["colonists"] = [{"id": 69, "current_job": "TendPatient",
+                                               "current_job_target_id": 65}]
+        self.assertFalse(director.rescue_order_safe(patient, snapshot, beds))
+
     def test_post_combat_care_excludes_doctor_with_disabled_medicine(self):
         snapshot = {"combat": {"colonists": [
             {"id": 1, "name": "Patient", "tendable_now": True, "is_downed": True},

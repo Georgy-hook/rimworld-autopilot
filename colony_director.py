@@ -2383,6 +2383,28 @@ def patient_in_completed_bed(pawn: dict[str, Any], snapshot: dict[str, Any],
     )
 
 
+def rescue_order_safe(pawn: dict[str, Any], snapshot: dict[str, Any],
+                      beds: list[dict[str, Any]]) -> bool:
+    """Do not interrupt tending or carry a bleeding patient on a long trip."""
+    patient_id = int(pawn.get("id") or 0)
+    if any(str(row.get("current_job") or "").casefold() == "tendpatient"
+           and int(row.get("current_job_target_id") or 0) == patient_id
+           for row in (snapshot.get("combat") or {}).get("colonists") or []):
+        return False
+    if not pawn.get("tendable_now") or not beds:
+        return True
+    doctors = [row for row in snapshot.get("colonists") or []
+               if int(row.get("id") or 0) != patient_id and not row.get("downed")
+               and bridge.first_number((row.get("capacities") or {}).get("moving"), 1) >= 0.5
+               and not ((row.get("work_priorities") or {}).get("Doctor") or {}).get("disabled")]
+    if not doctors:
+        return True
+    bleeding = bridge.first_number(pawn.get("bleeding_rate"))
+    bed_distance = min(squared_distance(pawn.get("position") or {}, bed.get("position") or {}) ** 0.5
+                       for bed in beds)
+    return bleeding < 2.0 and (bleeding < 0.5 or bed_distance < 20)
+
+
 def room_is_ancient_danger(room: dict[str, Any]) -> bool:
     """An enclosed ruin is not a safe bedroom just because it has a roof."""
     defs = {str(name) for name in room.get("contained_thing_defs") or []}
@@ -5200,7 +5222,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                               "Bed", "HospitalBed", "SleepingSpot",
                           } and building.get("id") is not None]
         downed = [colonist for colonist in snapshot["colonists"]
-                  if colonist.get("downed") and not patient_in_completed_bed(colonist, snapshot, completed_beds)]
+                  if colonist.get("downed") and not patient_in_completed_bed(colonist, snapshot, completed_beds)
+                  and rescue_order_safe(colonist, snapshot, completed_beds)]
         if downed and available_rescuers and completed_beds and not issued_recently(
             map_state, "direct_rescue", tick, retry_ticks=1200
         ):
@@ -8857,6 +8880,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         patient = patient or min(patients, key=lambda pawn: (
             bridge.first_number(pawn.get("health"), 1), -bridge.first_number(pawn.get("bleeding_rate")),
         ))
+        if choice == "rescue_downed_colonist" and not rescue_order_safe(patient, snapshot, completed_beds):
+            return {"applied": False, "reason": "Field treatment is in progress or safer than a long carry"}
         helpers = [pawn for pawn in snapshot["colonists"] if pawn["id"] != patient["id"]
                    and not pawn.get("downed") and bridge.first_number(pawn.get("health"), 1) >= 0.5
                    and bridge.first_number((pawn.get("capacities") or {}).get("moving"), 1) >= 0.6]
@@ -10247,7 +10272,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
                      if str(pawn.get("current_job") or "").lower() == "rescue"
                      and pawn.get("current_job_target_id_b") is not None}
     for patient in colonists:
-        if not patient.get("is_downed") or patient.get("is_dead") or int(patient["id"]) in active_rescues or not beds:
+        if (not patient.get("is_downed") or patient.get("is_dead")
+                or int(patient["id"]) in active_rescues
+                or int(patient["id"]) in active_patients or not beds):
             continue
         patient_id = int(patient["id"])
         if patient_in_completed_bed(capabilities.get(patient_id) or patient, snapshot, beds):
@@ -10392,6 +10419,34 @@ def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
         name.startswith("tend_") for name in post_combat_care_options(snapshot))
 
 
+def downed_colonist_care_gate(client: bridge.RimApiClient,
+                             snapshot: dict[str, Any]) -> str | None:
+    """Keep a downed ally's care active across successive one-wound tend jobs."""
+    if bridge.combat_planner.live_hostiles(snapshot):
+        return None
+    downed_ids = {int(row["id"]) for row in snapshot.get("combat", {}).get("colonists", [])
+                  if row.get("id") is not None and row.get("is_downed") and not row.get("is_dead")}
+    if not downed_ids:
+        return "wait" if treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot) else None
+    tending_ids = {int(row["current_job_target_id"])
+                    for row in snapshot.get("combat", {}).get("colonists", [])
+                    if str(row.get("current_job") or "").casefold() == "tendpatient"
+                    and row.get("current_job_target_id") is not None}
+    if downed_ids <= tending_ids:
+        return "wait"
+    if recurring_entity_unresolved(snapshot) and not urgent_care_actionable(snapshot):
+        return None
+    buildings = client.get("/api/v1/map/buildings", map_id=int(snapshot.get("map", {}).get("id") or 0)) or []
+    if not isinstance(buildings, list):
+        buildings = []
+    options = post_combat_care_options(snapshot, buildings)
+    if any(int(row.get("patient_id") or 0) in downed_ids for row in options.values()):
+        return "assign"
+    if treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot):
+        return "wait"
+    return None
+
+
 def post_combat_care_retry_delay(snapshot: dict[str, Any], applied: bool,
                                  interval: float) -> float:
     """Give an accepted nonurgent tend job time to finish while colony work runs."""
@@ -10455,7 +10510,8 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
 
 def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                                snapshot: dict[str, Any], log_path: Path,
-                               *, live_threat: bool = False) -> dict[str, Any] | None:
+                               *, live_threat: bool = False,
+                               focus_downed: bool = False) -> dict[str, Any] | None:
     hostiles = bridge.combat_planner.live_hostiles(snapshot)
     if hostiles and not live_threat:
         return None
@@ -10468,6 +10524,11 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
         except bridge.RimApiError:
             pass
     options = post_combat_care_options(snapshot, buildings)
+    if focus_downed:
+        downed_ids = {int(pawn["id"]) for pawn in snapshot.get("combat", {}).get("colonists", [])
+                      if pawn.get("id") is not None and pawn.get("is_downed") and not pawn.get("is_dead")}
+        options = {name: row for name, row in options.items()
+                   if int(row.get("patient_id") or 0) in downed_ids}
     if live_threat:
         # Do not pull a drafted defender out of an active fight to tend; a
         # mobile civilian may still choose to risk a field treatment.
@@ -10529,7 +10590,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                    and bridge.combat_planner.errand_exposed(snapshot, pawn.get("position"))
                    for pawn in snapshot.get("combat", {}).get("colonists", [])):
             alternatives.pop("withdraw_civilian")
-    elif urgent_care_actionable(snapshot):
+    elif focus_downed or urgent_care_actionable(snapshot):
         alternatives = {}
     def danger_distance(patient_id: int) -> int | None:
         patient = next((row for row in snapshot.get("combat", {}).get("colonists", [])
@@ -10985,6 +11046,24 @@ def main() -> int:
                 # Advance a few in-game minutes, then let Laya see the cargo.
                 if int(snapshot["game"].get("tick") or 0) < 600:
                     if snapshot["game"].get("is_paused"):
+                        client.post("/api/v1/game/speed", query={"speed": 1})
+                    elapsed = time.monotonic() - started
+                    time.sleep(max(0.0, 2.0 - elapsed))
+                    continue
+                care_gate = downed_colonist_care_gate(client, snapshot)
+                if care_gate is not None:
+                    now = time.monotonic()
+                    if care_gate == "assign" and now >= next_post_combat_care_cycle:
+                        care_record = run_post_combat_care_cycle(
+                            client, agent, snapshot, args.log, focus_downed=True)
+                        next_post_combat_care_cycle = time.monotonic() + (
+                            2.0 if care_record and care_record["result"].get("applied") else 8.0)
+                        if care_record is not None:
+                            if care_record["result"].get("applied"):
+                                care_assignment_time = now
+                            print(f"[{care_record['timestamp']}] downed colonist care: "
+                                  f"{care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                    elif care_gate == "wait" and snapshot["game"].get("is_paused"):
                         client.post("/api/v1/game/speed", query={"speed": 1})
                     elapsed = time.monotonic() - started
                     time.sleep(max(0.0, 2.0 - elapsed))

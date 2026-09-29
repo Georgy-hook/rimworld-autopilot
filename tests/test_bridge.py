@@ -51,6 +51,17 @@ class RosterAgent:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_combat_medical_state_replaces_placeholder_bleeding_rate(self):
+        colonists = [{"id": 65, "bleeding_rate": 0.1, "tendable_now": True,
+                      "downed": False, "current_job": "unknown"}]
+        bridge.annotate_combat_medical_state(colonists, {"colonists": [
+            {"id": 65, "bleeding_rate": 2.85833263, "tendable_now": True,
+             "is_downed": True, "current_job": "Wait_Downed"},
+        ]})
+        self.assertEqual(colonists[0]["bleeding_rate"], 2.858)
+        self.assertTrue(colonists[0]["downed"])
+        self.assertEqual(colonists[0]["current_job"], "Wait_Downed")
+
     def test_disappeared_combat_target_does_not_stop_director(self):
         client = mock.Mock()
         client.post.side_effect = [
