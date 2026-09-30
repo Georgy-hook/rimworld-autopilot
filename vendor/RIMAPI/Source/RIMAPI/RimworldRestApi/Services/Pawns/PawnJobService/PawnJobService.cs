@@ -204,51 +204,89 @@ namespace RIMAPI.Services
             }
         }
 
-        public ApiResult AssignFeedJob(MedicalFeedRequestDto request)
+        public ApiResult<MedicalFeedResultDto> AssignFeedJob(MedicalFeedRequestDto request)
         {
+            var result = new MedicalFeedResultDto { PatientPawnId = request.PatientPawnId };
             try
             {
                 Pawn patient = PawnHelper.FindPawnById(request.PatientPawnId);
                 if (patient == null)
                 {
-                    return ApiResult.Fail($"Patient pawn not found: {request.PatientPawnId}");
+                    return ApiResult<MedicalFeedResultDto>.Fail($"Patient pawn not found: {request.PatientPawnId}");
+                }
+                if (patient.Dead || !patient.Spawned || !FeedPatientUtility.ShouldBeFed(patient))
+                {
+                    result.Reason = "patient_not_available_in_bed";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
+                }
+                if (!FeedPatientUtility.IsHungry(patient))
+                {
+                    result.Reason = "patient_not_hungry";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
 
                 Pawn feeder = request.FeederPawnId.HasValue
                     ? PawnHelper.FindPawnById(request.FeederPawnId.Value)
                     : patient.Map?.mapPawns.FreeColonists
-                        .Where(p => p != patient && !p.Downed && !p.Dead)
+                        .Where(p => p != patient && !p.Downed && !p.Dead && !p.Drafted && !p.InMentalState
+                                    && (patient.RaceProps.Animal
+                                        ? !p.WorkTypeIsDisabled(WorkTypeDefOf.Handling) || !p.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
+                                        : !p.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)))
                         .OrderByDescending(p => p.skills?.GetSkill(SkillDefOf.Medicine)?.Level ?? 0)
                         .FirstOrDefault();
-                if (feeder == null)
+                result.FeederPawnId = feeder?.thingIDNumber;
+                if (feeder == null || feeder == patient || feeder.Dead || feeder.Downed || feeder.Drafted
+                    || feeder.InMentalState || !feeder.Spawned || feeder.Map != patient.Map
+                    || (!patient.RaceProps.Animal && feeder.WorkTypeIsDisabled(WorkTypeDefOf.Doctor))
+                    || (patient.RaceProps.Animal && feeder.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
+                        && feeder.WorkTypeIsDisabled(WorkTypeDefOf.Handling)))
                 {
-                    return ApiResult.Fail("No available feeder found on the map");
+                    result.Reason = "no_available_feeder";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
+                }
+                if (feeder.CurJobDef == JobDefOf.FeedPatient && feeder.CurJob.targetB.Thing == patient)
+                {
+                    result.Reason = "feeding_in_progress";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
+                }
+                if (feeder.CurJobDef == JobDefOf.TendPatient || feeder.CurJobDef == JobDefOf.Rescue
+                    || feeder.CurJobDef == JobDefOf.FeedPatient)
+                {
+                    result.Reason = "feeder_providing_patient_care";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
 
                 WorkGiverDef giverDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail(
                     patient.RaceProps?.Animal == true ? "DoctorFeedAnimals" : "DoctorFeedHumanlikes"
                 );
                 WorkGiver_Scanner scanner = giverDef?.Worker as WorkGiver_Scanner;
-                Job job = scanner?.JobOnThing(feeder, patient, true);
+                Job job = scanner != null && scanner.HasJobOnThing(feeder, patient, true)
+                    ? scanner.JobOnThing(feeder, patient, true) : null;
                 if (job == null && patient.RaceProps?.Animal == true)
                 {
                     giverDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail("HandlingFeedPatientAnimals");
                     scanner = giverDef?.Worker as WorkGiver_Scanner;
-                    job = scanner?.JobOnThing(feeder, patient, true);
+                    job = scanner != null && scanner.HasJobOnThing(feeder, patient, true)
+                        ? scanner.JobOnThing(feeder, patient, true) : null;
                 }
                 if (job == null)
                 {
-                    return ApiResult.Fail("No valid patient-feeding job could be created");
+                    result.Reason = "no_eligible_food_or_patient_reserved";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
                 if (!feeder.jobs.TryTakeOrderedJob(job))
                 {
-                    return ApiResult.Fail("Feeder could not accept the patient-feeding job");
+                    result.Reason = "feeder_could_not_accept_job";
+                    return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
-                return ApiResult.Ok();
+                result.Applied = true;
+                result.Reason = "feeding_job_assigned";
+                result.FoodDef = job.targetA.Thing?.def.defName;
+                return ApiResult<MedicalFeedResultDto>.Ok(result);
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                return ApiResult<MedicalFeedResultDto>.Fail(ex.Message);
             }
         }
     }

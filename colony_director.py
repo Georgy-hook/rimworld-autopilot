@@ -64,6 +64,7 @@ ACTION_DESCRIPTIONS = {
     "care_for_injured_animal": "Tend a colony animal only when a wound or disease is currently treatable; low health, pain, anesthesia and paralysis alone are not tend jobs.",
     "feed_hungry_animal": "Immediately feed the hungriest resting colony animal before starvation becomes critical.",
     "feed_hungry_colonist": "Immediately feed the hungriest downed colonist who cannot walk to available food.",
+    "refuel_building": "Send an available hauler to refuel one completed cooler, cooking station or generator with existing fuel. A built but empty cooler cannot prevent heatstroke.",
     "eat_available_meal": "Send a mobile hungry colonist to eat an actual unlocked meal now. Other work can wait; delay risks malnutrition even when the colony owns food.",
     "create_nearby_food_cache": "Make a high-priority meal stockpile at the settlement because all available meals are far away; a hauler must then bring food within easy walking distance.",
     "open_sealed_food_store": "Meals are trapped inside a legacy freezer built without a door. Send a builder to deconstruct one exact wall tile; this restores food access without destroying the room.",
@@ -193,6 +194,7 @@ ACTION_LABELS = {
     "care_for_injured_animal": "лечение животного",
     "feed_hungry_animal": "кормление животного",
     "feed_hungry_colonist": "кормление лежачего колониста",
+    "refuel_building": "заправка постройки",
     "eat_available_meal": "отправить колониста поесть",
     "create_nearby_food_cache": "ближний склад еды",
     "open_sealed_food_store": "открыть запертый склад еды",
@@ -2057,7 +2059,44 @@ def needs_cooking_fuel_reserve(snapshot: dict[str, Any]) -> bool:
             and int(counts.get("ElectricStove") or 0) == 0)
 
 
+def needs_thermal_fuel_reserve(snapshot: dict[str, Any]) -> bool:
+    dev = snapshot.get("development") or {}
+    counts = dev.get("building_counts") or {}
+    return (int((dev.get("item_counts") or {}).get("WoodLog") or 0) < 100
+            and ((counts.get("PassiveCooler") and dev.get("heat_threat"))
+                 or (counts.get("Campfire") and dev.get("cold_threat"))))
+
+
+def focus_heatstroke_choices(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
+    """Keep executable cooling and patient care visible before optional work."""
+    patients = ((snapshot.get("development") or {}).get("heat_threat") or {}).get("patients") or []
+    if not any(float(patient.get("severity") or 0) >= (0.35 if patient.get("downed") else 0.5)
+               for patient in patients):
+        return actions
+    related = {"refuel_building", "harvest_nearby_trees", "prioritize_plant_cutting",
+               "prioritize_hauling", "build_passive_cooler", "prioritize_thermal_project",
+               "rescue_downed_colonist", "tend_colonist", "feed_hungry_colonist",
+               "eat_available_meal", "unforbid_supplies", "equip_colonists",
+               "prepare_emergency_medical_bed", "rescue_downed_animal",
+               "care_for_injured_animal", "feed_hungry_animal"}
+    cooler_projects = ((snapshot.get("development") or {}).get("construction_project_options") or [])
+    if any(row.get("def_name") == "PassiveCooler" for row in cooler_projects):
+        related.add("prioritize_construction_project")
+    focused = [action for action in actions if action in related]
+    if not focused:
+        return actions
+    snapshot["development"]["heatstroke_focus"] = True
+    return focused
+
+
 def action_description(name: str, snapshot: dict[str, Any]) -> str:
+    if name == "refuel_building":
+        options = (snapshot.get("development") or {}).get("refuel_options") or {}
+        targets = ", ".join(f"{row.get('def')} {float(row.get('current_fuel') or 0):.0f}/"
+                            f"{float(row.get('fuel_capacity') or 0):.0f} {row.get('fuel_type')}"
+                            for row in list(options.values())[:3])
+        return (f"Refuel an existing facility ({targets}) with a mobile hauler and stocked fuel. "
+                "An empty passive cooler leaves patients exposed to heatstroke; food bills also require a fueled stove.")
     if name == "build_butcher_spot":
         count = int((snapshot.get("development") or {}).get("butchery_gap") or 0)
         return (f"Place a free instant butcher spot beside {count} accessible animal carcass(es) "
@@ -2081,6 +2120,11 @@ def action_description(name: str, snapshot: dict[str, Any]) -> str:
             return ("Raise Construction work priority, but wood is zero. Workers cannot finish wooden "
                     "walls or a campfire until nearby trees are designated, cut and hauled.")
     if name == "harvest_nearby_trees":
+        heat = (snapshot.get("development") or {}).get("heat_threat") or {}
+        if heat:
+            return (f"Cut mature wood-producing plants, including cactus, to supply cooling at {heat.get('outside_c')} C. "
+                    "Haul and refuel the existing passive cooler; raising Plant Cutting alone creates no harvest jobs. "
+                    "A cooler without fuel leaves heatstroke patients exposed.")
         dev = snapshot.get("development") or {}
         wood = int((dev.get("item_counts") or {}).get("WoodLog") or 0)
         projects = dev.get("construction_projects") or []
@@ -2356,7 +2400,9 @@ def live_work_options(snapshot: dict[str, Any]) -> dict[str, str]:
         if work == "Cooking" and not any(int(counts.get(name) or 0) > 0
                                            for name in ("Campfire", "FueledStove", "ElectricStove")):
             continue
-        eligible = [c for c in colonists if not c.get("downed") and not (c.get("work_priorities") or {}).get(work, {}).get("disabled")
+        eligible = [c for c in colonists if not c.get("downed") and not c.get("in_mental_state")
+                    and not bridge.active_immune_diseases(c)
+                    and not (c.get("work_priorities") or {}).get(work, {}).get("disabled")
                     and work in (c.get("work_priorities") or {})]
         if not eligible:
             continue
@@ -2890,7 +2936,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "feed_hungry_animal", "rescue_downed_animal", "build_animal_spots",
         "prioritize_rescue", "equip_colonists", "build_room_campfire",
         "build_room_heater", "connect_room_heater_power",
-        "prioritize_thermal_project", "build_passive_cooler",
+        "prioritize_thermal_project", "build_passive_cooler", "refuel_building",
         "expand_home_area", "hold_survival",
     }
     if (snapshot.get("development") or {}).get("urgent_cooking_projects"):
@@ -2984,6 +3030,7 @@ def focus_misaligned_research_choice(snapshot: dict[str, Any], actions: list[str
     """Spend one safe decision to repair a fresh detour from the saved course."""
     if ("advance_doctrine_research" not in actions
             or not (snapshot.get("development") or {}).get("research_misalignment")
+            or ((snapshot.get("development") or {}).get("heat_threat") or {}).get("patients")
             or (snapshot.get("map") or {}).get("enemies")
             or any(fire.get("in_home") for fire in
                    ((snapshot.get("development") or {}).get("fire_situation") or {}).get("fires") or [])):
@@ -3313,6 +3360,7 @@ def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
                         )) if weather.get("next_twelfth_average_temperatures") else None},
         "heat": {"outside_c": heat.get("outside_c"),
                  "coolest_roofed_c": heat.get("coolest_roofed_c"),
+                 "empty_coolers": heat.get("empty_coolers", 0),
                  "patients": [{"name": patient.get("name"), "severity": patient.get("severity"),
                                "downed": patient.get("downed")}
                               for patient in (heat.get("patients") or [])[:2]]} if heat else {},
@@ -3570,6 +3618,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     dev.pop("cold_start_focus", None)
     dev.pop("shelter_material_focus", None)
     dev.pop("armament_focus", None)
+    dev.pop("heatstroke_focus", None)
     dev.pop("urgent_cooking_projects", None)
     dev.pop("construction_project_options", None)
     zones = dev["zones"]
@@ -3750,7 +3799,12 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         (colonist for colonist in snapshot["colonists"] if colonist_needs_assisted_feeding(colonist)),
         key=lambda colonist: bridge.first_number(colonist.get("hunger"), 1.0),
     )
-    if int(resources.get("food") or 0) > 0 and hungry_colonist_patients:
+    hungry_colonist_patients = [patient for patient in hungry_colonist_patients
+                               if patient.get("patient_feeding_eligible") is not False
+                               and (int(resources.get("meals") or 0) > 0
+                                    or patient.get("patient_raw_food_allowed") is not False)]
+    if (int(resources.get("food") or 0) > 0 and hungry_colonist_patients
+            and can_work("Doctor")):
         patient = hungry_colonist_patients[0]
         patient_id = int(patient["id"])
         if not issued_recently(
@@ -5592,13 +5646,37 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             map_state, f"tree:{plant.get('thing_id')}", tick, retry_ticks=120000))
     )
     dev["pending_tree_wood"] = pending_tree_wood
+    # Building count alone says nothing about whether cooling or cooking works.
+    fuel_buildings = [row for row in dev.get("buildings") or [] if row.get("requires_fuel")]
+    dev["fuel_status"] = [{"id": row.get("id"), "def": row.get("def"),
+                           "fuel": row.get("current_fuel"), "capacity": row.get("fuel_capacity"),
+                           "fuel_type": row.get("fuel_type"), "auto_refuel": row.get("auto_refuel")}
+                          for row in fuel_buildings]
+    if dev.get("heat_threat"):
+        dev["heat_threat"]["empty_coolers"] = sum(
+            row.get("def") == "PassiveCooler" and float(row.get("current_fuel") or 0) <= 0
+            for row in fuel_buildings)
+    refuel_options = {
+        str(row["id"]): row for row in fuel_buildings
+        if row.get("id") is not None and row.get("current_fuel") is not None
+        and float(row["current_fuel"]) < max(1, float(row.get("fuel_capacity") or 0) * 0.25)
+        and int(item_counts.get(str(row.get("fuel_type") or "")) or 0) > 0
+        and not bridge.combat_planner.errand_exposed(snapshot, row.get("position"))
+        and not issued_recently(map_state, f"refuel:{row['id']}", tick, retry_ticks=3000)
+    }
+    if refuel_options and worker_criteria(snapshot, "Hauling"):
+        details["refuel_options"] = refuel_options
+        dev["refuel_options"] = refuel_options
+        one_time.append("refuel_building")
     tree_yield_by_id = {
         int(plant.get("thing_id") or -1): int(plant.get("harvest_yield") or 0)
         for plant in dev.get("plants", []) if plant.get("harvested_thing_def") == "WoodLog"
     }
     tree_groups = {}
     for name, group in all_wild_plant_groups.items():
-        if "Tree" not in name or group["harvested_thing"] != "WoodLog":
+        # Saguaro and other wood-producing plants need not contain Tree in
+        # their def name. Use the game's actual harvest product.
+        if group["harvested_thing"] != "WoodLog":
             continue
         fresh_ids = [plant_id for plant_id in group["ids"] if not issued_recently(
             map_state, f"tree:{plant_id}", tick, retry_ticks=120000
@@ -5610,7 +5688,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if (tree_groups and pending_tree_wood < 120 and can_work("PlantCutting")
             and ((int(item_counts.get("WoodLog") or 0) < 50
                   and (dev.get("construction_projects") or dev.get("cold_threat")))
-                 or needs_cooking_fuel_reserve(snapshot))
+                 or needs_cooking_fuel_reserve(snapshot)
+                 or needs_thermal_fuel_reserve(snapshot))
             and not issued_recently(map_state, "wood_harvest", tick, retry_ticks=6000)):
         details["tree_options"] = tree_groups
         dev["tree_options"] = tree_groups
@@ -5645,7 +5724,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         actionable = focus_cooking_gap_choices(snapshot, actionable)
         actionable = focus_misaligned_research_choice(snapshot, actionable)
     if not home_fires:
-        actionable = focus_downed_animal_choices(snapshot, actionable)
+        actionable = focus_heatstroke_choices(snapshot, actionable)
+        if not dev.get("heatstroke_focus"):
+            actionable = focus_downed_animal_choices(snapshot, actionable)
     if dev.get("blocked_food_emergency") and "open_blocked_food_path" in actionable:
         # A pawn surrounded by completed walls cannot walk to food, escape a
         # raid or be rescued. Eating the nearest meal is not an executable
@@ -6034,6 +6115,8 @@ def enforce_model_state_budget(state: dict[str, Any], max_characters: int = 1200
 
 
 def action_domain(name: str) -> str:
+    if name == "refuel_building":
+        return "work_orders"
     if name in {"prioritize_thermal_project", "build_room_campfire", "build_room_heater", "connect_room_heater_power"}:
         return "care"
     if name.startswith(("income_", "trade_to:", "raid_to:", "prisoner_policy:")): return "economy_diplomacy"
@@ -6236,6 +6319,15 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
                 "evening": "18:00-19:59: finish work first, but mood may worsen earlier",
             },
         }
+    elif action == "refuel_building" and dev.get("refuel_options"):
+        q["refuel_target"] = {"type": "choice", "instructions":
+            "Choose which completed facility needs fuel first; compare patient heatstroke, meal supply and electricity.",
+            "criteria": {key: f"{row.get('def')} at {row.get('position')}: "
+                         f"fuel {row.get('current_fuel')}/{row.get('fuel_capacity')} {row.get('fuel_type')}"
+                         for key, row in dev["refuel_options"].items()}}
+        q["worker_pawn"] = {"type": "choice", "instructions":
+            "Choose one mobile hauler; preserve doctors actively tending, feeding or rescuing patients.",
+            "criteria": worker_criteria(snapshot, "Hauling")}
     elif action == "build_passive_cooler" and dev.get("cool_room_options"):
         q["cool_room"] = {
             "type": "choice",
@@ -6532,6 +6624,8 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
         domain_purposes["care"] = "urgent: stored meals are trapped behind a wall; open the freezer before colonists starve"
     elif "eat_available_meal" in candidates or "feed_hungry_colonist" in candidates:
         domain_purposes["care"] = "urgent: people are hungry; choose who eats or is fed before malnutrition worsens"
+    if (snapshot.get("development") or {}).get("heatstroke_focus"):
+        domain_purposes["work_orders"] = "urgent: supply and refuel cooling for a heatstroke patient before optional work"
     if "build_research_bench" in candidates:
         domain_purposes["construction"] += "; first affordable research bench is available and research is blocked until it is built"
     if len(candidates) > 6:
@@ -8339,7 +8433,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             }
         issued[f"animal_feed:{animal_id}"] = tick
         return {
-            "applied": True,
+            "applied": bool(response.get("applied", True)),
+            "reason": response.get("reason"),
             "animal": details.get("hungry_animal_name", animal_id),
             "feeder": feeder.get("name") if feeder else "automatic",
             "response": response,
@@ -8363,11 +8458,23 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             }
         issued[f"colonist_feed:{patient_id}"] = tick
         return {
-            "applied": True,
+            "applied": bool(response.get("applied", True)),
+            "reason": response.get("reason"),
             "colonist": details.get("hungry_colonist_name", patient_id),
             "feeder": feeder.get("name") if feeder else "automatic",
             "response": response,
         }
+    if choice == "refuel_building":
+        options = details.get("refuel_options") or {}
+        target_id = str(details.get("refuel_target") or (next(iter(options)) if len(options) == 1 else ""))
+        worker_id = str(details.get("worker_pawn") or "")
+        if target_id not in options or worker_id not in worker_criteria(snapshot, "Hauling"):
+            return {"applied": False, "reason": "No verified facility and available hauler selected"}
+        response = client.post("/api/v1/builder/refuel", body={
+            "map_id": map_id, "building_id": int(target_id), "worker_pawn_id": int(worker_id)})
+        issued[f"refuel:{target_id}"] = tick
+        return {"applied": bool(response.get("applied")), "reason": response.get("reason"),
+                "building": options[target_id].get("def"), "worker": int(worker_id), "response": response}
     if choice == "eat_available_meal":
         options = details.get("hungry_eater_options") or {}
         selected_id = str(details.get("hungry_eater") or next(iter(options), ""))

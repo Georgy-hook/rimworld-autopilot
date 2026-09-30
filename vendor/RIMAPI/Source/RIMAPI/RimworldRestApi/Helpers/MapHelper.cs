@@ -599,6 +599,8 @@ namespace RIMAPI.Helpers
 
             foreach (Building building in map.listerBuildings.allBuildingsColonist)
             {
+                var power = building.TryGetComp<CompPowerTrader>();
+                var fuel = building.TryGetComp<CompRefuelable>();
                 buildings.Add(
                     new BuildingDto
                     {
@@ -621,6 +623,14 @@ namespace RIMAPI.Helpers
                         Type = building.GetType().Name,
                         Medical = (building as Building_Bed)?.Medical ?? false,
                         ForPrisoners = (building as Building_Bed)?.ForPrisoners ?? false,
+                        RequiresPower = power != null && power.Props.PowerConsumption > 0,
+                        PowerOn = power?.PowerOn ?? false,
+                        PowerNetId = power?.PowerNet?.GetHashCode(),
+                        RequiresFuel = fuel != null,
+                        CurrentFuel = fuel?.Fuel,
+                        FuelCapacity = fuel?.Props.fuelCapacity,
+                        FuelType = fuel?.Props.fuelFilter?.AllowedThingDefs.FirstOrDefault()?.defName,
+                        AutoRefuel = fuel?.allowAutoRefuel ?? false,
                     }
                 );
             }

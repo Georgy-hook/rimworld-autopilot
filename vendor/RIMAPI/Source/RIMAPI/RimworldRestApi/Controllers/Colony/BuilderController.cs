@@ -85,6 +85,14 @@ namespace RIMAPI.Controllers
             await context.SendJsonResponse(result);
         }
 
+        [Post("/api/v1/builder/refuel")]
+        [EndpointMetadata("Order one capable hauler to refuel a completed building using normal game fuel and reservation rules")]
+        public async Task RefuelBuilding(HttpListenerContext context)
+        {
+            var body = await context.Request.ReadBodyAsync<BuildingRefuelRequestDto>();
+            await context.SendJsonResponse(BuildingMaintenanceHelper.Refuel(body));
+        }
+
         [Post("/api/v1/builder/projects/cancel")]
         [EndpointMetadata("Cancel one exact player construction blueprint or frame after checking its ID and expected building definition")]
         public async Task CancelConstructionProject(HttpListenerContext context)

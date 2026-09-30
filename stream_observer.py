@@ -97,6 +97,10 @@ def _critical_disease(rows: Any) -> bool:
         if medical.get("is_dead"):
             continue
         for h in medical.get("hediffs") or []:
+            if (str(h.get("def_name") or "") in {"Heatstroke", "Hypothermia"}
+                    and (h.get("is_currently_life_threatening")
+                         or float(h.get("severity") or 0) >= 0.5)):
+                return True
             immunity = h.get("immunity")
             if not h.get("can_ever_kill") or not isinstance(immunity, (float, int)) or immunity >= 1:
                 continue
@@ -106,6 +110,21 @@ def _critical_disease(rows: Any) -> bool:
                     severity >= 0.5 * lethal and immunity <= severity):
                 return True
     return False
+
+
+def _pause_if_colony_ended(api: Any, game: dict[str, Any], map_id: int) -> bool:
+    # Zero pawns on a map also occurs during caravans and initial loading.
+    # Require the actual terminal letter before stopping playback.
+    if game.get("colonist_count") != 0:
+        return False
+    context = api.request("/api/v1/events/context?" + urlencode({"map_id": map_id})) or {}
+    ended = any(str(row.get("letter_def") or "") == "GameEnded"
+                or "everyone is dead or gone" in str(row.get("text") or "").casefold()
+                for row in context.get("letters") or [])
+    if not ended:
+        return False
+    api.request("/api/v1/game/speed?speed=0", post=True)
+    return True
 
 
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
@@ -535,6 +554,7 @@ def main() -> None:
     DeathEventReader(args.api_url, outbox, stop).start()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
     args.pid_file.write_text(str(os.getpid()), encoding="ascii")
+    stopped_detail = "Observer stopped"
     try:
         while not stop.is_set():
             now = time.monotonic()
@@ -547,6 +567,11 @@ def main() -> None:
                                               "detail": "Waiting for a loaded colony", "death_overlay_until": 0})
                     stop.wait(2)
                     continue
+                if _pause_if_colony_ended(api, game, int(current_map["id"])):
+                    stopped_detail = "Colony ended; game paused and observer stopped"
+                    _log(args.log, {"action": {"kind": "colony_ended", "tick": game.get("game_tick")},
+                                    "detail": stopped_detail})
+                    break
                 combat = api.request("/api/v1/combat/state?" + urlencode({"map_id": current_map["id"]})) or {}
                 fires = api.request("/api/v1/map/fire/situation?" + urlencode({"map_id": current_map["id"]})) or {}
                 home_fire = any(fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
@@ -606,7 +631,7 @@ def main() -> None:
             stop.wait(max(0.25, args.interval))
     finally:
         _write_json(args.status, {"pid": os.getpid(), "state": "stopped", "updated_at": datetime.now(timezone.utc).isoformat(),
-                                  "detail": "Observer stopped", "death_overlay_until": 0})
+                                  "detail": stopped_detail, "death_overlay_until": 0})
         args.pid_file.unlink(missing_ok=True)
 
 

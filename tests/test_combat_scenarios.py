@@ -773,7 +773,8 @@ class CombatScenarioTests(unittest.TestCase):
     def test_distant_preparing_raid_cannot_provoke_with_short_range_or_unarmed_pawns(self):
         snapshot = raid(
             [fighter(1, distance=80, range_cells=15), fighter(2, ranged=False, weapon=None, distance=80)],
-            [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Combat", "position": {"x": 100, "z": 100}}],
+            [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Wander",
+              "lord_toil_name": "LordToil_Stage", "position": {"x": 100, "z": 100}}],
         )
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertNotIn("prepare_undrafted", options)

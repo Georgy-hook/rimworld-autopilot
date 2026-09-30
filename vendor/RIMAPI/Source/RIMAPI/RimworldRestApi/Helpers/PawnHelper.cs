@@ -181,6 +181,11 @@ namespace RIMAPI.Helpers
                             pawn.playerSettings?.medCare ?? MedicalCareCategory.NoCare
                         ),
                         IsSelfTendAllowed = pawn.playerSettings?.selfTend ?? false,
+                        PatientFeedingEligible = !pawn.Dead && FeedPatientUtility.ShouldBeFed(pawn)
+                                                 && FeedPatientUtility.IsHungry(pawn),
+                        PatientRawFoodAllowed = (int)(pawn.needs?.food?.CurCategory ?? HungerCategory.Fed)
+                                                >= (int)HungerCategory.UrgentlyHungry
+                                                || pawn.genes?.DontMindRawFood == true,
                     },
                     SocialInfo = CreatePawnSocialInfoDto(pawn),
                 };

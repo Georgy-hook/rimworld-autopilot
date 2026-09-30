@@ -34,6 +34,26 @@ namespace RIMAPI.Models
         public string Type { get; set; }
         public bool Medical { get; set; }
         public bool ForPrisoners { get; set; }
+        public bool RequiresFuel { get; set; }
+        public float? CurrentFuel { get; set; }
+        public float? FuelCapacity { get; set; }
+        public string FuelType { get; set; }
+        public bool AutoRefuel { get; set; }
+    }
+
+    public class BuildingRefuelRequestDto
+    {
+        public int MapId { get; set; }
+        public int BuildingId { get; set; }
+        public int WorkerPawnId { get; set; }
+    }
+
+    public class BuildingRefuelResultDto
+    {
+        public bool Applied { get; set; }
+        public string Reason { get; set; }
+        public int BuildingId { get; set; }
+        public int WorkerPawnId { get; set; }
     }
 
     public class PowerGeneratorInfoDto : BuildingDto
@@ -69,10 +89,10 @@ namespace RIMAPI.Models
         public bool IsPowered { get; set; }
 
         // Fuel
-        public bool RequiresFuel { get; set; }
-        public float CurrentFuel { get; set; }
-        public float FuelCapacity { get; set; }
-        public string FuelType { get; set; }
+        public new bool RequiresFuel { get; set; }
+        public new float CurrentFuel { get; set; }
+        public new float FuelCapacity { get; set; }
+        public new string FuelType { get; set; }
 
         // Targeting
         public bool CanTargetAcquired { get; set; }

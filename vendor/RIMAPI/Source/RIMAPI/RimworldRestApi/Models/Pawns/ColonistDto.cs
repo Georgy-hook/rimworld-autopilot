@@ -72,6 +72,8 @@ namespace RIMAPI.Models
         public List<HediffDto> Hediffs { get; set; }
         public int MedicalPolicyId { get; set; }
         public bool IsSelfTendAllowed { get; set; }
+        public bool PatientFeedingEligible { get; set; }
+        public bool PatientRawFoodAllowed { get; set; }
     }
 
     public class HediffDto
@@ -268,6 +270,15 @@ namespace RIMAPI.Models
     {
         public int PatientPawnId { get; set; }
         public int? BedBuildingId { get; set; }
+    }
+
+    public class MedicalFeedResultDto
+    {
+        public bool Applied { get; set; }
+        public string Reason { get; set; }
+        public int PatientPawnId { get; set; }
+        public int? FeederPawnId { get; set; }
+        public string FoodDef { get; set; }
     }
 
     public class MedicalFeedRequestDto

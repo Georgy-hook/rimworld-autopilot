@@ -8,7 +8,7 @@ namespace RIMAPI.Services
         ApiResult AssignJob(PawnJobRequestDto request);
         ApiResult AssignTendJob(MedicalTendRequestDto request);
         ApiResult AssignBedRest(MedicalBedRestRequestDto request);
-        ApiResult AssignFeedJob(MedicalFeedRequestDto request);
+        ApiResult<MedicalFeedResultDto> AssignFeedJob(MedicalFeedRequestDto request);
         ApiResult AddPrisonerOrganPlan(PrisonerOrganPlanRequestDto request);
     }
 }

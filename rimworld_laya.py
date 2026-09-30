@@ -204,6 +204,8 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "work_priorities": priorities,
                 "traits": traits,
                 "health_conditions": hediffs,
+                "patient_feeding_eligible": medical.get("patient_feeding_eligible"),
+                "patient_raw_food_allowed": medical.get("patient_raw_food_allowed"),
                 "capacities": {
                     "consciousness": round(first_number(medical.get("consciousness"), 1.0), 3),
                     "moving": round(first_number(medical.get("moving"), 1.0), 3),
@@ -816,7 +818,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 snapshot, weapon.get("position"), pawn.get("position"))
         ]
         actively_fighting = any(pawn.get("is_drafted") and str(pawn.get("current_job") or "").lower() in {
-            "attackstatic", "attackmelee", "goto",
+            "attackstatic", "attackmelee", "goto", "wait_combat", "castverb",
         } for pawn in living_colonists)
         staging_distance = 70 if actively_fighting else 35
         staging = bool(fighters) and bool(living_colonists) and all(
@@ -852,7 +854,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             ) for pawn in hostile_rows
         )
         if staging:
-            if drafted:
+            if drafted and not actively_fighting:
                 criteria["prepare_undrafted"] = "Raiders are preparing: undraft so fighters can eat, rest and work; a sudden assault may catch them unready."
             criteria["hold_and_observe"] = (
                 "Observe staging raiders while keeping the current defense; drafted colonists will not rest or eat."

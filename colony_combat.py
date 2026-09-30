@@ -276,9 +276,14 @@ def _defense_types(snapshot: dict[str, Any]) -> set[str]:
 
 def hostile_is_preparing(row: dict[str, Any]) -> bool:
     job = str(row.get("current_job") or "").lower()
+    lord_toil = str(row.get("lord_toil_name") or "").lower()
+    # A raider pauses in Wait_Combat while aiming during an active assault.
+    # Treating that pause as staging repeatedly undrafts the defenders.
+    if job == "wait_combat" or any(token in lord_toil for token in (
+            "assault", "breach", "sap", "kidnap", "steal")):
+        return False
     if job == "goto" or any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
         return False
-    lord_toil = str(row.get("lord_toil_name") or "").lower()
     hive_guard = "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
     return hive_guard or any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
         token in lord_toil for token in ("stage", "siege")
