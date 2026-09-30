@@ -107,6 +107,10 @@ namespace RIMAPI.Models
         public bool IsLethal { get; set; }
         public bool IsCurrentlyLifeThreatening { get; set; }
         public bool CanEverKill { get; set; }
+        public float? Immunity { get; set; }
+        public float? LethalSeverity { get; set; }
+        public float? TendQuality { get; set; }
+        public int? TendTicksLeft { get; set; }
 
         // Source information
         public string SourceDefName { get; set; }

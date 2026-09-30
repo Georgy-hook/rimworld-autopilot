@@ -165,6 +165,12 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "life_threatening": bool(item.get("is_currently_life_threatening")),
                 "bleeding": bool(item.get("bleeding")),
                 "tendable_now": bool(item.get("tendable_now")),
+                "can_ever_kill": bool(item.get("can_ever_kill")),
+                "immunity": (round(first_number(item["immunity"]), 4)
+                             if item.get("immunity") is not None else None),
+                "lethal_severity": item.get("lethal_severity"),
+                "tend_quality": item.get("tend_quality"),
+                "tend_ticks_left": item.get("tend_ticks_left"),
             }
             for item in (medical.get("hediffs") or [])
             if isinstance(item, dict) and item.get("visible", True)
@@ -288,6 +294,14 @@ def annotate_combat_capability(colonists: list[dict[str, Any]], combat: Any) -> 
         pawn["can_fight"] = not combat_skills or any(not row.get("disabled") for row in combat_skills)
 
 
+def active_immune_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep lethal disease recovery separate from summary wound health."""
+    return [h for h in pawn.get("health_conditions") or [] if isinstance(h, dict)
+            and ((h.get("can_ever_kill") and h.get("immunity") is not None)
+                 or "infection" in str(h.get("def_name") or "").lower())
+            and (h.get("immunity") is None or first_number(h.get("immunity")) < 1)]
+
+
 def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) -> None:
     """Use the live combat rate instead of the detailed API's wound placeholder."""
     if not isinstance(combat, dict):
@@ -396,7 +410,11 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
                      "stage": str(condition.get("stage") or ""),
                      "tendable_now": bool(condition.get("tendable_now")),
                      "is_permanent": bool(condition.get("is_permanent")),
-                     "is_currently_life_threatening": bool(condition.get("is_currently_life_threatening"))}
+                     "is_currently_life_threatening": bool(condition.get("is_currently_life_threatening")),
+                     "can_ever_kill": bool(condition.get("can_ever_kill")),
+                     "immunity": condition.get("immunity"),
+                     "tend_quality": condition.get("tend_quality"),
+                     "tend_ticks_left": condition.get("tend_ticks_left")}
                     for condition in row.get("health_conditions") or []
                     if isinstance(condition, dict)
                 ],
@@ -980,6 +998,8 @@ def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] 
     for colonist in colonists:
         priorities = colonist.get("work_priorities") or {}
         priority = priorities.get(work)
+        if active_immune_diseases(colonist) and work not in {"Patient", "PatientBedRest"}:
+            continue
         if first_number(colonist.get("health")) < 0.75 or first_number(colonist.get("bleeding_rate")) > 0.0 or colonist.get("downed"):
             continue
         # A missing row is not evidence that this pawn can perform the work.

@@ -190,6 +190,20 @@ class StreamObserverTests(unittest.TestCase):
         self.assertEqual(planner.pacing_actions(game, 2),
                          [{"kind": "ensure_speed", "speed": 3}])
 
+    def test_dangerous_disease_slows_even_without_bleeding_or_low_summary_health(self):
+        for name in ("WoundInfection", "Malaria", "Flu", "Plague"):
+            rows = [{"health": 1, "detailes": {"medical_info": {"hediffs": [{
+                "def_name": name, "severity": 0.82, "lethal_severity": 1,
+                "immunity": 0.62, "can_ever_kill": True}]}}}]
+            self.assertTrue(observer._critical_disease(rows))
+            planner = observer.ObserverPlanner()
+            game = state()["game"]
+            self.assertEqual(planner.pacing_actions(game, 0, critical_disease=True),
+                             [{"kind": "ensure_speed", "speed": 1}])
+            rows[0]["detailes"]["medical_info"]["hediffs"][0]["immunity"] = 1
+            self.assertFalse(observer._critical_disease(rows))
+            self.assertEqual(planner.pacing_actions(game, 1), [{"kind": "ensure_speed", "speed": 3}])
+
     def test_downed_colonist_with_active_enemy_slows_then_returns_to_three(self):
         planner = observer.ObserverPlanner()
         game = state()["game"]

@@ -4777,9 +4777,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         if best_artist >= 3 and (int(item_counts.get("WoodLog") or 0) >= 200 or any(name.startswith("Blocks") and int(value or 0) >= 100 for name, value in item_counts.items())):
             one_time.append("commission_sculptures")
 
+    shelf_site = map_state.get("weapon_shelf_site") or position(int(anchor["x"]) - 8, int(anchor["z"]) + 9)
     shelf_area = {
-        "min_x": int(anchor["x"]) - 8, "max_x": int(anchor["x"]) - 7,
-        "min_z": int(anchor["z"]) + 9, "max_z": int(anchor["z"]) + 13,
+        "min_x": int(shelf_site["x"]), "max_x": int(shelf_site["x"]) + 1,
+        "min_z": int(shelf_site["z"]), "max_z": int(shelf_site["z"]) + 4,
     }
     weapon_shelves = [
         b for b in dev.get("buildings", []) if str(b.get("def")) in {"Shelf", "ShelfSmall"}
@@ -4787,7 +4788,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         and shelf_area["min_z"] <= int((b.get("position") or {}).get("z") or -999) <= shelf_area["max_z"]
     ]
     if int(snapshot["map"]["resources"].get("weapons") or 0) > 0 and "ComplexFurniture" in finished:
-        if len(weapon_shelves) < 3 and not issued_recently(map_state, "weapon_shelves", tick, retry_ticks=90000):
+        pending_shelves = any(p.get("def_name") in {"Shelf", "ShelfSmall"}
+                              for p in dev.get("construction_projects") or [])
+        if len(weapon_shelves) < 3 and not pending_shelves and not issued_recently(map_state, "weapon_shelves", tick, retry_ticks=90000):
             one_time.append("build_weapon_shelves")
         elif weapon_shelves and not map_state.get("weapon_shelves_configured"):
             details["weapon_shelf_ids"] = [int(b["id"]) for b in weapon_shelves]
@@ -5811,6 +5814,7 @@ def build_decision_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             "pain": c.get("pain", 0), "bleeding_rate": c.get("bleeding_rate", 0),
             "needs_assisted_feeding": colonist_needs_assisted_feeding(c),
             "tendable_wounds": sum(bool(h.get("tendable_now")) for h in c.get("health_conditions", [])),
+            "disease_recovery": disease_care_summary(c),
             "conditions": [
                 f"{h.get('label') or h.get('def_name')}:{h.get('part')}"
                 for h in c.get("health_conditions", [])[:6]
@@ -5914,6 +5918,7 @@ def build_decision_state(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "hunger": animal.get("hunger"), "rest": animal.get("rest"),
                 "bleeding": animal.get("bleeding_rate"),
                 "tendable": animal.get("tendable_now"), "pain": animal.get("pain"),
+                "disease_recovery": disease_care_summary(animal),
                 "consciousness": animal.get("consciousness"), "moving": animal.get("moving"),
                 "conditions": [f"{row.get('def_name')}:{row.get('stage') or row.get('severity')}"
                                for row in (animal.get("health_conditions") or [])[:6]],
@@ -6062,7 +6067,7 @@ def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]
                      if isinstance(row, dict) and str(row.get("def_name") or row.get("name")) == skill_name), {})
     relevant_skills = list(work_def.get("relevant_skills") or []) or [skill_name]
     for pawn in snapshot.get("colonists", []):
-        if pawn.get("downed") or pawn.get("in_mental_state"):
+        if pawn.get("downed") or pawn.get("in_mental_state") or bridge.active_immune_diseases(pawn):
             continue
         work_name = "Hauling" if skill_name == "Hauling" else skill_name
         priority = (pawn.get("work_priorities") or {}).get(work_name)
@@ -7174,6 +7179,7 @@ def research_staffing_plan(snapshot: dict[str, Any]) -> tuple[dict[str, Any], li
     food = int(((snapshot.get("map") or {}).get("resources") or {}).get("food") or 0)
     meals = int(((snapshot.get("map") or {}).get("resources") or {}).get("meals") or 0)
     workers = [pawn for pawn in pawns if not pawn.get("downed") and not pawn.get("in_mental_state")
+               and not bridge.active_immune_diseases(pawn)
                and not ((pawn.get("work_priorities") or {}).get("Research") or {}).get("disabled")
                and "Research" in (pawn.get("work_priorities") or {})]
     if not workers:
@@ -7230,6 +7236,8 @@ def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str,
     target = target or bridge.choose_worker(snapshot["colonists"], work)
     if target is None:
         return {"applied": False, "reason": f"No eligible colonist for {work}"}
+    if bridge.active_immune_diseases(target) and work not in {"Patient", "PatientBedRest"}:
+        return {"applied": False, "reason": f"{target.get('name')} needs disease recovery"}
     response = client.post(
         "/api/v1/colonist/work-priority",
         body={"id": target["id"], "work": work, "priority": 1},
@@ -7689,6 +7697,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             return {"applied": False, "reason": "No clear dry site for weapon shelves"}
         result = post_blueprint(client, map_id, site, layout)
         issued["weapon_shelves"] = tick
+        map_state["weapon_shelf_site"] = site
         return {"applied": True, "phase": "build", "site": site, "response": result}
     if choice == "equip_colonists":
         fighters = [pawn for pawn in snapshot.get("combat", {}).get("colonists", [])
@@ -10514,6 +10523,33 @@ def preemptive_advance_state(snapshot: dict[str, Any], record: dict[str, Any] | 
     return "advance", body
 
 
+def disease_care_summary(pawn: dict[str, Any]) -> str:
+    notes = []
+    for h in bridge.active_immune_diseases(pawn):
+        immunity = f"{bridge.first_number(h.get('immunity')):.0%}" if h.get("immunity") is not None else "unknown"
+        quality = f"{bridge.first_number(h.get('tend_quality')):.0%}" if h.get("tend_quality") is not None else "unknown"
+        notes.append(f"{h.get('def_name') or h.get('label')} severity {bridge.first_number(h.get('severity')):.2f}, "
+                     f"immunity {immunity}, tend {quality}, next {h.get('tend_ticks_left')} ticks")
+    return "; ".join(notes)
+
+
+def severe_disease_patient(snapshot: dict[str, Any], patient_id: int) -> bool:
+    pawn = next((p for p in snapshot.get("colonists") or [] if p.get("id") == patient_id), {})
+    return any(h.get("life_threatening") or (
+        bridge.first_number(h.get("severity")) >= 0.5 * bridge.first_number(h.get("lethal_severity"), 1)
+        and (h.get("immunity") is None or bridge.first_number(h.get("immunity")) <= bridge.first_number(h.get("severity"))))
+        for h in bridge.active_immune_diseases(pawn))
+
+
+def collect_care_environment(client: bridge.RimApiClient, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    dev = snapshot.setdefault("development", {})
+    for key, endpoint in (("buildings", "/api/v1/map/buildings"), ("rooms", "/api/v1/map/rooms")):
+        if key not in dev:
+            rows = client.get(endpoint, map_id=int(snapshot.get("map", {}).get("id") or 0)) or []
+            dev[key] = rows if isinstance(rows, list) else []
+    return dev["buildings"]
+
+
 def post_combat_care_options(snapshot: dict[str, Any],
                              buildings: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Offer treatment and rescue as distinct choices after a fight."""
@@ -10641,11 +10677,12 @@ def post_combat_care_options(snapshot: dict[str, Any],
                         if patient_pos and doctor_pos else "")
             options[key] = {"patient_id": patient_id, "doctor_id": int(doctor["id"]), "kind": "tend",
                             "self_tend": False,
-                            "summary": (f"Doctor {doctor.get('name')} medicine {doctor.get('medicine_skill', 0)}{distance}; "
+                            "summary": (disease_care_summary(capabilities.get(patient_id) or {}) + " "
+                                        + f"Doctor {doctor.get('name')} medicine {doctor.get('medicine_skill', 0)}{distance}; "
                                         f"tend {patient.get('name')};{infection_note} bleed {bleeding:.2f}, "
                                         f"health {bridge.first_number(patient.get('health')):.2f}. "
                                         "Low skill risks weak treatment or infection; waiting risks blood loss. "
-                                        + infection_risk)}
+                                         + infection_risk)}
         # A wounded colonist may still self-tend at less than half normal
         # movement. The helper threshold above must not exclude the last
         # doctor before blood loss finally downs them.
@@ -10659,9 +10696,10 @@ def post_combat_care_options(snapshot: dict[str, Any],
             key = f"self_tend_{patient_id}"
             options[key] = {"patient_id": patient_id, "doctor_id": patient_id, "kind": "tend",
                             "self_tend": True,
-                            "summary": (f"Self-tend {patient.get('name')} medicine {patient.get('medicine_skill', 0)};"
+                            "summary": (disease_care_summary(capabilities.get(patient_id) or {}) + " "
+                                        + f"Self-tend {patient.get('name')} medicine {patient.get('medicine_skill', 0)};"
                                         f"{infection_note} bleed {bleeding:.2f}, health {bridge.first_number(patient.get('health')):.2f}. "
-                                        "Risk poor care versus waiting for another doctor. " + infection_risk)}
+                                         "Risk poor care versus waiting for another doctor. " + infection_risk)}
     # Give the most seriously bleeding downed patient the next doctor before
     # stable injuries or a long rescue consume that decision window.
     urgent = next((pawn for pawn in patients if pawn.get("is_downed")
@@ -10671,6 +10709,43 @@ def post_combat_care_options(snapshot: dict[str, Any],
                         if row.get("kind") == "tend" and row.get("patient_id") == int(urgent["id"])}
         if urgent_tends:
             return urgent_tends
+    critical_illness_ids = {int(p["id"]) for p in patients if severe_disease_patient(snapshot, int(p["id"]))}
+    critical_illness_tends = {name: row for name, row in options.items()
+                             if row.get("kind") == "tend" and row.get("patient_id") in critical_illness_ids}
+    if critical_illness_tends:
+        return critical_illness_tends
+    sheltered_ids = {int(bed_id) for room in (snapshot.get("development") or {}).get("rooms") or []
+                     if not room.get("touches_map_edge") and not room.get("is_prison_cell")
+                     and not room_is_ancient_danger(room) and int(room.get("open_roof_count") or 0) == 0
+                     for bed_id in room.get("contained_beds_ids") or []}
+    for patient in colonists:
+        patient_id = int(patient["id"])
+        details = capabilities.get(patient_id) or {}
+        if (patient.get("is_dead") or patient.get("is_downed") or patient.get("is_in_mental_state")
+                or patient_id in active_patients or not bridge.active_immune_diseases(details)
+                or str(patient.get("current_job") or "").lower() == "tendpatient"):
+            continue
+        safe_beds = [bed for bed in beds if int(bed["id"]) in sheltered_ids and not any(
+            other.get("id") != patient_id and not other.get("is_dead")
+            and patient_in_completed_bed(capabilities.get(int(other["id"])) or other, snapshot, [bed])
+            for other in colonists if other.get("id") is not None)
+            and not bridge.combat_planner.errand_exposed(snapshot, bed.get("position"), patient.get("position"))]
+        if not safe_beds:
+            continue
+        priorities = details.get("work_priorities") or {}
+        recovery_priorities = all(int((priorities.get(work) or {}).get("priority") or 0) == 1
+                                  for work in ("Patient", "PatientBedRest"))
+        if (str(patient.get("current_job") or "").lower() == "laydown"
+                and patient_in_completed_bed(details or patient, snapshot, safe_beds) and recovery_priorities):
+            continue
+        bed = min(safe_beds, key=lambda b: (not bool(b.get("medical")),
+                                           squared_distance(patient.get("position") or {}, b.get("position") or {})))
+        options[f"rest_{patient_id}_{int(bed['id'])}"] = {
+            "kind": "rest", "patient_id": patient_id, "doctor_id": patient_id,
+            "bed_id": int(bed["id"]), "self_tend": False,
+            "summary": f"Rest {patient.get('name')} in roofed bed: {disease_care_summary(details)}. "
+                       "Raise Patient and Bed Rest to 1; remain until healed. Rest supports immunity; it does not replace repeat tending and feeding.",
+        }
     return options
 
 
@@ -10704,7 +10779,8 @@ def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
               and row.get("current_job_target_id") is not None}
     return any(row.get("id") is not None and int(row["id"]) not in tended
                and row.get("tendable_now") and not row.get("is_dead")
-               and bridge.first_number(row.get("bleeding_rate")) >= 1.5
+               and (bridge.first_number(row.get("bleeding_rate")) >= 1.5
+                    or severe_disease_patient(snapshot, int(row["id"])))
                for row in colonists)
 
 
@@ -10712,7 +10788,8 @@ def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
     bleeding = {int(p["id"]): bridge.first_number(p.get("bleeding_rate"))
                 for p in (snapshot.get("combat") or {}).get("colonists") or [] if p.get("id") is not None}
     return urgent_care_unassigned(snapshot) and any(
-        row.get("kind") == "tend" and bleeding.get(int(row.get("patient_id") or 0), 0) >= 1.5
+        row.get("kind") == "tend" and (bleeding.get(int(row.get("patient_id") or 0), 0) >= 1.5
+            or severe_disease_patient(snapshot, int(row.get("patient_id") or 0)))
         for row in post_combat_care_options(snapshot).values())
 
 
@@ -10722,9 +10799,17 @@ def downed_colonist_care_gate(client: bridge.RimApiClient,
     if bridge.combat_planner.live_hostiles(snapshot):
         return None
     downed_ids = {int(row["id"]) for row in snapshot.get("combat", {}).get("colonists", [])
-                  if row.get("id") is not None and row.get("is_downed") and not row.get("is_dead")}
+                   if row.get("id") is not None and row.get("is_downed") and not row.get("is_dead")}
     if not downed_ids:
-        return "wait" if treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot) else None
+        if urgent_care_actionable(snapshot):
+            return "assign"
+        if treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot):
+            return "wait"
+        if any(bridge.active_immune_diseases(p) for p in snapshot.get("colonists") or []):
+            buildings = collect_care_environment(client, snapshot)
+            if post_combat_care_options(snapshot, buildings):
+                return "assign"
+        return None
     tending_ids = {int(row["current_job_target_id"])
                     for row in snapshot.get("combat", {}).get("colonists", [])
                     if str(row.get("current_job") or "").casefold() == "tendpatient"
@@ -10784,6 +10869,8 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
             return f"Self-tend {patient}" if english else f"Самолечение: {patient}"
         if row.get("kind") == "rescue":
             return f"Rescue {patient} — {doctor}" if english else f"Спасти {patient} — {doctor}"
+        if row.get("kind") == "rest":
+            return f"Bed rest: {patient}" if english else f"Постельный режим: {patient}"
         return f"Treat {patient} — {doctor}" if english else f"Лечить {patient} — {doctor}"
 
     answer = ((raw.get("answers") or {}).get("post_combat_care") or {})
@@ -10813,11 +10900,10 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     if hostiles and not live_threat:
         return None
     buildings = []
-    if any(pawn.get("is_downed") for pawn in snapshot.get("combat", {}).get("colonists", [])) and hasattr(client, "get"):
+    if (any(pawn.get("is_downed") for pawn in snapshot.get("combat", {}).get("colonists", []))
+            or any(bridge.active_immune_diseases(pawn) for pawn in snapshot.get("colonists") or [])) and hasattr(client, "get"):
         try:
-            buildings = client.get("/api/v1/map/buildings", map_id=int(snapshot.get("map", {}).get("id") or 0)) or []
-            if not isinstance(buildings, list):
-                buildings = []
+            buildings = collect_care_environment(client, snapshot)
         except bridge.RimApiError:
             pass
     options = post_combat_care_options(snapshot, buildings)
@@ -10826,7 +10912,9 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                       if pawn.get("id") is not None and pawn.get("is_downed") and not pawn.get("is_dead")}
         urgent_ids = {int(pawn["id"]) for pawn in snapshot.get("combat", {}).get("colonists", [])
                       if pawn.get("id") is not None and not pawn.get("is_dead")
-                      and bridge.first_number(pawn.get("bleeding_rate")) >= 1.5}
+                       and bridge.first_number(pawn.get("bleeding_rate")) >= 1.5}
+        urgent_ids.update(int(pawn["id"]) for pawn in snapshot.get("colonists") or []
+                          if pawn.get("id") is not None and bridge.active_immune_diseases(pawn))
         options = {name: row for name, row in options.items()
                    if int(row.get("patient_id") or 0) in downed_ids | urgent_ids}
     if live_threat:
@@ -10916,7 +11004,9 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
              "conditions": [str((condition.get("label") or condition.get("def_name") or condition)
                                 if isinstance(condition, dict) else condition)
                             for condition in (row.get("health_conditions") or [])[:3]],
-             "current_job": row.get("current_job"),
+              "disease": disease_care_summary(next((p for p in snapshot.get("colonists") or []
+                                                   if p.get("id") == row.get("id")), {})),
+              "current_job": row.get("current_job"),
              "job_target": row.get("current_job_target_id")}
             for row in snapshot.get("combat", {}).get("colonists", [])
         ],
@@ -10961,6 +11051,14 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                     "target_thing_id": selected["patient_id"], "target_thing_id_b": selected["bed_id"],
                 })
                 result = {"applied": True, "response": response}
+            elif selected.get("kind") == "rest":
+                responses = [client.post("/api/v1/colonist/work-priority", body={
+                    "id": selected["patient_id"], "work": work, "priority": 1,
+                }) for work in ("Patient", "PatientBedRest")]
+                response = client.post("/api/v1/pawn/medical/bed-rest", body={
+                    "patient_pawn_id": selected["patient_id"], "bed_building_id": selected["bed_id"],
+                })
+                result = {"applied": True, "response": response, "priority_responses": responses}
             else:
                 if (patient and not patient.get("is_downed") and not selected["self_tend"]
                     and bridge.first_number(patient.get("bleeding_rate")) > 0

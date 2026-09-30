@@ -150,6 +150,13 @@ namespace RIMAPI.Services
                     }
                 }
 
+                if (patient.Dead || !patient.Spawned || doctor.Dead || doctor.Downed
+                    || !doctor.Spawned || doctor.Map != patient.Map)
+                    return ApiResult.Fail("Tending requires a living patient and a mobile doctor on the same map");
+                if (doctor.skills?.GetSkill(SkillDefOf.Medicine)?.TotallyDisabled ?? true)
+                    return ApiResult.Fail("Selected doctor is incapable of medicine");
+                if (!(patient.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false))
+                    return ApiResult.Fail("Patient has no condition currently requiring tending");
                 bool success = PawnHelper.AssignTendJob(doctor, patient);
                 if (!success)
                 {

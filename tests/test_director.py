@@ -4674,11 +4674,107 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("0.82", option)
         client = mock.Mock()
         client.post.return_value = {"success": True}
-        agent = self.FakeAgent(["defer_care"])
+        agent = self.FakeAgent(["tend_1_2"])
         with tempfile.TemporaryDirectory() as folder:
-            director.run_post_combat_care_cycle(client, agent, snapshot,
-                                                pathlib.Path(folder) / "care.jsonl")
-        self.assertIn("infection", agent.calls[0]["post_combat_care"]["criteria"]["defer_care"].lower())
+            result = director.run_post_combat_care_cycle(client, agent, snapshot,
+                                                        pathlib.Path(folder) / "care.jsonl")
+        self.assertTrue(result["result"]["applied"])
+        self.assertNotIn("defer_care", result["candidates"])
+        self.assertIn("infection", result["plan"]["summary"].lower())
+
+    @staticmethod
+    def disease_snapshot():
+        patient = {"id": 1, "name": "Patient", "health": 1, "position": {"x": 8, "z": 5},
+                   "current_job": "Research", "work_priorities": {
+                       k: {"priority": 3, "disabled": False}
+                       for k in ("Patient", "PatientBedRest", "Research", "Construction")},
+                   "health_conditions": [{"def_name": "Malaria", "severity": 0.55, "immunity": 0.33,
+                       "can_ever_kill": True, "tend_quality": 0.25, "tend_ticks_left": 1000}]}
+        doctor = {"id": 2, "name": "Doctor", "health": 1, "position": {"x": 6, "z": 5},
+                  "work_priorities": {"Construction": {"priority": 1, "disabled": False}}}
+        return {"colonists": [patient, doctor], "game": {"is_paused": False},
+                "map": {"id": 0, "resources": {"medicine": 29}},
+                "combat": {"hostiles": [], "colonists": [
+                    {**patient, "tendable_now": False, "bleeding_rate": 0, "is_downed": False},
+                    {**doctor, "moving": 1, "manipulation": 1, "medicine_skill": 6}]},
+                "development": {"buildings": [{"id": 10, "def": "Bed", "medical": True,
+                                                "position": {"x": 5, "z": 5}}],
+                                "rooms": [{"contained_beds_ids": [10], "open_roof_count": 0}]}}
+
+    def test_medical_normalization_preserves_immunity_and_treatment(self):
+        disease = {"def_name": "WoundInfection", "severity": 0.82, "immunity": 0.62,
+                   "can_ever_kill": True, "lethal_severity": 1, "tend_quality": 0.40,
+                   "tend_ticks_left": 9000, "visible": True}
+        result = director.bridge.normalize_colonists([{"id": 1, "medical_info": {"hediffs": [disease]}}])[0]
+        normalized = result["health_conditions"][0]
+        for key in ("immunity", "lethal_severity", "tend_quality", "tend_ticks_left", "can_ever_kill"):
+            self.assertEqual(normalized[key], disease[key])
+
+    def test_disease_between_tends_offers_and_executes_rest(self):
+        snapshot = self.disease_snapshot()
+        client = mock.Mock()
+        client.post.return_value = {"success": True}
+        self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(director, "publish_post_combat_care_overlay"):
+            result = director.run_post_combat_care_cycle(client, self.FakeAgent([]), snapshot,
+                pathlib.Path(folder) / "care.jsonl", focus_downed=True)
+        self.assertEqual(result["decision"]["choice"], "rest_1_10")
+        self.assertIn("immunity 33%", result["plan"]["summary"])
+        self.assertIn(mock.call("/api/v1/colonist/work-priority", body={"id": 1, "work": "PatientBedRest", "priority": 1}),
+                      client.post.call_args_list)
+        self.assertEqual(client.post.call_args, mock.call("/api/v1/pawn/medical/bed-rest",
+                         body={"patient_pawn_id": 1, "bed_building_id": 10}))
+
+    def test_disease_rest_does_not_repeat_when_patient_is_in_bed(self):
+        snapshot = self.disease_snapshot()
+        for p in (snapshot["colonists"][0], snapshot["combat"]["colonists"][0]):
+            p.update(current_job="LayDown", position={"x": 5, "z": 5})
+            for work in ("Patient", "PatientBedRest"):
+                p["work_priorities"][work]["priority"] = 1
+        self.assertIsNone(director.downed_colonist_care_gate(mock.Mock(), snapshot))
+        self.assertEqual(director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]), {})
+
+    def test_active_disease_excludes_routine_worker_but_immunity_restores_eligibility(self):
+        snapshot = self.disease_snapshot()
+        self.assertEqual(director.bridge.choose_worker(snapshot["colonists"], "Construction")["id"], 2)
+        self.assertNotIn("1", director.worker_criteria(snapshot, "Construction"))
+        self.assertIsNone(director.research_staffing_plan(snapshot))
+        snapshot["colonists"][0]["health_conditions"][0]["immunity"] = 1
+        self.assertIn("1", director.worker_criteria(snapshot, "Construction"))
+        self.assertEqual(director.research_staffing_plan(snapshot)[0]["id"], 1)
+
+    def test_severe_infection_without_bleeding_is_urgent_and_context_is_visible(self):
+        snapshot = self.disease_snapshot()
+        snapshot["colonists"][0]["health_conditions"][0].update(def_name="WoundInfection", severity=0.98, immunity=0.80)
+        snapshot["combat"]["colonists"][0]["tendable_now"] = True
+        self.assertTrue(director.urgent_care_actionable(snapshot))
+        options = director.post_combat_care_options(snapshot)
+        self.assertIn("immunity 80%", options["tend_1_2"]["summary"][:150])
+        self.assertIn("tend 25%", options["tend_1_2"]["summary"][:150])
+        self.assertTrue(all(o["kind"] == "tend" for o in director.post_combat_care_options(
+            snapshot, snapshot["development"]["buildings"]).values()))
+        self.assertEqual(director.downed_colonist_care_gate(mock.Mock(), snapshot), "assign")
+
+    def test_weapon_shelves_follow_actual_site_and_wait_for_pending_projects(self):
+        snapshot = {"game": {"tick": 300000}, "map": {"id": 0, "resources": {"food": 100, "nutrition": 50, "meals": 20, "weapons": 2}},
+                    "colonists": [{"id": 1, "name": "Builder", "health": 1, "hunger": 1,
+                                   "skills": {"Construction": {"level": 6}},
+                                   "work_priorities": {"Construction": {"priority": 1, "disabled": False}}}],
+                    "animals": [], "wild_animals": [], "combat": {},
+                    "development": {"building_counts": {"Bed": 1, "Shelf": 3},
+                                    "buildings": [{"id": 9, "def": "Bed", "position": {"x": 10, "z": 10}}],
+                                    "rooms": [{"contained_beds_ids": [9], "open_roof_count": 0}],
+                                    "finished_research": ["ComplexFurniture"], "weather": {"temperature": 20},
+                                    "item_counts": {"Steel": 0}, "construction_projects": [{"def_name": "Shelf"}]}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {"weapon_shelves": 100000}}
+        choices, _ = director.candidate_actions(None, snapshot, state)
+        self.assertNotIn("build_weapon_shelves", choices)
+        state["weapon_shelf_site"] = {"x": 30, "z": 40}
+        snapshot["development"]["buildings"].extend(
+            {"id": i, "def": "Shelf", "position": {"x": 30, "z": z}} for i, z in ((11, 40), (12, 42), (13, 44)))
+        choices, details = director.candidate_actions(None, snapshot, state)
+        self.assertIn("build_weapon_shelves", choices)
+        self.assertEqual(details["weapon_shelf_ids"], [11, 12, 13])
 
     def test_chosen_treatment_keeps_mobile_bleeding_patient_in_doctor_reach(self):
         class Client:

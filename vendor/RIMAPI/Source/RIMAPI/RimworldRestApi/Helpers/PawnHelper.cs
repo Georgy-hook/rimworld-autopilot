@@ -59,7 +59,11 @@ namespace RIMAPI.Helpers
 
         public static bool AssignTendJob(Pawn doctor, Pawn patient)
         {
-            Job job = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
+            // Use the game's reachable medicine selection, including the patient's
+            // care policy, instead of silently ordering treatment without medicine.
+            Thing medicine = HealthAIUtility.FindBestMedicine(doctor, patient);
+            Job job = JobMaker.MakeJob(JobDefOf.TendPatient, patient, medicine);
+            if (medicine != null) job.count = 1;
             return doctor.jobs.TryTakeOrderedJob(job);
         }
 
@@ -69,7 +73,8 @@ namespace RIMAPI.Helpers
             {
                 patient.ownership.ClaimBedIfNonMedical(bed);
             }
-            Job job = JobMaker.MakeJob(JobDefOf.LayDown, patient.ownership.OwnedBed ?? bed);
+            Job job = JobMaker.MakeJob(JobDefOf.LayDown, bed ?? patient.ownership.OwnedBed);
+            job.restUntilHealed = true;
             return patient.jobs.TryTakeOrderedJob(job);
         }
 
@@ -259,6 +264,11 @@ namespace RIMAPI.Helpers
                 IsLethal = hediff.IsLethal,
                 IsCurrentlyLifeThreatening = hediff.IsCurrentlyLifeThreatening,
                 CanEverKill = hediff.CanEverKill(),
+                Immunity = hediff.TryGetComp<HediffComp_Immunizable>()?.Immunity,
+                LethalSeverity = hediff.def != null && hediff.def.lethalSeverity > 0
+                    && !float.IsInfinity(hediff.def.lethalSeverity) ? (float?)hediff.def.lethalSeverity : null,
+                TendQuality = hediff.TryGetComp<HediffComp_TendDuration>()?.tendQuality,
+                TendTicksLeft = hediff.TryGetComp<HediffComp_TendDuration>()?.tendTicksLeft,
 
                 SourceDefName = hediff.sourceDef?.defName,
                 SourceLabel = hediff.sourceDef?.label,

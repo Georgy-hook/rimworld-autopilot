@@ -96,6 +96,10 @@ namespace RIMAPI.Models
         public bool TendableNow { get; set; }
         public bool IsPermanent { get; set; }
         public bool IsCurrentlyLifeThreatening { get; set; }
+        public bool CanEverKill { get; set; }
+        public float? Immunity { get; set; }
+        public float? TendQuality { get; set; }
+        public int? TendTicksLeft { get; set; }
     }
 
     public class TameAnimalRequestDto

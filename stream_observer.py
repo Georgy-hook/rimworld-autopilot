@@ -2,7 +2,7 @@
 
 The observer never orders pawns or changes Laya's decisions. Its only game
 writes are camera moves, zoom, an English death caption, and pacing at 3x
-outside a home fire, critical bleeding, or an attack on a downed colonist,
+outside a home fire, critical bleeding, dangerous disease, or an attack on a downed colonist,
 when it slows to 1x.
 """
 
@@ -39,6 +39,7 @@ EMERGENCY_GAME_SPEED = 1
 SPEED_RETRY_SECONDS = 5.0
 TAB_LIFETIME_SECONDS = 30.0
 TAB_CLOSE_RETRY_SECONDS = 5.0
+MEDICAL_SCAN_SECONDS = 5.0
 
 
 def _id(row: dict[str, Any]) -> int:
@@ -86,6 +87,25 @@ def _downed_under_attack(colonists: list[dict[str, Any]], hostiles: list[dict[st
         and hostile["distance_to_nearest_opponent"] <= 40
         for hostile in hostiles
     )
+
+
+def _critical_disease(rows: Any) -> bool:
+    """Summary health and zero bleeding can hide a fatal immunity race."""
+    for row in rows if isinstance(rows, list) else []:
+        details = row.get("detailes") or row
+        medical = details.get("medical_info") or details.get("colonist_medical_info") or {}
+        if medical.get("is_dead"):
+            continue
+        for h in medical.get("hediffs") or []:
+            immunity = h.get("immunity")
+            if not h.get("can_ever_kill") or not isinstance(immunity, (float, int)) or immunity >= 1:
+                continue
+            severity = float(h.get("severity") or 0)
+            lethal = float(h.get("lethal_severity") or 1)
+            if h.get("is_currently_life_threatening") or (
+                    severity >= 0.5 * lethal and immunity <= severity):
+                return True
+    return False
 
 
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
@@ -374,9 +394,10 @@ class ObserverPlanner:
 
     def pacing_actions(self, game: dict[str, Any], now: float, *, home_fire: bool = False,
                        critical_bleeding: bool = False,
-                       downed_under_attack: bool = False) -> list[dict[str, Any]]:
+                       downed_under_attack: bool = False,
+                       critical_disease: bool = False) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
-        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED
+        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED
         changed = target != self.last_requested_speed
         if game.get("is_paused"):
             if not changed and now - self.last_unpause < SPEED_RETRY_SECONDS:
@@ -508,6 +529,8 @@ def main() -> None:
     planner = ObserverPlanner()
     window_closer = TimedWindowCloser()
     next_window_scan = 0.0
+    next_medical_scan = 0.0
+    critical_disease = False
     outbox: queue.Queue[dict[str, Any]] = queue.Queue()
     DeathEventReader(args.api_url, outbox, stop).start()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -531,6 +554,9 @@ def main() -> None:
                 critical_bleeding = any(pawn.get("tendable_now") and not pawn.get("is_dead")
                                         and float(pawn.get("bleeding_rate") or 0) >= 1.5
                                         for pawn in combat.get("colonists") or [])
+                if now >= next_medical_scan:
+                    critical_disease = _critical_disease(api.request("/api/v2/colonists/detailed"))
+                    next_medical_scan = now + MEDICAL_SCAN_SECONDS
                 downed_under_attack = _downed_under_attack(
                     combat.get("colonists") or [], combat.get("hostiles") or [])
                 events: list[dict[str, Any]] = []
@@ -549,7 +575,8 @@ def main() -> None:
                 actions = planner.step(snapshot, events, now)
                 actions = planner.pacing_actions(game, now, home_fire=home_fire,
                                                  critical_bleeding=critical_bleeding,
-                                                 downed_under_attack=downed_under_attack) + actions
+                                                 downed_under_attack=downed_under_attack,
+                                                 critical_disease=critical_disease) + actions
                 if now >= next_window_scan:
                     windows = api.request("/api/v1/ui/windows") or []
                     actions.extend(window_closer.step(windows, now))
@@ -558,7 +585,8 @@ def main() -> None:
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
-                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED,
+                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED,
+                          "critical_disease": critical_disease,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}
                 # Mark the death spotlight before announcing it so Laya's HUD
