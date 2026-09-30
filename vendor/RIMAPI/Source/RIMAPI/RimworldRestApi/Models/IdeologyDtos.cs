@@ -15,6 +15,7 @@ namespace RIMAPI.Models
     public class IdeologyContextDto
     {
         public bool Active { get; set; }
+        public int SlaveCount { get; set; }
         public string Name { get; set; }
         public List<string> Memes { get; set; } = new List<string>();
         public List<string> Precepts { get; set; } = new List<string>();

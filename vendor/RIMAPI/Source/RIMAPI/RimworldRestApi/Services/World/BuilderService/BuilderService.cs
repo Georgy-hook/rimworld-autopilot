@@ -19,21 +19,35 @@ namespace RIMAPI.Services
             {
                 var map = MapHelper.GetMapByID(mapId);
                 if (map == null) return ApiResult<ConstructionProjectsDto>.Fail($"Map {mapId} not found.");
+                // Count loose usable stock once, rather than rescanning the map
+                // for each blueprint. These counts do not assert path reachability.
+                var available = map.listerThings.AllThings
+                    .Where(t => t.def.category == ThingCategory.Item && !t.IsForbidden(Faction.OfPlayer))
+                    .GroupBy(t => t.def.defName)
+                    .ToDictionary(g => g.Key, g => g.Sum(t => t.stackCount));
                 var projects = map.listerThings.AllThings
                     .Where(t => t is Blueprint || t is Frame)
                     .Select(t =>
                     {
                         var target = t.def.entityDefToBuild;
                         var frame = t as Frame;
+                        var constructible = t as IConstructible;
+                        var needed = constructible?.TotalMaterialCost();
                         return new ConstructionProjectDto
                         {
                             ThingId = t.thingIDNumber,
                             DefName = target?.defName,
                             Label = target?.label ?? t.LabelCap,
                             Kind = t is Frame ? "frame" : "blueprint",
-                            StuffDefName = t.Stuff?.defName,
+                            StuffDefName = constructible?.EntityToBuildStuff()?.defName ?? t.Stuff?.defName,
                             PercentComplete = frame?.PercentComplete ?? 0f,
                             MinimumConstructionSkill = (target as ThingDef)?.constructionSkillPrerequisite ?? 0,
+                            MaterialsNeeded = needed?.Select(cost => new ConstructionMaterialDto
+                            {
+                                DefName = cost.thingDef.defName,
+                                RequiredCount = constructible.ThingCountNeeded(cost.thingDef),
+                                AvailableCount = available.TryGetValue(cost.thingDef.defName, out var count) ? count : 0,
+                            }).Where(cost => cost.RequiredCount > 0).ToList(),
                             Position = new PositionDto { X = t.Position.x, Y = t.Position.y, Z = t.Position.z },
                         };
                     })

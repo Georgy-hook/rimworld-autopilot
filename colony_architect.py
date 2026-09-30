@@ -780,6 +780,7 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
             "def_name": name,
             "construction_kind": str(row.get("construction_kind") or "building"),
             "label": str(row.get("label") or name),
+            "description": " ".join(str(row.get("description") or "").split())[:160],
             "category": category,
             "size_x": max(1, int(row.get("size_x") or 1)),
             "size_z": max(1, int(row.get("size_z") or 1)),

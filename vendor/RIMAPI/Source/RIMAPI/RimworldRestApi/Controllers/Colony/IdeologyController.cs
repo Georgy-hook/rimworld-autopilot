@@ -14,7 +14,11 @@ namespace RIMAPI.Controllers
         [EndpointMetadata("Get the player ideology, relevant precepts, and exact ritual building definitions")]
         public async Task GetIdeology(HttpListenerContext context)
         {
-            var dto = new IdeologyContextDto { Active = ModsConfig.IdeologyActive };
+            var dto = new IdeologyContextDto
+            {
+                Active = ModsConfig.IdeologyActive,
+                SlaveCount = Find.CurrentMap?.mapPawns.AllPawnsSpawned.Count(p => p.IsSlaveOfColony && !p.Dead) ?? 0,
+            };
             var ideo = Faction.OfPlayer?.ideos?.PrimaryIdeo;
             if (ModsConfig.IdeologyActive && ideo != null)
             {
