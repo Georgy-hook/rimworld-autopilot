@@ -24,7 +24,7 @@ SPEC.loader.exec_module(director)
 
 
 class DirectorTests(unittest.TestCase):
-    def test_cold_start_finishes_shelter_before_tending_or_optional_work(self):
+    def test_cold_start_keeps_shelter_and_care_choices_without_optional_work(self):
         snapshot = {
             "map": {"resources": {"nutrition": 12}},
             "colonists": [{"id": 1}, {"id": 2}, {"id": 3}],
@@ -36,7 +36,7 @@ class DirectorTests(unittest.TestCase):
         actions = ["tend_colonist", "leave_wildlife_alone", "build_temple",
                    "build_starter_base", "hold_survival"]
         self.assertEqual(director.focus_cold_start_choices(snapshot, actions, {}),
-                         ["build_starter_base"])
+                         ["build_starter_base", "tend_colonist"])
         projects = [{"thing_id": 1, "def_name": "Wall"},
                     {"thing_id": 2, "def_name": "WoodPlankFloor"},
                     {"thing_id": 3, "def_name": "Campfire"}]
@@ -44,21 +44,21 @@ class DirectorTests(unittest.TestCase):
         actions.remove("build_starter_base")
         actions.append("prioritize_construction_project")
         self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
-                         ["prioritize_construction_project"])
+                         ["prioritize_construction_project", "tend_colonist"])
         self.assertEqual([row["thing_id"] for row in details["construction_project_options"]], [1])
         snapshot["colonists"][0]["current_job"] = "FinishFrame"
         self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
-                         ["hold_survival"])
+                         ["hold_survival", "tend_colonist"])
         snapshot["colonists"][0]["current_job"] = "Wait_Wander"
         snapshot["development"]["construction_projects"] = projects
         self.assertEqual(director.focus_cold_start_choices(
-            snapshot, ["leave_wildlife_alone", "tend_colonist"], {}), ["hold_survival"])
+            snapshot, ["leave_wildlife_alone", "tend_colonist"], {}), ["hold_survival", "tend_colonist"])
         snapshot["development"]["rooms"] = [{"contained_beds_ids": [10],
                                                    "open_roof_count": 0,
                                                    "temperature": -4}]
         actions.append("build_room_campfire")
         self.assertEqual(director.focus_cold_start_choices(snapshot, actions, details),
-                         ["build_room_campfire"])
+                         ["build_room_campfire", "tend_colonist"])
 
     def test_cold_start_candidate_skips_medical_and_catalog_distractions(self):
         builder = {"id": 1, "name": "Builder", "health": 1.0,
@@ -787,7 +787,7 @@ class DirectorTests(unittest.TestCase):
             "colonists": [{"id": 1, "health": 1, "has_ranged_weapon": True, "is_dead": False,
                             "is_downed": False, "distance_to_nearest_opponent": 12}],
             "hostiles": [{"id": 9, "health": 1, "is_dead": False, "is_downed": False,
-                           "current_job": "Kidnap", "carrying_pawn_id": 3}],
+                           "current_job": "Kidnap", "carrying_pawn_id": 3, "carrying_player_pawn": True}],
             "defenses": [{"kind": "trap"}, {"kind": "door"}], "available_weapons": [],
         }}
         options = colony_combat.available_tactics(snapshot)
@@ -4195,7 +4195,7 @@ class DirectorTests(unittest.TestCase):
         choices = [
             "choose_colony_doctrine", "prosperity", "industrial_manufacturing",
             "compact", "manufacturing", "industrial", "industrial", "ranged_firepower", "pragmatic",
-            "ship_escape", "peaceful_trade", "expansionist", "peaceful_trade", "balanced", "art",
+            "peaceful_trade", "expansionist", "peaceful_trade", "balanced", "art",
         ]
         agent = self.FakeAgent(choices)
         context = {
@@ -4250,7 +4250,7 @@ class DirectorTests(unittest.TestCase):
             FirstOptionAgent(), {"people": 3, "needs": {"food": 100}}, context)
         self.assertFalse(result.get("retained"))
         self.assertIn(result["selection"]["economy_product"], colony_strategy.DIRECT_INCOME_PLANS)
-        self.assertEqual(result["raw_steps"][0]["question"]["id"], "doctrine_domain")
+        self.assertEqual(result["raw_steps"][0]["question"]["id"], "doctrine_endgame")
 
     def test_endgame_direction_cannot_keep_a_continuity_goal(self):
         class EndgameAgent:
@@ -4258,7 +4258,8 @@ class DirectorTests(unittest.TestCase):
                 answers = {}
                 for key, question in questions.items():
                     preferred = "endgame" if key.startswith("doctrine_domain") else (
-                        "archonexus_pilgrimage" if key.startswith("doctrine_primary_direction") else None)
+                        "archonexus_pilgrimage" if key.startswith("doctrine_primary_direction") else
+                        "archonexus" if key.startswith("doctrine_endgame") else None)
                     chosen = preferred if preferred in question["criteria"] else next(iter(question["criteria"]))
                     answers[key] = {"choice": chosen, "confidence": 1.0}
                 return {"answers": answers}
@@ -4273,7 +4274,7 @@ class DirectorTests(unittest.TestCase):
         self.assertFalse(result.get("retained"))
         self.assertEqual(result["selection"]["primary_direction"], "archonexus_pilgrimage")
         self.assertEqual(result["selection"]["endgame"], "archonexus")
-        self.assertEqual(result["answers"]["doctrine_endgame"]["source"], "chosen_direction")
+        self.assertNotIn("source", result["answers"]["doctrine_endgame"])
 
     def test_economic_outlook_distinguishes_inventory_from_real_sales(self):
         context = {"item_counts": {"Duster": 4}, "building_counts": {"ElectricTailoringBench": 1},

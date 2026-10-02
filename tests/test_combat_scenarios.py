@@ -39,12 +39,38 @@ def raid(fighters, hostiles, defenses=()):
 
 
 class CombatScenarioTests(unittest.TestCase):
+    def test_native_weapon_choice_selects_exact_actor_and_building(self):
+        option = {"tactic": "smoke_advance", "fighter_id": 1, "target_id": 77, "defense_building_id": 0,
+                  "label": "Smoke launcher at hostile turret", "effects": {
+                      "benefit": "Obscure turret sight", "risk": "Also obscures allies", "cost": "Firing time",
+                      "inaction": "Turret remains active", "uncertainty": "Gas duration and positioning"}}
+        snapshot = raid([fighter(1)], [])
+        snapshot["map"]["enemies"] = 1
+        snapshot["combat"]["hostile_buildings"] = [{"id": 77, "kind_def": "Turret", "is_building": True,
+            "active_threat": True, "weapon_range": 25, "position": {"x": 24, "z": 10}}]
+        snapshot["combat"]["native_options"] = [option]
+        class Agent:
+            def predict(self, state, questions):
+                key, q = next(iter(questions.items()))
+                choice = "smoke_advance" if "smoke_advance" in q["criteria"] else next(iter(q["criteria"]))
+                return {"answers": {key: {"choice": choice, "confidence": 1}}}
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertNotIn("focus_fire", criteria)
+        decision = bridge.decide(Agent(), snapshot, 0)
+        action = bridge.plan_action(snapshot, decision)
+        body = action["commands"][0]["body"]
+        self.assertEqual(body["fighter_ids"], [1])
+        self.assertEqual(body["target_pawn_id"], 77)
+        self.assertEqual(body["tactic"], "smoke_advance")
+        snapshot["combat"]["native_options"] = []
+        self.assertEqual(bridge.plan_action(snapshot, decision)["kind"], "noop")
+
     def test_kidnapper_exposes_interception_without_undrafting(self):
         shooter = fighter(1, distance=38, range_cells=25)
         shooter["is_drafted"] = True
         snapshot = raid([shooter], [{"id": 99, "kind_def": "Raider",
                                      "health": 1.0, "current_job": "Kidnap",
-                                     "carrying_pawn_id": 8,
+                                     "carrying_pawn_id": 8, "carrying_player_pawn": True,
                                      "position": {"x": 49, "z": 10}}])
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertIn("intercept_kidnapper", criteria)
@@ -858,7 +884,7 @@ class CombatScenarioTests(unittest.TestCase):
             [fighter(1)],
             [{"id": 98, "kind_def": "Raider", "combat_power": 100, "health": 1.0, "position": {"x": 15, "z": 10}},
              {"id": 99, "kind_def": "Raider", "combat_power": 20, "health": 1.0, "carrying_pawn_id": 3,
-              "current_job": "Kidnap", "position": {"x": 25, "z": 10}}],
+              "current_job": "Kidnap", "carrying_player_pawn": True, "position": {"x": 25, "z": 10}}],
         )
         self.assertEqual(colony_combat.choose_default_target(snapshot, "focus_fire"), 99)
 

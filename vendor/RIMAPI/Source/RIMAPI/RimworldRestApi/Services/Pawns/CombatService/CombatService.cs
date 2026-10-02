@@ -68,6 +68,8 @@ namespace RIMAPI.Services
                 var result = new CombatStateDto
                 {
                     MapId = map.uniqueID,
+                    NativeOptions = CombatNativeHelper.Options(map),
+                    HostileBuildings = map.listerBuildings.allBuildingsNonColonist.Where(b=>!b.Destroyed && b.HostileTo(Faction.OfPlayer) && !b.Position.Fogged(map)).Select(b=>(object)new{id=b.thingIDNumber,name=b.LabelShort,kind_def=b.def.defName,is_building=true,is_turret=b is Building_Turret,active_threat=CombatNativeHelper.ActiveStructure(b),dormant=!(b.TryGetComp<CompCanBeDormant>()?.Awake ?? true),position=new PositionDto{X=b.Position.x,Y=b.Position.y,Z=b.Position.z},powered=b.TryGetComp<CompPowerTrader>()?.PowerOn ?? true,weapon_range=(b as Building_Turret)?.AttackVerb?.EffectiveRange ?? 0f,hit_points_percent=(float)b.HitPoints/b.MaxHitPoints}).ToList(),
                     GameTick = Find.TickManager?.TicksGame ?? 0,
                     Colonists = colonists.Select(p => ToCombatPawn(p, false, hostiles)).ToList(),
                     Hostiles = hostiles.Select(p => ToCombatPawn(p, true, colonists)).ToList(),
@@ -91,7 +93,7 @@ namespace RIMAPI.Services
             string job = pawn.CurJobDef?.defName?.ToLowerInvariant() ?? "";
             bool attacking = job.Contains("attack") || job.Contains("breach") || job.Contains("sap")
                 || job.Contains("kidnap") || job.Contains("steal") || job == "goto";
-            if (attacking || pawn.carryTracker?.CarriedThing is Pawn)
+            if (attacking || CombatNativeHelper.Kidnapper(pawn))
                 return true;
 
             string lordJob = pawn.GetLord()?.LordJob?.GetType().Name ?? "";
@@ -170,6 +172,9 @@ namespace RIMAPI.Services
                         .Select(other => other.thingIDNumber).ToList()
                     : new List<int>(),
                 ArmorSharp = pawn.GetStatValue(StatDefOf.ArmorRating_Sharp),
+                CarryingPlayerPawn = pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer,
+                CarriedPawnFaction = (pawn.carryTracker?.CarriedThing as Pawn)?.Faction?.def?.defName,
+                KidnappingIntent = CombatNativeHelper.Kidnapper(pawn),
                 CarryingPawnId = pawn.carryTracker?.CarriedThing is Pawn carried ? (int?)carried.thingIDNumber : null,
                 Psyfocus = entropy?.CurrentPsyfocus ?? 0f,
                 TargetPsyfocus = entropy?.TargetPsyfocus ?? 0f,

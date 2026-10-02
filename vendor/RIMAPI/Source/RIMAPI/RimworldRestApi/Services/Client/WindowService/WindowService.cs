@@ -56,8 +56,10 @@ namespace RIMAPI.Services
                     {
                         var row = new OpenWindowDto
                         {
+                            WindowId = RuntimeHelpers.GetHashCode(w),
                             WindowType = w.GetType().Name,
                             ForcePause = w.forcePause,
+                            BlocksInput = w.absorbInputAroundWindow || w is Dialog_NodeTree || w is FloatMenu,
                         };
                         if (w is Dialog_NodeTree dialog)
                         {
@@ -72,6 +74,20 @@ namespace RIMAPI.Services
                         if (w is Dialog_GiveName && w.GetType().Name.StartsWith("Dialog_NamePlayer"))
                             row.SuggestedNames = _nameCandidates.GetValue(w, BuildNameCandidates)
                                 .Select(item => item.Label).ToList();
+                        if (w is Dialog_MessageBox message)
+                        {
+                            row.DialogText = message.text.ToString();
+                            bool ready = Traverse.Create(message).Property("InteractionDelayExpired").GetValue<bool>();
+                            row.EnabledOptions = new[] { ready ? message.buttonAText : null, message.buttonBText, message.buttonCText }
+                                .Where(label => !string.IsNullOrEmpty(label)).ToList();
+                        }
+                        if (w is FloatMenu menu)
+                        {
+                            row.DialogText = Traverse.Create(menu).Field("title").GetValue<string>();
+                            row.EnabledOptions = Traverse.Create(menu).Field("options").GetValue<List<FloatMenuOption>>()?
+                                .Where(option => !option.Disabled && option.action != null).Select(option => option.Label).ToList()
+                                ?? new List<string>();
+                        }
                         list.Add(row);
                     }
                 }
@@ -93,8 +109,43 @@ namespace RIMAPI.Services
                 // Several node-tree dialogs can be stacked. The player can only
                 // act on the topmost one; require its text to still match the
                 // observation that produced Laya's choice.
-                var window = Find.WindowStack?.Windows?.OfType<Dialog_NodeTree>()
-                    .LastOrDefault();
+                var top = Find.WindowStack?.Windows?.LastOrDefault(w => w.forcePause || w.absorbInputAroundWindow
+                    || w is Dialog_NodeTree || w is FloatMenu);
+                if (top == null || top.GetType().Name != request.WindowType
+                    || (request.WindowId.HasValue && request.WindowId != RuntimeHelpers.GetHashCode(top)))
+                    return ApiResult.Fail("The requested window is no longer the active window.");
+                if (top is Dialog_MessageBox message)
+                {
+                    if (request.DialogText != message.text.ToString())
+                        return ApiResult.Fail("Confirmation text changed.");
+                    var labels = new[] { message.buttonAText, message.buttonBText, message.buttonCText };
+                    if (labels.Count(label => !string.IsNullOrEmpty(label) && label == request.OptionLabel) != 1)
+                        return ApiResult.Fail("Confirmation option is not unique.");
+                    int button = Array.IndexOf(labels, request.OptionLabel);
+                    if (button == 0 && !Traverse.Create(message).Property("InteractionDelayExpired").GetValue<bool>())
+                        return ApiResult.Fail("Native confirmation delay has not expired.");
+                    new[] { message.buttonAAction, message.buttonBAction, message.buttonCAction }[button]?.Invoke();
+                    if (button != 2 || message.buttonCClose) message.Close();
+                    return ApiResult.Ok();
+                }
+                if (top is FloatMenu menu)
+                {
+                    if (request.DialogText != Traverse.Create(menu).Field("title").GetValue<string>())
+                        return ApiResult.Fail("Menu changed.");
+                    var options = Traverse.Create(menu).Field("options").GetValue<List<FloatMenuOption>>()?
+                        .Where(o => !o.Disabled && o.action != null && o.Label == request.OptionLabel).ToList();
+                    if (options == null || options.Count != 1) return ApiResult.Fail("Menu option changed.");
+                    var option = options[0];
+                    if (option.revalidateClickTarget != null && (option.revalidateClickTarget.Destroyed
+                        || (!option.targetsDespawned && !option.revalidateClickTarget.Spawned)))
+                        return ApiResult.Fail("Menu target disappeared.");
+                    if (option.revalidateWorldClickTarget != null && !option.revalidateWorldClickTarget.Spawned)
+                        return ApiResult.Fail("Menu world target disappeared.");
+                    option.Chosen(false, menu);
+                    menu.Close();
+                    return ApiResult.Ok();
+                }
+                var window = top as Dialog_NodeTree;
                 if (window == null || window.GetType().Name != request.WindowType)
                     return ApiResult.Fail("The requested dialogue is no longer the active dialogue.");
                 var node = Traverse.Create(window).Field("curNode").GetValue<DiaNode>();

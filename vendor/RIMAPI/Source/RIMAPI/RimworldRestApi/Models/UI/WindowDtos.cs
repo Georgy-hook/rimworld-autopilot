@@ -49,8 +49,10 @@ namespace RIMAPI.Models
 
     public class OpenWindowDto
     {
+        public int WindowId { get; set; }
         public string WindowType { get; set; }
         public bool ForcePause { get; set; }
+        public bool BlocksInput { get; set; }
         public string DialogText { get; set; }
         public List<string> EnabledOptions { get; set; } = new List<string>();
         public List<string> SuggestedNames { get; set; } = new List<string>();
@@ -58,6 +60,7 @@ namespace RIMAPI.Models
 
     public class WindowChooseRequestDto
     {
+        public int? WindowId { get; set; }
         public string WindowType { get; set; }
         public string OptionLabel { get; set; }
         public string DialogText { get; set; }

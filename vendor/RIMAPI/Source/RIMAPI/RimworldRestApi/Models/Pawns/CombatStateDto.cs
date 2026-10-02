@@ -5,6 +5,8 @@ namespace RIMAPI.Models
     public class CombatStateDto
     {
         public int MapId { get; set; }
+        public List<object> HostileBuildings { get; set; } = new List<object>();
+        public List<CombatNativeOptionDto> NativeOptions { get; set; } = new List<CombatNativeOptionDto>();
         public int GameTick { get; set; }
         public List<CombatPawnDto> Colonists { get; set; } = new List<CombatPawnDto>();
         public List<CombatPawnDto> Hostiles { get; set; } = new List<CombatPawnDto>();
@@ -57,6 +59,9 @@ namespace RIMAPI.Models
         public float WeaponRange { get; set; }
         public List<int> ShootableOpponentIds { get; set; } = new List<int>();
         public float ArmorSharp { get; set; }
+        public bool CarryingPlayerPawn { get; set; }
+        public string CarriedPawnFaction { get; set; }
+        public bool KidnappingIntent { get; set; }
         public int? CarryingPawnId { get; set; }
         public float Psyfocus { get; set; }
         public float TargetPsyfocus { get; set; }

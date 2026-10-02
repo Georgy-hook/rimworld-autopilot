@@ -2,6 +2,15 @@ using System.Collections.Generic;
 
 namespace RIMAPI.Models
 {
+    public class CombatNativeOptionDto
+    {
+        public string Tactic { get; set; }
+        public int FighterId { get; set; }
+        public int TargetId { get; set; }
+        public int DefenseBuildingId { get; set; }
+        public string Label { get; set; }
+        public Dictionary<string,string> Effects { get; set; }
+    }
     public class PsycastDto
     {
         public string DefName { get; set; }

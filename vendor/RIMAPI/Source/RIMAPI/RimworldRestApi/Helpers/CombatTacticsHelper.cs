@@ -30,6 +30,7 @@ namespace RIMAPI.Helpers
                 if (map == null)
                     return ApiResult<CombatTacticResponseDto>.Fail($"Map {request.MapId} not found.");
                 string tactic = (request.Tactic ?? "").Trim().ToLowerInvariant();
+                if(new[]{"emp_control","smoke_advance","mortar_counterbattery","mortar_reload","attack_structure"}.Contains(tactic))return ApiResult<CombatTacticResponseDto>.Ok(CombatNativeHelper.Apply(map,request));
                 if (tactic == "stand_down")
                 {
                     foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.drafter?.Drafted == true))
@@ -39,7 +40,7 @@ namespace RIMAPI.Helpers
 
                 List<Pawn> fighters = map.mapPawns.FreeColonistsSpawned
                     .Where(p => request.FighterIds.Contains(p.thingIDNumber) && !p.Dead && !p.Downed
-                        && !p.InMentalState)
+                        && !p.InMentalState && !CombatNativeHelper.Protected(p))
                     .ToList();
                 if (fighters.Count == 0)
                     return ApiResult<CombatTacticResponseDto>.Fail("No selected healthy fighter is available on this map.");
@@ -592,8 +593,13 @@ namespace RIMAPI.Helpers
                         }
                         IntVec3 desired = DesiredCell(pawn, nearestThreat, defense, tactic, i, ordered.Count);
                         IntVec3 safe;
-                        if (TryFindTrapFreeCell(pawn, desired, nearestThreat.Position, tactic, out safe,
-                            6f, tactic == "kite" ? 16f : tactic == "backstep_fire" ? 14f : float.MaxValue))
+                        bool choke = tactic == "melee_block" || tactic == "door_defense" || tactic == "infestation_choke";
+                        bool positionFound = choke
+                            ? ResilienceDefenseHelper.TryPosition(pawn, nearestThreat, defense,
+                                ordered.Take(i).Count(f => IsRanged(f) == IsRanged(pawn)), out safe)
+                            : TryFindTrapFreeCell(pawn, desired, nearestThreat.Position, tactic, out safe,
+                                6f, tactic == "kite" ? 16f : tactic == "backstep_fire" ? 14f : float.MaxValue);
+                        if (positionFound)
                         {
                             Job move = JobMaker.MakeJob(JobDefOf.Goto, safe);
                             move.playerForced = true;
@@ -612,7 +618,8 @@ namespace RIMAPI.Helpers
                     }
                     if (result.PositionedPawnIds.Count > 0 || result.AttackingPawnIds.Count > 0
                         || tactic == "civilian_retreat" || tactic == "hold_cover" || tactic == "firing_line"
-                        || tactic == "backstep_fire" || tactic == "advance_to_range" || tactic == "withdraw_and_regroup")
+                        || tactic == "backstep_fire" || tactic == "advance_to_range" || tactic == "withdraw_and_regroup"
+                        || tactic == "melee_block" || tactic == "door_defense" || tactic == "infestation_choke")
                         return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
 
@@ -707,6 +714,8 @@ namespace RIMAPI.Helpers
         {
             IEnumerable<Building> candidates = map.listerBuildings.allBuildingsColonist
                 .Where(b => b != null && !b.Destroyed && !(b is Building_Trap));
+            if (tactic == "melee_block" || tactic == "door_defense" || tactic == "infestation_choke")
+                candidates = candidates.Where(ResilienceDefenseHelper.IsActualChoke);
             if (requestedId.HasValue)
             {
                 Building exact = candidates.FirstOrDefault(b => b.thingIDNumber == requestedId.Value);

@@ -3,14 +3,47 @@ from __future__ import annotations
 
 from laya_decisions import ask_laya_choice
 
-DESCRIPTIONS = {"progression_research": "Resolve missing prerequisite frontier for a measured ship route, comparing other research and defer.",
+DESCRIPTIONS = {"progression_research": "Resolve native prerequisite or supporting infrastructure research for the chosen ending route, comparing alternatives and defer.",
                 "progression_ship": "Compare ordinary ship reactor startup or launch against defer using actual engine blockers and survival facts.",
                 "progression_boardship": "Choose one passenger/casket or downed-passenger carrier, preserving defenders and doctors; or defer."}
 LABELS = {"progression_research": "Следующий шаг исследований", "progression_ship": "Реактор и запуск корабля", "progression_boardship": "Посадка пассажира в корабль"}
 ACTIONS = set(DESCRIPTIONS)
+DESCRIPTIONS["progression_ending"] = "Compare all native ending routes; accept an eligible offered quest or order a native ending site job. Resolve subsequent native choices explicitly; stop only on engine victory evidence."
+LABELS["progression_ending"] = "Следующий шаг выбранного финала"
+ACTIONS.add("progression_ending")
 DOMAINS = {key: "strategy" for key in ACTIONS}
 SHIP_RESEARCH = ("ShipBasics", "ShipCryptosleep", "ShipReactor", "ShipEngine", "ShipComputerCore", "ShipSensorCluster")
 APPLIED_RETRY_TICKS = {"progression_research": 30000, "progression_ship": 15000, "progression_boardship": 600}
+APPLIED_RETRY_TICKS["progression_ending"] = 600
+ENDING_ROUTES = {
+    "ship_escape": {"dlc": None, "prerequisites": "Research and construct a connected ship, survive reactor startup, board chosen passengers and launch; alternatively travel to the offered landed ship.", "cost": "Research, advanced materials, construction, travel or 15 days of reactor defense; unboarded people remain.", "risk": "Repeated raids and loss of colony labor during boarding."},
+    "royal_ascent": {"dlc": "royalty", "prerequisites": "Earn Count/Countess rank, qualify for and accept Royal Ascent, host the stellarch successfully, then board the native departure shuttle.", "cost": "Honor, noble rooms and throne requirements, hospitality and defense for the visit.", "risk": "Guest death, mood or hospitality failure; repeated attacks."},
+    "archonexus": {"dlc": "ideology", "prerequisites": "Reach each native wealth/research/faction requirement, accept three colony-sale cycles with explicit survivor and item selection, travel to the revealed core and invoke it.", "cost": "Three colony rebuilds; only the native selected pawns, animals and possessions transfer.", "risk": "Irreversible sale and separated colonists; final site defense."},
+    "anomaly_void": {"dlc": "anomaly", "prerequisites": "Investigate monolith, study discovered entities to unlock each native advancement, survive void awakening, reach and resolve the final native choice.", "cost": "Study and containment labor, stronger anomalies and final emergency.", "risk": "Entity escapes, darkness and assault; final embrace/disrupt choice has different consequences."},
+    "odyssey_mechhive": {"dlc": "odyssey", "prerequisites": "Build and operate a gravship, progress offered gravship quests, obtain native space capability, travel to and resolve the mechhive objective.", "cost": "Gravship construction, fuel, travel, upgrades and orbital combat.", "risk": "Space hazards and mechanoid defenses; unavailable while Odyssey is inactive."},
+}
+PENDING_WINDOWS = ("Dialog_ChooseThingsForNewColony", "Dialog_ConfigureIdeo", "Screen_ArchonexusSettlementCinematics")
+
+
+def peek_pending(client):
+    try:
+        return client.get("/api/v1/colony/endings/pending") is True
+    except Exception:
+        return False
+
+
+def pending_action(context):
+    if (context.get("world_targeting") or {}).get("active"):
+        return "progression_ending"
+    odyssey = context.get("odyssey") or {}
+    if odyssey.get("picking_destination") or odyssey.get("landing"):
+        return "progression_ending"
+    if (context.get("ending_selection") or {}).get("available"):
+        return "progression_ending"
+    continuation = context.get("ending_continuation") or {}
+    if continuation.get("choosing_tile") or continuation.get("configuring_ideology"):
+        return "progression_ending"
+    return None
 
 
 def _record_cooldown(snapshot, map_state, action, *, deferred=False):
@@ -84,6 +117,18 @@ def collect(client, snapshot):
         except Exception as exc:
             result["errors"][key] = str(exc)
     result["ship_research"] = research_frontier(result.get("research_tree"), SHIP_RESEARCH)
+    try:
+        result["endings"] = client.get("/api/v1/colony/endings")
+        result["victory_verified"] = result["endings"].get("victory_verified") is True
+    except Exception as exc:
+        result["errors"]["endings"] = str(exc)
+    for key, suffix in (("ending_selection", "selection"), ("ending_continuation", "continuation"), ("odyssey", "odyssey"), ("world_targeting", "world-targeting")):
+        try:
+            result[key] = client.get("/api/v1/colony/endings/" + suffix)
+        except Exception as exc:
+            result["errors"][key] = str(exc)
+    result["ending_routes"] = {name: {**row, "available": row["dlc"] is None or (result.get("endings") or {}).get(row["dlc"]) is True} for name, row in ENDING_ROUTES.items()}
+    result["support_research"] = {route: research_frontier(result.get("research_tree"), targets) for route, targets in (result.get("endings") or {}).get("support_research_targets", {}).items()}
     map_id = (snapshot.get("map") or {}).get("id")
     if map_id is not None:
         result["native_milestones"] = [r for r in result.get("native_milestones") or [] if isinstance(r, dict) and str(r.get("map_id")) == str(map_id)]
@@ -101,6 +146,7 @@ def _options(context):
         options[name] = {"name": name, "label": row.get("label") or name,
                          "remaining_points": max(0, float(row.get("research_points") or 0) - float(row.get("progress") or 0)),
                          "unlocks": row.get("required_by_this") or [], "ship_prerequisite": name in frontier,
+                         "ending_support": name in ((context.get("chosen_route_support") or {}).get("frontier") or []),
                          "description": row.get("description") or "", "time": "Depends on assigned researchers, bench speed and interruptions; research points are work, not days."}
     return options
 
@@ -110,17 +156,68 @@ def prepare(snapshot, map_state):
     context = snapshot.setdefault("development", {}).setdefault("progression", {})
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
+    chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
+    chosen_route = {"imperial_ascension": "royal_ascent", "mechhive": "odyssey_mechhive"}.get(chosen_route, chosen_route)
+    context["chosen_ending_route"] = chosen_route
+    context["chosen_route_support"] = (context.get("support_research") or {}).get(chosen_route) or {}
+    support_frontier = set(context["chosen_route_support"].get("frontier") or [])
+    for name, row in context["options"].items():
+        row["ending_support"] = name in support_frontier
     pursuing_ship = (doctrine.get("primary_direction") == "research_starflight"
                      or doctrine.get("endgame") == "ship_escape"
                      or doctrine.get("technology") == "starflight")
     # Only add a decision when the route exposes an actionable prerequisite.
     # Ordinary research selection already belongs to the director.
-    actions = ["progression_research"] if pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values()) else []
+    actions = ["progression_research"] if (pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values())) or any(r.get("ending_support") for r in context["options"].values()) else []
     if ship_options(context):
         actions.append("progression_ship")
     if boarding_options(context):
         actions.append("progression_boardship")
-    return [action for action in actions if not cooling[action]]
+    if ending_options(context):
+        actions.append("progression_ending")
+    return [action for action in actions if not cooling[action] or pending_action(context) == action]
+
+
+def ending_options(context):
+    native = context.get("endings") or {}
+    if native.get("victory_verified"):
+        return {}
+    options = {}
+    world_target = context.get("world_targeting") or {}
+    if world_target.get("active"):
+        options = {f"world_{index}": {**row, "kind": "world-targeting", "session": world_target.get("session")} for index, row in enumerate(world_target.get("options") or [])}
+        options["cancel_world_target"] = {"kind": "world-targeting", "operation": "cancel", "session": world_target.get("session"), "label": "Cancel world target selection"}
+        return options
+    odyssey = context.get("odyssey") or {}
+    if odyssey.get("picking_destination") or odyssey.get("landing"):
+        rows = odyssey.get("destinations") or [] if odyssey.get("picking_destination") else odyssey.get("landings") or []
+        return {f"odyssey_{index}": {**row, "kind": "odyssey", "session": odyssey.get("destination_session")} for index, row in enumerate(rows)}
+    continuation = context.get("ending_continuation") or {}
+    if continuation.get("choosing_tile"):
+        return {f"settle_{r['tile_id']}": {**r, "kind": "continuation", "operation": "tile", "label": f"Settle tile {r['tile_id']}"} for r in continuation.get("tiles") or []}
+    if continuation.get("configuring_ideology"):
+        return {f"ideology_{r['id']}": {**r, "kind": "continuation", "operation": "ideology", "ideology_id": r["id"]} for r in continuation.get("ideologies") or []}
+    selection = context.get("ending_selection") or {}
+    if selection.get("available"):
+        options["cancel_transfer"] = {"kind": "selection", "operation": "cancel", "label": "Cancel colony sale and keep colony"}
+        for row in selection.get("rows") or []:
+            options[f"transfer_{row['thing_id']}"] = {**row, "kind": "selection", "operation": "select", "selected": not row.get("selected"),
+                "label": ("Leave behind " if row.get("selected") else "Take ") + row["label"], "consequence": selection.get("consequence")}
+        if selection.get("can_submit"):
+            options["submit_transfer"] = {"kind": "selection", "operation": "submit", "label": "Review and confirm colony sale", "selection": selection}
+        return options
+    for quest in native.get("quests") or []:
+        if quest.get("can_accept") is not True:
+            continue
+        pawns = quest.get("accepter_ids") or [] if quest.get("requires_accepter") else [0]
+        for pawn_id in pawns:
+            options[f"quest_{quest['quest_id']}_{pawn_id}"] = {**quest, "kind": "accept", "pawn_id": pawn_id}
+    for job in native.get("site_jobs") or []:
+        key = f"job_{job['map_id']}_{job['thing_id']}_{job['pawn_id']}_{job['label']}"
+        options[key] = {**job, "kind": "job"}
+    for index, row in enumerate(odyssey.get("launches") or []):
+        options[f"odyssey_pilot_{index}"] = {**row, "kind": "odyssey"}
+    return options
 
 
 def boarding_options(context):
@@ -153,7 +250,16 @@ def ship_options(context):
 
 def comparison(action, context):
     """Put native risks first in separate fields so prompt clipping retains them."""
-    if action == "progression_boardship":
+    if action == "progression_ending":
+        candidates = ending_options(context)
+        effects = {key: {"benefit": f"Native ending step: {r.get('label')}; {r.get('description') or r.get('inspect') or ''}",
+                         "risk": "Ending escalation, colony sale or departure may be irreversible; compare route prerequisites and defense before accepting.",
+                         "cost": "Pawn time, quest commitments and route-specific requirements.", "inaction": "Keep preparations; offered quest may expire.",
+                         "uncertainty": "Native action requested does not prove completion; jobs and later choices remain."} for key, r in candidates.items()}
+        facts = {"ending_routes": context.get("ending_routes") or ENDING_ROUTES, "native_quests": (context.get("endings") or {}).get("quests"), "sale_selection": context.get("ending_selection"), "sale_continuation": context.get("ending_continuation"),
+                 "final_choices": "Choose every native confirmation, survivor/item transfer and final embrace/disrupt choice explicitly. Never auto-dismiss ending dialogs."}
+        defer = {"benefit": "Prepare colony and compare ending alternatives.", "risk": "Expiry or longer exposure to threats.", "cost": "Time.", "inaction": "No ending step begins.", "uncertainty": "No victory inferred."}
+    elif action == "progression_boardship":
         candidates = boarding_options(context)
         effects = {}
         for key, r in candidates.items():
@@ -188,12 +294,13 @@ def comparison(action, context):
                  "cost": "More colony time before escape.", "inaction": "Reactor/launch command stays unissued.", "uncertainty": "Waiting does not guarantee improved readiness."}
     else:
         candidates = _options(context)
-        effects = {name: {"benefit": f"{r['label']}; unlocks {r['unlocks']}; ship prerequisite {r['ship_prerequisite']}.",
+        effects = {name: {"benefit": f"{r['label']}; unlocks {r['unlocks']}; ship prerequisite {r['ship_prerequisite']}; chosen-route infrastructure support {r['ending_support']}.",
                           "risk": "Research labor competes with survival; switching delays the current unlock.",
                           "cost": f"{r['remaining_points']} remaining research points, researcher time and bench power.",
                           "inaction": "Keep current project; selected technology remains unavailable.",
                           "uncertainty": "Points measure work, not days; no victory inferred from research."} for name, r in candidates.items()}
-        facts = {"current_project": (context.get('current') or {}).get('name'), "time": "Research points are work, not completion days."}
+        facts = {"current_project": (context.get('current') or {}).get('name'), "chosen_ending_route": context.get("chosen_ending_route"),
+                 "route_gate_note": (context.get("endings") or {}).get("research_gate_note"), "time": "Research points are work, not completion days."}
         defer = {"benefit": "Keep current research and labor flexibility.", "risk": "Missing technology unlocks delayed.", "cost": "No target change; current work continues.",
                  "inaction": "Prerequisite frontier remains unresolved.", "uncertainty": "Current project may still require staff, power and inputs."}
     choices = {key: f"{r.get('label') or r.get('pawn') or r.get('ship_action') or key}; {effects[key]['benefit']}" for key, r in candidates.items()}
@@ -205,8 +312,66 @@ def comparison(action, context):
 def choose(agent, state, action, snapshot):
     context = snapshot.get('development', {}).get('progression', {})
     candidates, choices, effects, facts = comparison(action, context)
+    first = None
+    if action == "progression_ending":
+        def group(row):
+            if row.get("kind") == "odyssey":
+                return "odyssey_mechhive"
+            if row.get("kind") == "world-targeting":
+                return row.get("operation")
+            if row.get("kind") == "selection":
+                return row.get("category") or row.get("operation")
+            if row.get("kind") == "continuation":
+                return row.get("operation")
+            route = str(row.get("route") or row.get("site") or "")
+            return "imperial_ascension" if "RoyalAscent" in route else "archonexus" if "Archonexus" in route else "anomaly_void" if "Void" in route else "odyssey_mechhive" if "Gravship" in route or "Mechhive" in route else "ship_escape"
+        target_rows = {group(row): row for row in candidates.values()}
+        target_choices = {key: (key + ": " + str(row.get("label") or row.get("site") or "native route")) for key, row in target_rows.items()}
+        pending = pending_action(context) == action
+        if not pending:
+            target_choices["defer"] = "Prepare and compare ending routes later."
+        target_effects = {}
+        for key in target_choices:
+            catalog = ENDING_ROUTES.get("royal_ascent" if key == "imperial_ascension" else key) or {}
+            target_effects[key] = {"benefit": catalog.get("prerequisites") or target_choices[key], "cost": catalog.get("cost") or "Native transfer/configuration choice.",
+                "risk": catalog.get("risk") or "Colony sale leaves unselected people and possessions behind; site and ideology change colony conditions.", "inaction": "No route step begins.", "uncertainty": "Only actual engine credits verify completion."}
+        target, first = ask_laya_choice(agent, {**state, "option_effects": target_effects, "decision_facts": {"chosen_ending_route": context.get("chosen_ending_route"), "available_routes": [r for r, info in (context.get("ending_routes") or {}).items() if info.get("available")]}}, action + "_route",
+                                       "Choose a native ending route or pending configuration category; compare alternatives.", target_choices, detailed=True)
+        if target == "defer":
+            return {"defer": True}, first
+        candidates = {key: row for key, row in candidates.items() if group(row) == target}
+        choices = {key: choices[key] for key in candidates}
+        effects = {key: effects[key] for key in candidates}
+        for key, row in candidates.items():
+            if row.get("kind") == "odyssey":
+                effects[key]["benefit"] = f"{row.get('label')}; fuel {row.get('fuel')}; destination fuel cost {row.get('fuel_cost')}; distance {row.get('distance')}; biome {row.get('biome')}; layer {row.get('layer_id')}."
+                effects[key]["risk"] = f"Outside ship {row.get('colonists_outside_ship')}; orbital warnings {row.get('orbital_warnings')}; landing footprint may displace obstacles. Boarding/fuel/travel never prove mechhive resolution."
+            elif row.get("kind") == "world-targeting":
+                effects[key]["benefit"] = f"{row.get('label')}; native target information: {row.get('native_info')}."
+                effects[key]["risk"] = "Travel or world ability can separate people and consume resources; native callback can reject or open another choice."
+            elif row.get("operation") == "tile":
+                tile = row.get("facts") or {}
+                effects[key]["benefit"] = f"Settle tile {row['tile_id']}: biome {tile.get('biome')}, temperature {tile.get('temperature')}, hills {tile.get('hilliness')}, rivers {tile.get('rivers')}, pollution {tile.get('pollution')}."
+                effects[key]["risk"] = "Selected climate, terrain and pollution affect food, shelter and travel; a valid tile does not prove a safe colony."
+            elif row.get("operation") == "select":
+                effects[key]["benefit"] = f"{row['label']}; {row.get('category')}; transfer quantity {row.get('quantity')}."
+                effects[key]["risk"] = f"{'Take' if row.get('selected') else 'Leave behind'} this {row.get('category')} in the colony sale; every unselected person, animal and item is abandoned."
+            elif row.get("operation") == "ideology":
+                effects[key]["benefit"] = f"Choose {row.get('label')}; memes {row.get('memes')}."
+                effects[key]["risk"] = "Changing primary ideology changes beliefs and roles; current ideology is also an explicit alternative."
+            elif row.get("kind") == "job":
+                effects[key]["risk"] = f"{row.get('pawn')} leaves {row.get('current_job')}; {row.get('hostile_pawns')} enemies present. Final invocation/escalation can be irreversible."
+            elif row.get("operation") == "submit":
+                selected_rows = [r.get("label") for r in (row.get("selection") or {}).get("rows") or [] if r.get("selected")]
+                effects[key]["risk"] = f"Sell colony; keep {selected_rows}; abandon all others. Opens native consequence confirmation."
+        facts = {"stage": target, "native_blockers": (context.get("ending_selection") or {}).get("blocker")}
+        if not pending:
+            choices["defer"] = "Prepare before committing this route step."
+            effects["defer"] = {"benefit": "Preserve colony work.", "cost": "Time.", "risk": "Offer may expire.", "inaction": "Route step postponed.", "uncertainty": "Readiness may change."}
     selected, raw = ask_laya_choice(agent, {**state, 'option_effects': effects, 'decision_facts': facts}, action,
                                     'Choose an ordinary progression step or defer; compare benefit, risk, cost, delay and uncertainty.', choices, detailed=True)
+    if first is not None:
+        raw["ending_route_choice"] = first
     return ({'defer': True} if selected == 'defer' else candidates[selected]), raw
 
 
@@ -217,6 +382,22 @@ def execute(client, snapshot, map_state, action, selected):
         _record_cooldown(snapshot, map_state, action, deferred=True)
         return {"applied": False, "reason": "deliberately deferred; reconsider after 15000 ticks", "deferred": True}
     fresh = collect(client, {"map": snapshot.get("map") or {}})  # Execution bypasses earlier-cycle research cache.
+    if action == "progression_ending":
+        candidate = next((r for r in ending_options(fresh).values() if r == selected), None)
+        if candidate is None:
+            return {"applied": False, "reason": "ending requirements, option or pawn job changed; new decision required"}
+        try:
+            if candidate["kind"] in ("odyssey", "world-targeting"):
+                fields = tuple(k for k in ("operation", "map_id", "thing_id", "pawn_id", "label", "tile_id", "layer_id", "session", "object_id", "x", "z", "rotation") if k in candidate)
+            else:
+                fields = ("operation", "tile_id" if candidate["operation"] == "tile" else "ideology_id") if candidate["kind"] == "continuation" else (("operation", "thing_id", "selected") if candidate.get("operation") == "select" else ("operation",)) if candidate["kind"] == "selection" else ("quest_id", "pawn_id") if candidate["kind"] == "accept" else ("map_id", "thing_id", "pawn_id", "label")
+            response = client.post("/api/v1/colony/endings/" + candidate["kind"], query={**{k: candidate[k] for k in fields}, "confirmed": True})
+            applied = response in ("ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "world_target_chosen", "world_target_cancelled")
+            if applied and candidate["kind"] not in ("selection", "continuation", "odyssey", "world-targeting"):
+                _record_cooldown(snapshot, map_state, action)
+            return {"applied": applied, "reason": str(response), "victory_verified": False, "native_choices_required": True}
+        except Exception as exc:
+            return {"applied": False, "reason": str(exc)}
     if action == "progression_boardship":
         ids = ("map_id", "root_id", "pawn_id", "worker_id", "casket_id")
         candidate = next((r for r in boarding_options(fresh).values() if all(r.get(k) == selected.get(k) for k in ids)), None)
@@ -257,6 +438,10 @@ def execute(client, snapshot, map_state, action, selected):
 
 
 def assess(action, snapshot):
+    if action == "progression_ending":
+        return {"benefit": "Advance the model-selected native DLC ending route.", "cost": "Route-specific honor, wealth, study, construction, travel and colony commitments.",
+                "risk": "Irreversible sales, departures and escalating threats; final native choices require explicit decisions.", "inaction": "Prepare or choose another feasible ending route.",
+                "uncertainty": "Only engine victory credits verify an ending; quest acceptance and countdown never do."}
     if action == "progression_boardship":
         return {"benefit": "One selected passenger begins ordinary ship boarding; downed pawns can be carried.", "cost": "Pawn/carrier travel and 500 ticks; passenger leaves colony labor until ejected.", "risk": "Losing a last doctor/defender or psychic bond separation; jobs can fail before boarding.", "inaction": "Retains care/defense/work but postpones escape or preservation of a downed pawn.", "uncertainty": "Job started does not prove casket occupied; engine rejects threats, unsafe path or reservations."}
     if action == "progression_ship":

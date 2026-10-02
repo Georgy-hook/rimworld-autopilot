@@ -571,12 +571,13 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
     # *next* state, or direction, revenue and ending can contradict each other.
     current = context.get("current") or {}
     income_blocked = bool(context.get("income_blocked"))
-    victory_required = bool(context.get("victory_required"))
-    victory_missing = victory_required and str(current.get("endgame") or "") == "enduring_colony"
-    endgame_conflict = bool(
-        str(current.get("primary_direction")) in DIRECTION_ENDGAME_HINTS
-        and course_alignment(current) != "Direction and ending are not visibly in conflict."
-    )
+    victory_required = bool(context.get("victory_required", True))
+    available_endings = _filter_axis(ENDGAMES, flags)
+    victory_missing = victory_required and (str(current.get("endgame") or "") not in available_endings
+                                           or current.get("endgame") == "enduring_colony")
+    # A useful support direction (farming, royalty, mechs) does not dictate
+    # which ending the colony must choose. Only unavailable goals force revision.
+    endgame_conflict = bool(current.get("endgame") and current["endgame"] not in available_endings)
     def decision_state() -> dict[str, Any]:
         needs = state.get("needs") or {}
         return {
@@ -589,6 +590,7 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
             "income_evidence": economic_outlook(current, context),
             "income_blocked": income_blocked, "endgame_conflict": endgame_conflict,
             "victory_required": victory_required,
+            "ending_progress": context.get("ending_progress") or {},
             "alignment": course_alignment(current),
             "recent_course_changes": (context.get("recent_course_changes") or [])[-2:],
         }
@@ -608,7 +610,10 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
             return {"selection": dict(current), "answers": answers, "raw_steps": raw_steps,
                     "audit": audit, "retained": True}
 
-    domain = ask_step("doctrine_domain", "Choose the colony's broad development domain first.", domain_options(audit))
+    ending_options = {name: label for name, label in available_endings.items()
+                      if not victory_required or name != "enduring_colony"}
+    ask_step("doctrine_endgame", "Choose a finite ending supported by active content. Compare its prerequisites and losses. Survival is preparation, not a substitute for the chosen ending.", ending_options)
+    domain = ask_step("doctrine_domain", "Choose the colony's broad development domain to support the chosen ending.", domain_options(audit))
     direction = ask_step("doctrine_primary_direction", "Choose one long-term direction supported by workforce and content. Later choices must serve it unless you deliberately change course.", direction_options(audit, domain))
 
     settlements = _filter_axis(SETTLEMENTS, flags)
@@ -626,9 +631,6 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
         "doctrine_technology": {"type": "choice", "instructions": "Choose the primary technology focus; research still respects live prerequisites.", "criteria": _filter_axis(TECHNOLOGY, flags)},
         "doctrine_military": {"type": "choice", "instructions": "Choose a defense doctrine that will filter fortifications, research and combat preparation.", "criteria": _filter_axis(DEFENSE, flags)},
         "doctrine_society": {"type": "choice", "instructions": "Choose social organization without violating the colony's actual ideology precepts.", "criteria": _filter_axis(SOCIETY, flags)},
-        "doctrine_endgame": {"type": "choice", "instructions": "Choose the long-horizon victory objective.",
-                             "criteria": {name: description for name, description in _filter_axis(ENDGAMES, flags).items()
-                                          if not victory_required or name != "enduring_colony"}},
         "doctrine_diplomacy": {"type": "choice", "instructions": "Choose the external posture; individual quests and wars still require live risk evaluation.", "criteria": dict(DIPLOMACY)},
         "doctrine_material": {"type": "choice", "instructions": "Choose the default material for new structures only, from sufficient current reserves.", "criteria": dict(context.get("material_options") or {"WoodLog": "wood"})},
         "doctrine_beauty": {"type": "choice", "instructions": "Choose where beauty investment has priority.", "criteria": dict(BEAUTY)},
@@ -640,12 +642,6 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
         }
     for question_id, question in independent.items():
         instructions = str(question["instructions"])
-        if question_id == "doctrine_endgame":
-            expected = DIRECTION_ENDGAME_HINTS.get(direction)
-            if expected and expected in question["criteria"]:
-                answers[question_id] = {"choice": expected, "source": "chosen_direction"}
-                continue
-            instructions += " Match the selected direction where it is a concrete victory route; choose a different ending only deliberately."
         ask_step(question_id, instructions, dict(question["criteria"]))
 
     family = str(answers["doctrine_economy_family"]["choice"])

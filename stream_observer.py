@@ -559,6 +559,17 @@ def main() -> None:
         while not stop.is_set():
             now = time.monotonic()
             try:
+                ending = api.request("/api/v1/colony/ending-evidence") or {}
+                victory = (ending.get("victory_verified") is True
+                           and isinstance(ending.get("ending_tick"), int) and ending["ending_tick"] >= 0)
+                if victory or ending.get("game_over_verified") is True:
+                    try:
+                        api.request("/api/v1/game/speed?speed=0", post=True)
+                    except (HTTPError, URLError):
+                        pass
+                    stopped_detail = "Native ending confirmed; observer stopped"
+                    _log(args.log, {"action": {"kind": "victory" if victory else "colony_ended", **ending}, "detail": stopped_detail})
+                    break
                 game = api.request("/api/v1/game/state") or {}
                 maps = api.request("/api/v1/maps") or []
                 current_map = next((row for row in maps if row.get("is_current_map")), maps[0] if maps else None)

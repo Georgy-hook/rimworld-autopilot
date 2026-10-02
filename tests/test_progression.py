@@ -159,12 +159,46 @@ class ProgressionTests(unittest.TestCase):
 
     def test_collect_reuses_shared_research(self):
         class Client:
+            endpoints = []
             def get(self, endpoint, **params):
-                self.endpoint = endpoint
-                return []
+                self.endpoints.append(endpoint)
+                return {} if "endings" in endpoint else []
         client = Client()
         p.collect(client, {"development": {"research_tree": [], "current_research": {}}})
-        self.assertEqual(client.endpoint, "/api/v1/colony/progression")
+        self.assertEqual(client.endpoints, ["/api/v1/colony/progression", "/api/v1/colony/endings", "/api/v1/colony/endings/selection", "/api/v1/colony/endings/continuation", "/api/v1/colony/endings/odyssey", "/api/v1/colony/endings/world-targeting"])
+
+    def test_ending_options_require_native_eligibility_and_stop_on_credits(self):
+        native = {"quests": [{"quest_id": 2, "can_accept": True, "requires_accepter": True, "accepter_ids": [4]},
+                            {"quest_id": 3, "can_accept": False}], "site_jobs": []}
+        self.assertEqual(list(p.ending_options({"endings": native})), ["quest_2_4"])
+        self.assertEqual(p.ending_options({"endings": {**native, "victory_verified": True}}), {})
+
+    def test_sale_selection_preserves_explicit_people_and_native_limits(self):
+        selection = {"available": True, "can_submit": False, "rows": [{"thing_id": 7, "label": "Doctor", "selected": False, "category": "colonists"}]}
+        choices = p.ending_options({"ending_selection": selection})
+        self.assertEqual(choices["transfer_7"]["selected"], True)
+        self.assertNotIn("submit_transfer", choices)
+        choices = p.ending_options({"ending_selection": {**selection, "can_submit": True}})
+        self.assertEqual(choices["submit_transfer"]["operation"], "submit")
+
+    def test_stale_ending_job_does_not_execute(self):
+        chosen = {"map_id": 1, "thing_id": 2, "pawn_id": 3, "label": "Invoke", "kind": "job", "current_job": "Wait"}
+        class Client:
+            def get(self, endpoint, **kwargs):
+                if endpoint == "/api/v1/colony/endings":
+                    return {"site_jobs": [{**chosen, "current_job": "TendPatient"}]}
+                return {} if "endings" in endpoint else []
+            def post(self, *args, **kwargs):
+                raise AssertionError("Stale ending action must never be issued")
+        result = p.execute(Client(), {"map": {"id": 1}}, {}, "progression_ending", chosen)
+        self.assertFalse(result["applied"])
+
+    def test_odyssey_doctrine_matches_native_support_route(self):
+        context = {"support_research": {"odyssey_mechhive": {"frontier": []}}}
+        snapshot = {"development": {"progression": context}}
+        p.prepare(snapshot, {"doctrine": {"endgame": "mechhive"}})
+        self.assertEqual(context["chosen_ending_route"], "odyssey_mechhive")
+        self.assertEqual(context["chosen_route_support"], {"frontier": []})
 
     def test_hidden_prerequisite_frontier_and_cycle(self):
         tree = [project("ShipBasics", can_start_now=False, hidden_prerequisites=["Microelectronics"]),

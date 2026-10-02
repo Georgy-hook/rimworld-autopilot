@@ -18,6 +18,7 @@ public class OrderService : IOrderService
         CellRect rect = CellRect.FromLimits(start, end);
 
         int count = 0;
+        int roofBlocked = 0;
         string type = request.Type.ToLower(); // Cache lowercase type
 
         foreach (IntVec3 c in rect)
@@ -30,6 +31,7 @@ public class OrderService : IOrderService
                 var edifice = c.GetEdifice(map);
                 if (edifice != null && edifice.def.mineable && map.designationManager.DesignationAt(c, DesignationDefOf.Mine) == null)
                 {
+                    if (ResilienceAutomationHelper.RemovalWouldEndangerRoof(edifice)) { roofBlocked++; continue; }
                     map.designationManager.AddDesignation(new Designation(c, DesignationDefOf.Mine));
                     count++;
                 }
@@ -42,6 +44,7 @@ public class OrderService : IOrderService
                 {
                     if (t.def.category == ThingCategory.Building)
                     {
+                        if (ResilienceAutomationHelper.RemovalWouldEndangerRoof(t)) { roofBlocked++; continue; }
                         map.designationManager.AddDesignation(new Designation(t, DesignationDefOf.Deconstruct));
                         count++;
                     }
@@ -115,6 +118,8 @@ public class OrderService : IOrderService
 
         if (type == "remove-sleeping-spot" && count == 0)
             return ApiResult.Fail("No player-owned sleeping spot found in the selected area");
+        if (roofBlocked > 0 && count == 0)
+            return ApiResult.Fail("Removing these supports would risk roof collapse. Build replacement support or remove removable roof first.");
         return ApiResult.Ok();
     }
 }

@@ -35,6 +35,21 @@ namespace RIMAPI.Helpers
             && p.Faction == Faction.OfPlayer && p.IsColonistPlayerControlled && p.Map == platform.Map
             && !p.WorkTypeIsDisabled(WorkTypeDefOf.Warden) && (p.workSettings?.GetPriority(WorkTypeDefOf.Warden) ?? 0) > 0
             && p.CurJobDef != JobDefOf.ActivitySuppression && p.CanReach(platform, PathEndMode.Touch, Danger.Some);
+        // Installed WorkGiver has no nonallocating HasJobOnThing override.
+        // Mirror its eligibility checks without JobMaker or JobFailReason writes.
+        private static bool SuppressionReady(Pawn worker, Building_HoldingPlatform platform)
+        {
+            var entity = platform?.HeldPawn;
+            if (!ModsConfig.AnomalyActive || entity == null || !WardenAvailable(worker, platform)
+                || !ActivitySuppressionUtility.CanBeSuppressed(entity, true, false)) return false;
+            var activity = entity.TryGetComp<CompActivity>();
+            if (activity == null || activity.ActivityLevel < activity.suppressIfAbove
+                || StatDefOf.ActivitySuppressionRate.Worker.IsDisabledFor(worker)
+                || StatDefOf.ActivitySuppressionRate.Worker.GetValue(worker) <= 0f
+                || !worker.CanReserve(entity, 1, -1, null, false)
+                || !worker.CanReserve(platform, 1, -1, null, false)) return false;
+            return SocialInteractionUtility.TryGetAdjacentInteractionCell(worker, platform, false, out var _);
+        }
         private static Job SuppressionJob(Pawn worker, Building_HoldingPlatform platform)
         {
             if (!ModsConfig.AnomalyActive || platform?.HeldPawn == null || !WardenAvailable(worker, platform)
@@ -126,7 +141,7 @@ namespace RIMAPI.Helpers
                         MinimumStrength = entity.GetStatValue(StatDefOf.MinimumContainmentStrength), StudyFactor = activity?.ActivityResearchFactor ?? 1,
                         ContainmentMode = target?.containmentMode.ToString() };
                     foreach (var worker in map.mapPawns.FreeColonists)
-                        if (SuppressionJob(worker, platform) != null)
+                        if (SuppressionReady(worker, platform))
                             row.WorkerOptions.Add(new SpecialistWorkerDto { PawnId = worker.thingIDNumber, Name = worker.LabelShort,
                                 Social = worker.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0,
                                 SuppressionRate = worker.GetStatValue(StatDefOf.ActivitySuppressionRate) });

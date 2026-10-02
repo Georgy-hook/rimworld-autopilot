@@ -67,7 +67,61 @@ class ProductionTests(unittest.TestCase):
         with patch.object(p,'ask_laya_choice',return_value=('defer',{})) as ask:
             selected,_=p.choose(None,{},'production_utilities',s)
         args=ask.call_args.args
-        self.assertIn('choice_context',args[1]);self.assertIn('risk',args[4]['2:switch_off']); self.assertIn('defer',args[4])
+        self.assertIn('option_effects',args[1]);self.assertIn('risk',args[1]['option_effects']['o0']); self.assertIn('defer',args[4])
         self.assertEqual('defer',selected['production_policy'])
+
+class RecipeProductionTests(unittest.TestCase):
+    def plan(self, index=1):
+        return {'key':f'8:Make_Component{index}:default','building_id':8,'recipe':f'Make_Component{index}','material':None,'category':'materials','label':f'Component recipe {index}','cost':'steel/components and labor','risk':'scarcity','worker_ids':[4]}
+    def snapshot(self):
+        return {'map':{'id':1},'game':{'tick':20000},'development':{'production':{'recipe_context':{'options':[self.plan()]}}}}
+    def test_recipe_partition_requires_actual_workers(self):
+        s=self.snapshot();self.assertIn('production_recipe_batch',p.prepare(s,{}))
+        s['development']['production']['recipe_context']['options'][0]['worker_ids']=[]
+        self.assertNotIn('production_recipe_batch',p.prepare(s,{}))
+    def test_recipe_fresh_material_or_worker_loss_blocks_post(self):
+        s=self.snapshot();live={'options':[{**self.plan(),'material':'Plasteel'}]}
+        class RecipeClient(Client):
+            def get(self,path,**kwargs):return copy.deepcopy(live) if path.endswith('/recipes') else {}
+        c=RecipeClient({})
+        self.assertFalse(p.execute(c,s,{},'production_recipe_batch',{'production_policy':self.plan()['key']})['applied'])
+        self.assertEqual(c.calls,[])
+    def test_late_recipe_cost_is_seen_with_many_alternatives(self):
+        import json
+        class Tokenizer:
+            def __call__(self,text,**kwargs):return {'input_ids':list(range((len(text)+2)//3))}
+        class Agent:
+            tok=Tokenizer();cfg={'max_len':512,'head_max_len':192}
+            def __init__(self):self.calls=[]
+            def predict(self,state,questions):
+                self.calls.append(copy.deepcopy(state));qid,q=next(iter(questions.items()))
+                choice=next((k for k,v in state['effects'].items() if v['cost'].startswith('RARE_STEEL')),next(k for k in q['criteria'] if k!='defer'))
+                return {'answers':{qid:{'choice':choice}}}
+        s=self.snapshot();plans=[self.plan(i) for i in range(1,51)];plans[-1]['cost']='RARE_STEEL 80; component 3; real cost'
+        s['development']['production']['recipe_context']['options']=plans
+        agent=Agent();choice,_=p.choose(agent,{},'production_recipe_batch',s)
+        self.assertEqual(choice['production_policy'],plans[-1]['key'])
+        for call in agent.calls:
+            self.assertLessEqual(len(agent.tok(json.dumps(call,ensure_ascii=False))['input_ids']),312)
+            self.assertTrue(all(set(card)=={'benefit','cost','risk','inaction','uncertainty'} and all(card.values()) for card in call['effects'].values()))
+
+class LogisticsProductionTests(unittest.TestCase):
+    def plan(self):
+        return {'key':'zone:8:Steel:1,1;1,2;1,3','kind':'zone','target_id':8,'worker_id':0,'value':'Steel','cells':[{'x':1,'z':1},{'x':1,'z':2},{'x':1,'z':3}],'label':'Roofed steel stockpile','cost':'3 indoor floor cells and hauling labor','risk':'Floor space and ordinary delivery delay'}
+    def snapshot(self):
+        return {'map':{'id':1},'game':{'tick':20000},'development':{'production':{'logistics_context':{'options':[self.plan()]}}}}
+    def test_logistics_registered_and_cooldown(self):
+        s=self.snapshot();self.assertIn('production_material_logistics',p.prepare(s,{}))
+        self.assertNotIn('production_material_logistics',p.prepare(s,{'issued':{'production:production_material_logistics':19000}}))
+    def test_changed_footprint_not_posted(self):
+        s=self.snapshot();plan=self.plan();plan['cells'].pop()
+        class LogisticsClient(Client):
+            def get(self,path,**kwargs):return {'options':[plan]} if path.endswith('/logistics') else {}
+        client=LogisticsClient({})
+        result=p.execute(client,s,{},'production_material_logistics',{'production_policy':self.plan()['key']})
+        self.assertFalse(result['applied']);self.assertEqual(client.calls,[])
+    def test_defer_never_creates_zone_or_interrupts_worker(self):
+        client=Client({});result=p.execute(client,self.snapshot(),{},'production_material_logistics',{'production_policy':'defer'})
+        self.assertFalse(result['applied']);self.assertEqual(client.calls,[])
 
 if __name__=='__main__':unittest.main()

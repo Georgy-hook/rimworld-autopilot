@@ -25,10 +25,13 @@ flowchart TD
 |---|---|---|
 | `colony_actions` | Legacy vocabulary and overlay labels | Existing action definitions; no execution |
 | `colony_modules` | Whitelisted domain ownership, collection status, proposal and execution routing | No model-generated Python or endpoints |
-| `colony_production` | Utility allocation and finite feed production | Native components, recipes, stock filters and workers |
-| `colony_society` | Medicine ceiling, held-prisoner goal and learning/recreation time | Instantiated needs, diseases, beliefs and ordinary policies |
-| `colony_progression` | Prerequisite frontier and Core ship boarding/startup/launch | Native connected parts, engine blockers and actual jobs |
-| `colony_specialists` | Mech group policy and held-entity suppression | Active DLC and current native capabilities |
+| `colony_production` | Utilities, loaded table recipes and material logistics | Native components, whole-unit stock allocation, ordinary bills and workers |
+| `colony_sustenance` | Food, preservation, animal husbandry, diets and fishing | Native stock, recipes, pens, medicine/food policies and jobs |
+| `colony_resilience` | Patient care, disease, sanitation, temperature, roof and diagnosis | Visible symptoms, native workgivers, evidence-gated operations |
+| `colony_society` | Medicine, prisoner policies, childcare, growth, drugs, deathrest and surgery | Instantiated needs, earned options, beliefs and ordinary policies/jobs |
+| `colony_progression` | Prerequisite frontier and finite Core/DLC ending chains | Native quests, blockers, intermediate choices and persisted credits evidence |
+| `colony_specialists` | Mechs, containment, rituals, genes, permits, meditation and dryads | Active DLC, native dialogs and current capabilities |
+| `colony_affordances`, `colony_sessions` | Loaded abilities/interactions and pending native choices | Current callbacks/targets, costs, effect identity and modal/session validation |
 | `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Previous capability audit; retained |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
 | `colony_architect` | Building purpose, materials and generated layouts | Actual catalog, stock, research and placement checks |
@@ -110,8 +113,9 @@ bounded prefixes; this limitation is distinct from the new consequence cards.
 
 The existing doctrine remains the persistent intended course. Progression now
 compares that intention with a real prerequisite frontier and engine blockers.
-Ship launch countdown is distinct from verified victory. Unsupported DLC
-endings remain explicitly unsupported in the coverage matrix.
+Ship launch countdown is distinct from verified victory. Native Core, Royalty,
+Ideology, Anomaly and Odyssey ending paths have explicit continuation handlers.
+Odyssey is DLC-gated and compiled against shared classes; its Data is absent here.
 
 `colony_outcomes` stores one bounded before-observation per map and reconciles it
 at the next decision. It records changed meals, nutrition, on-map population,
@@ -124,7 +128,8 @@ timeline's order.
 
 ## Evidence and remaining coverage
 
-See [production](modules/production.md), [society](modules/society.md),
+See the [comprehensive inventory and closure audit](COMPREHENSIVE_AUDIT_0.0.7.md),
+[production](modules/production.md), [society](modules/society.md),
 [progression](modules/progression.md), [combat](modules/combat.md) and
 [specialists](modules/specialists.md). Each distinguishes executable additions,
 read-only context and missing mechanics. Installed RimWorld 1.6 definitions and

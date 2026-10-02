@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 
-MODULE_NAMES = ("production", "society", "progression", "specialists")
+MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances")
 
 
 @lru_cache(maxsize=1)
@@ -104,4 +104,10 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any],
     result = module.execute(client, snapshot, map_state, action, selected)
     if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):
         raise TypeError(f"{action} must report applied=true/false; command acceptance is not completion")
+    if result["applied"]:
+        card = module.assess(action, snapshot)
+        map_state["native_intent"] = {"action": action, "tick": snapshot.get("game", {}).get("tick"),
+            "effect": {k: str(v)[:300] for k, v in card.items()},
+            "selection": {k: str(v)[:160] for k, v in selected.items()
+                          if k in {"label", "ability", "operation", "kind", "target_id", "pawn_id", "recipe"}}}
     return result

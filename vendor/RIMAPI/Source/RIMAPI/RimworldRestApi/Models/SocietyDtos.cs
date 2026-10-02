@@ -6,6 +6,11 @@ namespace RIMAPI.Models
         public bool Available { get; set; } = true;
         public List<SocietyPersonDto> People { get; set; } = new List<SocietyPersonDto>();
         public Dictionary<string, int> Medicine { get; set; } = new Dictionary<string, int>();
+        public List<SocietyNativeOptionDto> NativeOptions { get; set; } = new List<SocietyNativeOptionDto>();
+        public List<object> GrowthMoments { get; set; } = new List<object>();
+        public List<object> DrugPolicies { get; set; } = new List<object>();
+        public List<object> MedicalRecipes { get; set; } = new List<object>();
+        public object Facilities { get; set; }
     }
     public class SocietyNeedDto { public string DefName { get; set; } public float Level { get; set; } public string Description { get; set; } }
     public class SocietyConditionDto { public string DefName { get; set; } public float Severity { get; set; } public float? Immunity { get; set; } public bool LifeThreatening { get; set; } }
@@ -40,6 +45,9 @@ namespace RIMAPI.Models
         public float? Resistance { get; set; }
         public List<string> PrisonerOptions { get; set; } = new List<string>();
         public List<string> Timetable { get; set; } = new List<string>();
+        public object Development { get; set; }
+        public object Drugs { get; set; }
+        public object Genes { get; set; }
     }
     public class SocietyPolicyRequestDto
     {
@@ -48,5 +56,28 @@ namespace RIMAPI.Models
         public string Kind { get; set; }
         public string Value { get; set; }
         public int? Hour { get; set; }
+    }
+    public class SocietyNativeOptionDto
+    {
+        public string Kind { get; set; }
+        public int PawnId { get; set; }
+        public int WorkerId { get; set; }
+        public int TargetId { get; set; }
+        public int LetterId { get; set; }
+        public string Value { get; set; }
+        public string Label { get; set; }
+        public Dictionary<string,string> Effects { get; set; }
+    }
+    public class SocietyNativeRequestDto
+    {
+        public int MapId { get; set; }
+        public string Kind { get; set; }
+        public int PawnId { get; set; }
+        public int WorkerId { get; set; }
+        public int TargetId { get; set; }
+        public int LetterId { get; set; }
+        public string Value { get; set; }
+        public int TraitIndex { get; set; } = -1;
+        public List<string> SkillDefs { get; set; } = new List<string>();
     }
 }

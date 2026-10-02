@@ -12,9 +12,10 @@ namespace RIMAPI.Helpers
     {
         // Player-facing policies only. Existing work givers perform the actual care/social jobs.
         private static readonly string[] Care = { "NoMeds", "HerbalOrWorse", "NormalOrWorse", "Best" };
-        private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Any(h => h.IsCurrentlyLifeThreatening || h.TendableNow()
+        private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Where(h=>h.Visible).Any(h => h.IsCurrentlyLifeThreatening || h.TendableNow()
             || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immunity && immunity.Immunity < 1));
         private static bool ProtectedActivity(Pawn p) => p.Downed || p.Drafted || p.InMentalState || p.CurJobDef == JobDefOf.TendPatient
+            || new[]{"Deathrest","Breastfeed","Lessongiving","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessonreceiving"}.Contains(p.CurJobDef?.defName)
             || p.CurJobDef == JobDefOf.Rescue || p.CurJobDef == JobDefOf.FeedPatient || p.CurJobDef == JobDefOf.DoBill;
         private static bool AvailableStaff(Pawn p, WorkTypeDef work) => p.IsColonistPlayerControlled && !ProtectedActivity(p)
             && !NeedsCare(p) && !p.WorkTypeIsDisabled(work) && (p.workSettings?.GetPriority(work) ?? 0) > 0;
@@ -59,7 +60,7 @@ namespace RIMAPI.Helpers
                 if (p.needs?.mood?.thoughts != null)
                 { var thoughts = new List<Thought>(); p.needs.mood.thoughts.GetAllMoodThoughts(thoughts);
                     row.Thoughts.AddRange(thoughts.Select(t => new SocietyThoughtDto { DefName = t.def.defName, Label = t.LabelCap, MoodOffset = t.MoodOffset() })); }
-                foreach (var h in p.health.hediffSet.hediffs)
+                foreach (var h in p.health.hediffSet.hediffs.Where(h => h.Visible))
                 { var immune = h.TryGetComp<HediffComp_Immunizable>();
                     row.Conditions.Add(new SocietyConditionDto { DefName = h.def.defName, Severity = h.Severity,
                         Immunity = immune == null ? (float?)null : immune.Immunity, LifeThreatening = h.IsCurrentlyLifeThreatening }); }
@@ -69,6 +70,7 @@ namespace RIMAPI.Helpers
                     for (int h = 0; h < 24; h++) row.Timetable.Add(p.timetable.GetAssignment(h).defName);
                 result.People.Add(row);
             }
+            SocietyNativeHelper.AddContext(map,result);
             return ApiResult<SocietyContextDto>.Ok(result);
         }
         public static ApiResult<CapabilityOrderResultDto> Configure(SocietyPolicyRequestDto request)
