@@ -14,7 +14,7 @@ namespace RIMAPI.Helpers
         private static readonly string[] SaleCategories =
             { "drugs", "apparel", "art", "animals", "food", "leather", "weapons", "gold" };
         private static readonly string[] PurchasePriorities =
-            { "slaves", "livestock", "medicine", "advanced_components", "components", "food", "armor", "weapons", "plasteel" };
+            { "slaves", "livestock", "medicine", "advanced_components", "components", "food", "armor", "weapons", "plasteel", "wood" };
 
         public static ApiResult<List<LiveTraderDto>> GetOpportunities(int mapId)
         {
@@ -121,7 +121,11 @@ namespace RIMAPI.Helpers
                     }
                 }
                 float availableSilver = Math.Min(spendLimit, Math.Max(0f, colonySilver + preview.PlannedSaleValue - reserve));
-                foreach (string priority in PurchasePriorities)
+                foreach (string priority in PurchasePriorities.Concat(deal.AllTradeables
+                    .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0 && AugmentationAutomationHelper.IsAugmentationItem(t.ThingDef))
+                    .Select(t => "implant:" + t.ThingDef.defName).Distinct()).Concat(deal.AllTradeables
+                    .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0 && t.ThingDef?.IsWeapon == true)
+                    .Select(t => "weapon:" + t.ThingDef.defName).Distinct()))
                 {
                     Tradeable row = deal.AllTradeables.Where(t => t.TraderWillTrade
                         && t.CountHeldBy(Transactor.Trader) > 0 && MatchesPriority(t, priority)
@@ -135,6 +139,8 @@ namespace RIMAPI.Helpers
                     if (units > 0) preview.PurchaseOptions.Add(new LiveTradeCategoryDto
                     {
                         Category = priority, Example = row.Label, MaximumUnits = units, UnitPrice = price,
+                        Description = priority.StartsWith("implant:") ? AugmentationAutomationHelper.ItemSummary(row.ThingDef)
+                            : row.ThingDef?.IsWeapon == true ? WeaponAutomationHelper.Summary(row.FirstThingTrader) : row.ThingDef?.description,
                     });
                 }
                 foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
@@ -340,11 +346,14 @@ namespace RIMAPI.Helpers
                 NegotiatorSocialSkill = negotiator?.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0,
                 HasPoweredCommsConsole = console,
                 HasPoweredOrbitalBeacon = beacon,
-                Stock = (stock ?? Enumerable.Empty<Thing>()).Where(t => t?.def != null).Take(120).Select(t => new LiveTradeItemDto
+                Stock = (stock ?? Enumerable.Empty<Thing>()).Where(t => t?.def != null).Select(t => new LiveTradeItemDto
                 {
                     DefName = t.def.defName,
                     Label = t.LabelCap,
                     Count = t.stackCount,
+                    IsWeapon = t.def.IsWeapon,
+                    IsImplant = AugmentationAutomationHelper.IsAugmentationItem(t.def),
+                    Description = t.def.IsWeapon ? WeaponAutomationHelper.Summary(t) : t.def.description,
                     MarketValue = t.MarketValue,
                     Humanlike = t is Pawn human && human.RaceProps.Humanlike,
                     Animal = t is Pawn animal && animal.RaceProps.Animal,
@@ -418,6 +427,10 @@ namespace RIMAPI.Helpers
         {
             if (row.ThingDef == null) return false;
             string wanted = (priority ?? "").ToLowerInvariant().Replace("_", "");
+            if ((priority ?? "").StartsWith("implant:", StringComparison.Ordinal))
+                return row.ThingDef.defName == priority.Substring(8) && AugmentationAutomationHelper.IsAugmentationItem(row.ThingDef);
+            if ((priority ?? "").StartsWith("weapon:", StringComparison.Ordinal))
+                return row.ThingDef.defName == priority.Substring(7) && row.ThingDef.IsWeapon;
             string text = (row.ThingDef.defName + row.Label + string.Join("", row.ThingDef.thingCategories?.Select(c => c.defName) ?? Enumerable.Empty<string>())).ToLowerInvariant().Replace("_", "");
             if (wanted == "advancedcomponents") return text.Contains("componentadvanced");
             if (wanted == "components") return text.Contains("component") && !text.Contains("advanced");
@@ -426,6 +439,7 @@ namespace RIMAPI.Helpers
             if (wanted == "livestock") return row.ThingDef.race?.Animal == true;
             if (wanted == "food") return new[] { "food", "meal", "rice", "corn", "potato", "pemmican", "berry" }.Any(text.Contains);
             if (wanted == "weapons") return row.ThingDef.IsWeapon;
+            if (wanted == "wood") return row.ThingDef == ThingDefOf.WoodLog;
             if (wanted == "armor") return text.Contains("armor") || text.Contains("helmet") || text.Contains("vest");
             return text.Contains(wanted);
         }
@@ -444,6 +458,9 @@ namespace RIMAPI.Helpers
         private static int PurchaseTarget(string priority, Tradeable row)
         {
             string value = (priority ?? "").ToLowerInvariant();
+            if (value.StartsWith("implant:")) return 1;
+            if (value.StartsWith("weapon:")) return 1;
+            if (value == "wood") return 100;
             if (value.Contains("medicine") || value.Contains("component")) return 20;
             if (value.Contains("food")) return 50;
             if (value.Contains("slaves") || value.Contains("livestock")) return 1;

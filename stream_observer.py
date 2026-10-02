@@ -2,7 +2,7 @@
 
 The observer never orders pawns or changes Laya's decisions. Its only game
 writes are camera moves, zoom, an English death caption, and pacing at 3x
-outside a home fire, critical bleeding, or an attack on a downed colonist,
+outside a home fire, critical bleeding, dangerous disease, or an attack on a downed colonist,
 when it slows to 1x.
 """
 
@@ -37,6 +37,9 @@ RAID_SECONDS = 30.0
 TARGET_GAME_SPEED = 3
 EMERGENCY_GAME_SPEED = 1
 SPEED_RETRY_SECONDS = 5.0
+TAB_LIFETIME_SECONDS = 30.0
+TAB_CLOSE_RETRY_SECONDS = 5.0
+MEDICAL_SCAN_SECONDS = 5.0
 
 
 def _id(row: dict[str, Any]) -> int:
@@ -84,6 +87,44 @@ def _downed_under_attack(colonists: list[dict[str, Any]], hostiles: list[dict[st
         and hostile["distance_to_nearest_opponent"] <= 40
         for hostile in hostiles
     )
+
+
+def _critical_disease(rows: Any) -> bool:
+    """Summary health and zero bleeding can hide a fatal immunity race."""
+    for row in rows if isinstance(rows, list) else []:
+        details = row.get("detailes") or row
+        medical = details.get("medical_info") or details.get("colonist_medical_info") or {}
+        if medical.get("is_dead"):
+            continue
+        for h in medical.get("hediffs") or []:
+            if (str(h.get("def_name") or "") in {"Heatstroke", "Hypothermia"}
+                    and (h.get("is_currently_life_threatening")
+                         or float(h.get("severity") or 0) >= 0.5)):
+                return True
+            immunity = h.get("immunity")
+            if not h.get("can_ever_kill") or not isinstance(immunity, (float, int)) or immunity >= 1:
+                continue
+            severity = float(h.get("severity") or 0)
+            lethal = float(h.get("lethal_severity") or 1)
+            if h.get("is_currently_life_threatening") or (
+                    severity >= 0.5 * lethal and immunity <= severity):
+                return True
+    return False
+
+
+def _pause_if_colony_ended(api: Any, game: dict[str, Any], map_id: int) -> bool:
+    # Zero pawns on a map also occurs during caravans and initial loading.
+    # Require the actual terminal letter before stopping playback.
+    if game.get("colonist_count") != 0:
+        return False
+    context = api.request("/api/v1/events/context?" + urlencode({"map_id": map_id})) or {}
+    ended = any(str(row.get("letter_def") or "") == "GameEnded"
+                or "everyone is dead or gone" in str(row.get("text") or "").casefold()
+                for row in context.get("letters") or [])
+    if not ended:
+        return False
+    api.request("/api/v1/game/speed?speed=0", post=True)
+    return True
 
 
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
@@ -139,6 +180,32 @@ class Shot:
     position: dict[str, int] | None = None
     zoomed_out: bool = False
     last_follow: float = 0.0
+
+
+class TimedWindowCloser:
+    """Leave research and quest tabs visible briefly, then return to the map."""
+
+    def __init__(self) -> None:
+        self.first_seen: dict[str, float] = {}
+        self.last_attempt: dict[str, float] = {}
+
+    def step(self, windows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+        visible = {
+            name for row in windows if isinstance(row, dict)
+            if (name := str(row.get("window_type") or ""))
+            and name.casefold().startswith("maintabwindow_")
+            and any(token in name.casefold() for token in ("research", "quest"))
+        }
+        self.first_seen = {name: self.first_seen.get(name, now) for name in visible}
+        self.last_attempt = {name: attempted for name, attempted in self.last_attempt.items()
+                             if name in visible}
+        actions = []
+        for name in sorted(visible):
+            if (now - self.first_seen[name] >= TAB_LIFETIME_SECONDS
+                    and now - self.last_attempt.get(name, -9999.0) >= TAB_CLOSE_RETRY_SECONDS):
+                self.last_attempt[name] = now
+                actions.append({"kind": "close_window", "window_type": name})
+        return actions
 
 
 class ObserverPlanner:
@@ -346,9 +413,10 @@ class ObserverPlanner:
 
     def pacing_actions(self, game: dict[str, Any], now: float, *, home_fire: bool = False,
                        critical_bleeding: bool = False,
-                       downed_under_attack: bool = False) -> list[dict[str, Any]]:
+                       downed_under_attack: bool = False,
+                       critical_disease: bool = False) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
-        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED
+        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED
         changed = target != self.last_requested_speed
         if game.get("is_paused"):
             if not changed and now - self.last_unpause < SPEED_RETRY_SECONDS:
@@ -455,6 +523,10 @@ def _execute(api: RimApi, action: dict[str, Any]) -> None:
             "text": action["text"], "duration": action["duration"], "color": "#FFF1D6",
             "scale": 1.15, "panel": True, "compact": True, "bars": [],
         })
+    elif kind == "close_window":
+        api.request("/api/v1/ui/window/close", post=True, body={
+            "window_types": [action["window_type"]], "force_pause_only": False,
+        })
 
 
 def _parse_args() -> argparse.Namespace:
@@ -474,10 +546,15 @@ def main() -> None:
         signal.signal(signum, lambda *_: stop.set())
     api = RimApi(args.api_url)
     planner = ObserverPlanner()
+    window_closer = TimedWindowCloser()
+    next_window_scan = 0.0
+    next_medical_scan = 0.0
+    critical_disease = False
     outbox: queue.Queue[dict[str, Any]] = queue.Queue()
     DeathEventReader(args.api_url, outbox, stop).start()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
     args.pid_file.write_text(str(os.getpid()), encoding="ascii")
+    stopped_detail = "Observer stopped"
     try:
         while not stop.is_set():
             now = time.monotonic()
@@ -490,6 +567,11 @@ def main() -> None:
                                               "detail": "Waiting for a loaded colony", "death_overlay_until": 0})
                     stop.wait(2)
                     continue
+                if _pause_if_colony_ended(api, game, int(current_map["id"])):
+                    stopped_detail = "Colony ended; game paused and observer stopped"
+                    _log(args.log, {"action": {"kind": "colony_ended", "tick": game.get("game_tick")},
+                                    "detail": stopped_detail})
+                    break
                 combat = api.request("/api/v1/combat/state?" + urlencode({"map_id": current_map["id"]})) or {}
                 fires = api.request("/api/v1/map/fire/situation?" + urlencode({"map_id": current_map["id"]})) or {}
                 home_fire = any(fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
@@ -497,6 +579,9 @@ def main() -> None:
                 critical_bleeding = any(pawn.get("tendable_now") and not pawn.get("is_dead")
                                         and float(pawn.get("bleeding_rate") or 0) >= 1.5
                                         for pawn in combat.get("colonists") or [])
+                if now >= next_medical_scan:
+                    critical_disease = _critical_disease(api.request("/api/v2/colonists/detailed"))
+                    next_medical_scan = now + MEDICAL_SCAN_SECONDS
                 downed_under_attack = _downed_under_attack(
                     combat.get("colonists") or [], combat.get("hostiles") or [])
                 events: list[dict[str, Any]] = []
@@ -515,12 +600,18 @@ def main() -> None:
                 actions = planner.step(snapshot, events, now)
                 actions = planner.pacing_actions(game, now, home_fire=home_fire,
                                                  critical_bleeding=critical_bleeding,
-                                                 downed_under_attack=downed_under_attack) + actions
+                                                 downed_under_attack=downed_under_attack,
+                                                 critical_disease=critical_disease) + actions
+                if now >= next_window_scan:
+                    windows = api.request("/api/v1/ui/windows") or []
+                    actions.extend(window_closer.step(windows, now))
+                    next_window_scan = now + 1.0
                 death_until = time.time() + max(0, DEATH_SECONDS - (now - planner.shot.started)) if planner.shot and planner.shot.kind == "death" else 0
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
-                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack else TARGET_GAME_SPEED,
+                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED,
+                          "critical_disease": critical_disease,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}
                 # Mark the death spotlight before announcing it so Laya's HUD
@@ -540,7 +631,7 @@ def main() -> None:
             stop.wait(max(0.25, args.interval))
     finally:
         _write_json(args.status, {"pid": os.getpid(), "state": "stopped", "updated_at": datetime.now(timezone.utc).isoformat(),
-                                  "detail": "Observer stopped", "death_overlay_until": 0})
+                                  "detail": stopped_detail, "death_overlay_until": 0})
         args.pid_file.unlink(missing_ok=True)
 
 

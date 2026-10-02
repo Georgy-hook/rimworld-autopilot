@@ -391,7 +391,18 @@ namespace RIMAPI.Helpers
             if (plant != null)
             {
                 dto.Growth = plant.Growth;
+                dto.Blighted = plant.Blighted;
+                dto.IsCultivated = plant.Map != null && (plant.Position.GetZone(plant.Map) is Zone_Growing
+                    || plant.Position.GetEdifice(plant.Map) is Building_PlantGrower);
+                dto.Dying = plant.Dying;
+                dto.DyingFromPollution = plant.DyingFromPollution;
+                dto.DyingFromNoPollution = plant.DyingFromNoPollution;
+                dto.IsDesignatedForCut = plant.Map?.designationManager?.DesignationOn(plant, DesignationDefOf.CutPlant) != null;
+                dto.GrowthRate = plant.GrowthRate;
+                dto.DaysUntilHarvestEstimate = FarmHelper.CalculateDaysUntilHarvest(plant);
                 dto.HarvestableNow = plant.HarvestableNow;
+                dto.IsDesignatedForHarvest = plant.Map?.designationManager?.DesignationOn(
+                    plant, DesignationDefOf.HarvestPlant) != null;
                 dto.HarvestYield = plant.HarvestableNow ? plant.YieldNow() : 0;
                 dto.HarvestedThingDef = plant.def.plant?.harvestedThingDef?.defName;
             }

@@ -50,7 +50,16 @@ namespace RIMAPI.Models
         public string Kind { get; set; }
         public string StuffDefName { get; set; }
         public float PercentComplete { get; set; }
+        public int MinimumConstructionSkill { get; set; }
+        public List<ConstructionMaterialDto> MaterialsNeeded { get; set; }
         public PositionDto Position { get; set; }
+    }
+
+    public class ConstructionMaterialDto
+    {
+        public string DefName { get; set; }
+        public int RequiredCount { get; set; }
+        public int AvailableCount { get; set; }
     }
 
     public class ConstructionProjectsDto
@@ -99,6 +108,7 @@ namespace RIMAPI.Models
     // --- The Blueprint Data Structure ---
     public class BlueprintDto
     {
+        public bool Roof { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
         public List<SavedTerrainDto> Floors { get; set; } = new List<SavedTerrainDto>();

@@ -276,9 +276,14 @@ def _defense_types(snapshot: dict[str, Any]) -> set[str]:
 
 def hostile_is_preparing(row: dict[str, Any]) -> bool:
     job = str(row.get("current_job") or "").lower()
+    lord_toil = str(row.get("lord_toil_name") or "").lower()
+    # A raider pauses in Wait_Combat while aiming during an active assault.
+    # Treating that pause as staging repeatedly undrafts the defenders.
+    if job == "wait_combat" or any(token in lord_toil for token in (
+            "assault", "breach", "sap", "kidnap", "steal")):
+        return False
     if job == "goto" or any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
         return False
-    lord_toil = str(row.get("lord_toil_name") or "").lower()
     hive_guard = "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
     return hive_guard or any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
         token in lord_toil for token in ("stage", "siege")
@@ -295,6 +300,75 @@ def guarded_hive_outside_contact(snapshot: dict[str, Any]) -> bool:
                   if row.get("distance_to_nearest_opponent") is not None else 9999) > 8
         for row in hostiles
     )
+
+
+def insect_choke_door(snapshot: dict[str, Any]) -> int | None:
+    """Find an owned doorway with walls on both flanks and fighters behind it."""
+    combat = snapshot.get("combat") or {}
+    walls = {
+        (int(pos["x"]), int(pos["z"]))
+        for row in combat.get("defenses") or [] if row.get("kind") == "wall"
+        for pos in [row.get("position") or {}]
+        if pos.get("x") is not None and pos.get("z") is not None
+    }
+    protected = protected_emergency_care_ids(snapshot)
+    fighters = [row for row in combat.get("colonists") or []
+                if not row.get("is_dead") and not row.get("is_downed")
+                and not row.get("is_in_mental_state") and row.get("can_fight", True)
+                and row.get("id") not in protected
+                and (row.get("position") or {}).get("x") is not None
+                and (row.get("position") or {}).get("z") is not None]
+    insects = [row for row in live_hostiles(snapshot)
+               if any(token in _text(row) for token in INSECT_TOKENS)
+               and (row.get("position") or {}).get("x") is not None
+               and (row.get("position") or {}).get("z") is not None]
+    options: list[tuple[float, int]] = []
+    for door in combat.get("defenses") or []:
+        pos = door.get("position") or {}
+        if (door.get("kind") != "door" or door.get("id") is None
+                or pos.get("x") is None or pos.get("z") is None
+                or float(door.get("hit_points_percent") if door.get("hit_points_percent") is not None else 1) < 0.5):
+            continue
+        x, z = int(pos["x"]), int(pos["z"])
+        for insect in insects:
+            target = insect["position"]
+            dx, dz = int(target["x"]) - x, int(target["z"]) - z
+            distance = (dx * dx + dz * dz) ** 0.5
+            if distance < 2 or distance > 24:
+                continue
+            along_x = abs(dx) >= abs(dz)
+            if any((int(other["position"]["x"]) - x) * dx <= 0 if along_x
+                   else (int(other["position"]["z"]) - z) * dz <= 0
+                   for other in insects):
+                continue
+            flank_a = (x, z - 1) if along_x else (x - 1, z)
+            flank_b = (x, z + 1) if along_x else (x + 1, z)
+            if flank_a not in walls or flank_b not in walls:
+                continue
+            if along_x:
+                behind = [pawn for pawn in fighters
+                          if (int(pawn["position"]["x"]) - x) * dx < 0]
+            else:
+                behind = [pawn for pawn in fighters
+                          if (int(pawn["position"]["z"]) - z) * dz < 0]
+            if not behind:
+                continue
+            if not any(pawn.get("weapon_def") and not pawn.get("has_ranged_weapon")
+                       and int(pawn.get("melee_skill") or 0) >= 5
+                       and float(pawn.get("armor_sharp") or 0) >= 0.4
+                       and float(pawn.get("moving", 1)) >= 0.8
+                       for pawn in behind):
+                continue
+            if sum(bool(pawn.get("has_ranged_weapon"))
+                   and float(pawn.get("manipulation", 1)) >= 0.65
+                   and float(pawn.get("sight", 1)) >= 0.65 for pawn in behind) < 2:
+                continue
+            approach = min((int(pawn["position"]["x"]) - x) ** 2
+                           + (int(pawn["position"]["z"]) - z) ** 2 for pawn in behind)
+            if approach > 20 ** 2:
+                continue
+            options.append((distance + approach ** 0.5 / 4, int(door["id"])))
+    return min(options)[1] if options else None
 
 
 def has_clear_shot(shooter: dict[str, Any], hostiles: list[dict[str, Any]]) -> bool:
@@ -335,6 +409,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     psycasts = [ability for pawn in fighters for ability in (pawn.get("psycasts") or []) if ability.get("can_cast")]
     has_explosives = any(any(token in text for token in EXPLOSIVE_TOKENS) for text in hostile_text)
     has_insects = any(any(token in text for token in INSECT_TOKENS) for text in hostile_text)
+    insects_only = all(any(token in text for token in INSECT_TOKENS) for text in hostile_text)
     has_kidnapper = "kidnap" in hostile_jobs or any(row.get("carrying_pawn_id") for row in hostiles)
     staging = bool(fighters) and all(float(row.get("distance_to_nearest_opponent") or 0) > 35 for row in fighters) and all(
         hostile_is_preparing(row) for row in hostiles
@@ -379,7 +454,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
             names.append("counter_snipe")
     if ranged and (any("drop" in text for text in hostile_text) or "waitmaintainposture" in hostile_jobs):
         names.append("drop_pod_encircle")
-    if has_insects and armored_melee and "door" in defenses:
+    if insects_only and armored_melee and len(ranged) >= 2 and insect_choke_door(snapshot) is not None:
         names.append("infestation_choke")
     if len(ranged) >= 2 and all(not row.get("has_ranged_weapon") for row in hostiles) and (has_insects or any("animal" in text or "manhunter" in text for text in hostile_text)):
         # Kiting is a coordinated lure-and-fire plan. A lone mobile pawn (or a
@@ -410,9 +485,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     if any("gun" in text or "sniper" in text or "lancer" in text for text in hostile_text) and armored_melee:
         names.append("rush_ranged")
     if has_kidnapper and ranged:
-        # Focus fire already prioritizes the carrier; the old intercept
-        # positioning did not know the escape route and could move away.
-        names.insert(0, "focus_fire")
+        names.insert(0, "intercept_kidnapper")
     if psycasts:
         if any(ability.get("hostile") for ability in psycasts):
             names.append("psycast_control")
@@ -420,6 +493,17 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
             names.append("psycast_support")
     if not names:
         names = ["civilian_retreat"] if any(float(row.get("moving", 1)) >= 0.65 for row in fighters) else []
+    insect_contact = insects_only and any(
+        float(row.get("distance_to_nearest_opponent") or 9999) < 18 for row in fighters)
+    if insect_contact and not armored_melee and len(armed_melee) < max(2, len(hostiles)):
+        # One unarmored founder should not charge an active insect. A larger
+        # sword group can still coordinate against a small number of bugs.
+        names = [name for name in names if name != "melee_assault"]
+        if len(ranged) < 2:
+            names = [name for name in names if name not in {"melee_hold_line", "screen_melee"}]
+            if not in_range:
+                names = [name for name in names if name not in
+                         {"hold_cover", "focus_fire", "advance_to_range", "firing_line"}]
 
     result: dict[str, str] = {}
     for name in names:
@@ -450,6 +534,9 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
                                 "the rest will seek trap-free firing lanes, which may expose them.")
             if name == "focus_fire" and len(in_range) < len(hostiles):
                 description += " Risk: fewer shooters are in range than active enemies; other fighters may be left exposed."
+            if name == "intercept_kidnapper":
+                description += (" Pursue the carrier in long trap-free moves and fire whenever a shot opens; "
+                                "this exposes the pursuer and may leave the base undefended.")
             if name in {"focus_fire", "hold_cover", "firing_line"} and any(
                 float(row.get("distance_to_nearest_opponent") or 9999) <= 6 for row in ranged
             ):

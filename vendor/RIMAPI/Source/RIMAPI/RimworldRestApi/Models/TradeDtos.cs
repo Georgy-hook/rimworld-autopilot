@@ -48,6 +48,9 @@ namespace RIMAPI.Models
 
     public class LiveTradeItemDto
     {
+        public bool IsWeapon { get; set; }
+        public bool IsImplant { get; set; }
+        public string Description { get; set; }
         public string DefName { get; set; }
         public string Label { get; set; }
         public int Count { get; set; }
@@ -103,6 +106,7 @@ namespace RIMAPI.Models
 
     public class LiveTradeCategoryDto
     {
+        public string Description { get; set; }
         public string Category { get; set; }
         public string Example { get; set; }
         public int MaximumUnits { get; set; }

@@ -21,6 +21,12 @@ namespace RIMAPI.Helpers
                     Y = building.Position.y,
                     Z = building.Position.z,
                 },
+                Rotation = building.Rotation.AsInt,
+                Size = new PositionDto { X = building.def.size.x, Y = 0, Z = building.def.size.z },
+                RequiresPower = building.TryGetComp<CompPowerTrader>() != null
+                    && building.TryGetComp<CompPowerPlant>() == null,
+                PowerOn = building.TryGetComp<CompPowerTrader>()?.PowerOn ?? false,
+                PowerNetId = building.TryGetComp<CompPower>()?.PowerNet?.GetHashCode(),
                 Type = building.GetType().Name,
                 Medical = (building as Building_Bed)?.Medical ?? false,
                 ForPrisoners = (building as Building_Bed)?.ForPrisoners ?? false,

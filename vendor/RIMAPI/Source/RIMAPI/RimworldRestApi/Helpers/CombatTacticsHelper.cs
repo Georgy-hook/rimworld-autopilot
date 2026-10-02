@@ -377,6 +377,71 @@ namespace RIMAPI.Helpers
                 }
 
                 Building defense = FindDefense(map, request.DefenseBuildingId, tactic, target.Position, fighters);
+                if (tactic == "intercept_kidnapper"
+                    || (tactic == "focus_fire" && target.carryTracker?.CarriedThing is Pawn))
+                {
+                    if (!(target.carryTracker?.CarriedThing is Pawn))
+                    {
+                        result.Notes.Add("Target is no longer carrying a pawn; reassess the threat.");
+                        return ApiResult<CombatTacticResponseDto>.Ok(result);
+                    }
+                    foreach (Pawn pawn in fighters)
+                    {
+                        if (!IsRanged(pawn))
+                        {
+                            if (pawn.CurJob?.def == JobDefOf.AttackMelee
+                                && pawn.CurJob.targetA.Thing == target)
+                            {
+                                result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                                continue;
+                            }
+                            Job attack = JobMaker.MakeJob(JobDefOf.AttackMelee, target);
+                            attack.playerForced = true;
+                            if (pawn.jobs.TryTakeOrderedJob(attack))
+                                result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                            continue;
+                        }
+                        if (CanShootTarget(pawn, pawn.Position, target))
+                        {
+                            if (pawn.CurJob?.def == JobDefOf.AttackStatic
+                                && pawn.CurJob.targetA.Thing == target)
+                            {
+                                result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                                continue;
+                            }
+                            Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
+                            shot.playerForced = true;
+                            if (pawn.jobs.TryTakeOrderedJob(shot))
+                                result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                            continue;
+                        }
+                        float dx = target.Position.x - pawn.Position.x;
+                        float dz = target.Position.z - pawn.Position.z;
+                        float distance = (float)Math.Sqrt(dx * dx + dz * dz);
+                        float step = Math.Min(24f, Math.Max(0f, distance - 3f));
+                        IntVec3 desired = new IntVec3(
+                            pawn.Position.x + (int)Math.Round(dx * step / Math.Max(distance, 1f)), 0,
+                            pawn.Position.z + (int)Math.Round(dz * step / Math.Max(distance, 1f)));
+                        IntVec3 safe;
+                        if (!TryFindTrapFreeCell(pawn, desired, target.Position, tactic, out safe, 2f))
+                        {
+                            result.Notes.Add($"No trap-free pursuit route exists for {pawn.LabelShortCap}.");
+                            continue;
+                        }
+                        Job current = pawn.CurJob;
+                        if (current?.def == JobDefOf.Goto && current.targetA.Cell.IsValid
+                            && current.targetA.Cell.DistanceToSquared(safe) <= 9)
+                        {
+                            result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                            continue;
+                        }
+                        Job chase = JobMaker.MakeJob(JobDefOf.Goto, safe);
+                        chase.playerForced = true;
+                        if (pawn.jobs.TryTakeOrderedJob(chase))
+                            result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                    }
+                    return ApiResult<CombatTacticResponseDto>.Ok(result);
+                }
                 if (PositioningTactics.Contains(tactic))
                 {
                     List<Pawn> ordered = fighters

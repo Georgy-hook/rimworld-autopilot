@@ -228,6 +228,28 @@ namespace RIMAPI.Helpers
                         IsColonyAnimal = p.Faction == Faction.OfPlayer,
                         Health = p.health?.summaryHealth?.SummaryHealthPercent ?? 1f,
                         Hunger = p.needs?.food?.CurLevelPercentage ?? 1f,
+                        Rest = p.needs?.rest?.CurLevelPercentage ?? 1f,
+                        Consciousness = p.Faction == Faction.OfPlayer
+                            ? p.health?.capacities?.GetLevel(PawnCapacityDefOf.Consciousness) ?? 0f : 0f,
+                        Moving = p.Faction == Faction.OfPlayer
+                            ? p.health?.capacities?.GetLevel(PawnCapacityDefOf.Moving) ?? 0f : 0f,
+                        Pain = p.Faction == Faction.OfPlayer ? p.health?.hediffSet?.PainTotal ?? 0f : 0f,
+                        HealthConditions = p.Faction == Faction.OfPlayer ? p.health?.hediffSet?.hediffs?
+                            .Where(h => h != null && h.Visible)
+                            .Select(h => new AnimalConditionDto
+                            {
+                                DefName = h.def?.defName,
+                                Label = h.Label,
+                                Severity = h.Severity,
+                                Stage = h.CurStage?.label,
+                                TendableNow = h.TendableNow(),
+                                IsPermanent = h.IsPermanent(),
+                                IsCurrentlyLifeThreatening = h.IsCurrentlyLifeThreatening,
+                                CanEverKill = h.CanEverKill(),
+                                Immunity = h.TryGetComp<HediffComp_Immunizable>()?.Immunity,
+                                TendQuality = h.TryGetComp<HediffComp_TendDuration>()?.tendQuality,
+                                TendTicksLeft = h.TryGetComp<HediffComp_TendDuration>()?.tendTicksLeft,
+                            }).ToList() ?? new List<AnimalConditionDto>() : new List<AnimalConditionDto>(),
                         BleedingRate = p.health?.hediffSet?.BleedRateTotal ?? 0f,
                         TendableNow = p.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false,
                         Downed = p.Downed,
@@ -238,6 +260,13 @@ namespace RIMAPI.Helpers
                             .relations?.DirectRelations.Where(r => r.def == PawnRelationDefOf.Bond)
                             .Select(r => r.otherPawn?.thingIDNumber)
                             .FirstOrDefault(),
+                        BondedPawnId = p.relations?.DirectRelations.FirstOrDefault(r => r.def == PawnRelationDefOf.Bond)?.otherPawn?.thingIDNumber,
+                        MasterPawnId = p.playerSettings?.Master?.thingIDNumber,
+                        InMentalState = p.InMentalState,
+                        FollowDrafted = p.playerSettings?.followDrafted ?? false,
+                        AnimalsReleased = p.playerSettings?.Master?.playerSettings?.animalsReleased ?? false,
+                        Trainability = p.RaceProps?.trainability?.defName,
+                        Trainables = AnimalTrainingAutomationHelper.Describe(p),
                         Pregnant = p.health?.hediffSet?.HasHediff(HediffDefOf.Pregnant) ?? false,
                         Gender = p.gender.ToString(),
                         Wildness = p.GetStatValue(StatDefOf.Wildness),
@@ -477,6 +506,7 @@ namespace RIMAPI.Helpers
                 if (map == null) return ApiResult.Fail($"Map {request.MapId} not found.");
                 var ids = new HashSet<int>(request.PlantIds ?? new List<int>());
                 int designated = 0;
+                int alreadyDesignated = 0;
                 foreach (Plant plant in map.listerThings.ThingsInGroup(ThingRequestGroup.Plant).OfType<Plant>().Where(p => ids.Contains(p.thingIDNumber)))
                 {
                     if (!plant.HarvestableNow) continue;
@@ -485,8 +515,10 @@ namespace RIMAPI.Helpers
                         map.designationManager.AddDesignation(new Designation(plant, DesignationDefOf.HarvestPlant));
                         designated++;
                     }
+                    else alreadyDesignated++;
                 }
-                return designated > 0 ? ApiResult.Ok() : ApiResult.Fail("No selected mature plants could be designated.");
+                return designated + alreadyDesignated > 0 ? ApiResult.Ok()
+                    : ApiResult.Fail("No selected mature plants could be designated.");
             }
             catch (Exception ex)
             {
@@ -574,6 +606,8 @@ namespace RIMAPI.Helpers
 
             foreach (Building building in map.listerBuildings.allBuildingsColonist)
             {
+                var power = building.TryGetComp<CompPowerTrader>();
+                var fuel = building.TryGetComp<CompRefuelable>();
                 buildings.Add(
                     new BuildingDto
                     {
@@ -596,6 +630,14 @@ namespace RIMAPI.Helpers
                         Type = building.GetType().Name,
                         Medical = (building as Building_Bed)?.Medical ?? false,
                         ForPrisoners = (building as Building_Bed)?.ForPrisoners ?? false,
+                        RequiresPower = power != null && power.Props.PowerConsumption > 0,
+                        PowerOn = power?.PowerOn ?? false,
+                        PowerNetId = power?.PowerNet?.GetHashCode(),
+                        RequiresFuel = fuel != null,
+                        CurrentFuel = fuel?.Fuel,
+                        FuelCapacity = fuel?.Props.fuelCapacity,
+                        FuelType = fuel?.Props.fuelFilter?.AllowedThingDefs.FirstOrDefault()?.defName,
+                        AutoRefuel = fuel?.allowAutoRefuel ?? false,
                     }
                 );
             }

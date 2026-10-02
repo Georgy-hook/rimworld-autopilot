@@ -8,6 +8,9 @@ from install_payload import MOD_FILES, MOD_FOLDERS, RUNTIME_FILES, copy_install_
 
 
 class InstallPayloadTests(unittest.TestCase):
+    def test_live_capabilities_are_part_of_installed_runtime(self):
+        self.assertIn("colony_capabilities.py", RUNTIME_FILES)
+
     def test_only_runtime_files_are_installed_without_overwriting_user_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

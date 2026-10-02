@@ -50,7 +50,7 @@
     <!-- RimWorld 1.6 dependencies -->
     <PackageReference
       Include="Krafs.Rimworld.Ref"
-      Version="1.6.4518"
+      Version="1.6.4871"
       Condition="'$(Configuration)' == 'Release-1.6'"
     />
 

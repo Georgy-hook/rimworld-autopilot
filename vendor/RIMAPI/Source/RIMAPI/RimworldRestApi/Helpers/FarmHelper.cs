@@ -12,97 +12,51 @@ namespace RIMAPI.Helpers
     {
         public static MapFarmSummaryDto GenerateFarmSummary(Map map)
         {
-            var summary = new MapFarmSummaryDto();
-            var growingZones = map.zoneManager.AllZones.OfType<Zone_Growing>().ToList();
-
-            summary.TotalGrowingZones = growingZones.Count;
-
-            var cropTypes = new Dictionary<string, CropTypeDto>();
-            var allPlants = new List<Plant>();
-            float totalDaysUntilHarvest = 0f;
-
-            foreach (Zone_Growing zone in growingZones)
+            var zones = map.zoneManager.AllZones.OfType<Zone_Growing>().ToList();
+            var basins = map.listerBuildings.allBuildingsColonist.OfType<Building_PlantGrower>().ToList();
+            var summary = new MapFarmSummaryDto { TotalGrowingZones = zones.Count, TotalPlantGrowers = basins.Count };
+            var growers = zones.Select(z => Tuple.Create(z.GetPlantDefToGrow(), z.ID, z.Cells, "zone:" + z.ID))
+                .Concat(basins.Select(b => Tuple.Create(b.GetPlantDefToGrow(), -1, b.OccupiedRect().Cells.ToList(), "building:" + b.thingIDNumber)));
+            var crops = new Dictionary<string, CropTypeDto>();
+            foreach (var grower in growers)
             {
-                var zonePlants = map
-                    .listerThings.ThingsInGroup(ThingRequestGroup.Plant)
-                    .OfType<Plant>()
-                    .Where(p => zone.ContainsCell(p.Position))
-                    .ToList();
-
-                allPlants.AddRange(zonePlants);
-                var plantDefToGrowName = zone.PlantDefToGrow.defName;
-                if (!cropTypes.ContainsKey(plantDefToGrowName))
+                // Read grower cells directly; do not scan all map plants per field.
+                var plants = grower.Item3.Select(c => c.GetPlant(map)).Where(p => p != null).ToList();
+                var definitions = plants.Select(p => p.def).Concat(new[] { grower.Item1 }).Where(d => d != null).Distinct();
+                foreach (var definition in definitions)
                 {
-                    cropTypes[plantDefToGrowName] = new CropTypeDto
+                    if (!crops.TryGetValue(definition.defName, out var crop))
                     {
-                        PlantDefName = plantDefToGrowName,
-                        PlantLabel = zone.PlantDefToGrow.label,
-                        PlantCategory = GetPlantCategory(zone.PlantDefToGrow),
-                        TotalPlants = 0,
-                        ExpectedYield = 0,
-                        InfectedCount = 0,
-                        HarvestablePlants = 0,
-                        GrowthProgressAverage = 0,
-                        DaysUntilHarvest = 0,
-                        IsFullyGrown = false,
-                        IsHarvestable = false,
-                        ZoneId = zone.ID,
-                    };
-                }
-
-                foreach (Plant plant in zonePlants)
-                {
-                    var defName = plant.def.defName;
-
-                    if (!cropTypes.ContainsKey(defName))
-                    {
-                        continue;
+                        crop = new CropTypeDto { PlantDefName = definition.defName, PlantLabel = definition.label,
+                            PlantCategory = GetPlantCategory(definition), ZoneId = grower.Item2 };
+                        crops[definition.defName] = crop;
                     }
-
-                    var crop = cropTypes[defName];
-                    crop.TotalPlants++;
-                    crop.GrowthProgressAverage += plant.Growth;
-
-                    if (plant.IsCrop && plant.HarvestableNow)
+                    crop.GrowerIds.Add(grower.Item4);
+                    foreach (Plant plant in plants.Where(p => p.def == definition))
                     {
-                        crop.HarvestablePlants++;
-                        crop.ExpectedYield += plant.YieldNow();
-                        crop.IsHarvestable = true;
+                        crop.TotalPlants++;
+                        crop.GrowthProgressAverage += plant.Growth * 100f;
+                        if (plant.HarvestableNow)
+                        { crop.HarvestablePlants++; crop.ExpectedYield += plant.YieldNow(); crop.IsHarvestable = true; }
+                        if (plant.Blighted) { crop.InfectedCount++; summary.TotalInfectedPlants++; }
+                        if (plant.Growth >= 1f) crop.IsFullyGrown = true;
+                        float days = CalculateDaysUntilHarvest(plant);
+                        if (days < 0) crop.GrowthBlockedPlants++;
+                        else crop.DaysUntilHarvest += days;
                     }
-
-                    if (plant.Blighted)
-                    {
-                        crop.InfectedCount++;
-                        summary.TotalInfectedPlants++;
-                    }
-
-                    if (plant.Growth >= 1f)
-                    {
-                        crop.IsFullyGrown = true;
-                    }
-
-                    totalDaysUntilHarvest += CalculateDaysUntilHarvest(plant);
                 }
             }
-
-            // Calculate averages and finalize crop types
-            foreach (var crop in cropTypes.Values)
+            foreach (var crop in crops.Values)
             {
-                if (crop.TotalPlants > 0)
-                {
-                    crop.DaysUntilHarvest = totalDaysUntilHarvest / crop.TotalPlants;
-                }
+                if (crop.TotalPlants > 0) crop.GrowthProgressAverage /= crop.TotalPlants;
+                int estimating = crop.TotalPlants - crop.GrowthBlockedPlants;
+                crop.DaysUntilHarvest = estimating > 0 ? crop.DaysUntilHarvest / estimating : -1;
                 summary.TotalPlants += crop.TotalPlants;
                 summary.TotalExpectedYield += crop.ExpectedYield;
-                summary.GrowthProgressAverage += crop.GrowthProgressAverage;
+                summary.GrowthProgressAverage += crop.GrowthProgressAverage * crop.TotalPlants;
             }
-
-            if (cropTypes.Count > 0)
-            {
-                summary.GrowthProgressAverage /= cropTypes.Count;
-            }
-
-            summary.CropTypes = cropTypes.Values.OrderByDescending(c => c.TotalPlants).ToList();
+            if (summary.TotalPlants > 0) summary.GrowthProgressAverage /= summary.TotalPlants;
+            summary.CropTypes = crops.Values.OrderByDescending(c => c.TotalPlants).ToList();
             return summary;
         }
 
@@ -115,11 +69,7 @@ namespace RIMAPI.Helpers
             if (zone == null)
                 return null;
 
-            var zonePlants = map
-                .listerThings.ThingsInGroup(ThingRequestGroup.Plant)
-                .OfType<Plant>()
-                .Where(p => zone.ContainsCell(p.Position))
-                .ToList();
+            var zonePlants = zone.Cells.Select(c => c.GetPlant(map)).Where(p => p != null).ToList();
 
             var zoneDto = new GrowingZoneDto
             {
@@ -148,7 +98,7 @@ namespace RIMAPI.Helpers
                     )
                     && zone.Cells.Any(c => c.GetPlant(map) == null),
 #elif RIMWORLD_1_6
-                IsSowing = zone.allowSow,
+                IsSowing = zone.allowSow && zone.Cells.Any(c => PlantUtility.GrowthSeasonNow(c, map, zone.GetPlantDefToGrow())),
 #endif
                 SoilType = GetSoilType(zone.Cells.FirstOrDefault(), map),
                 Fertility = GetZoneFertility(zone, map),
@@ -207,7 +157,8 @@ namespace RIMAPI.Helpers
             error = null;
 
             var plantDef = ResolvePlantDef(plantDefName);
-            if (plantDef == null || plantDef.plant == null)
+            if (plantDef == null || plantDef.plant == null || !plantDef.plant.sowTags.Contains("Ground")
+                || !Command_SetPlantToGrow.IsPlantAvailable(plantDef, map))
             {
                 error = $"Invalid plant definition: {plantDefName}";
                 return null;
@@ -231,6 +182,7 @@ namespace RIMAPI.Helpers
                     skippedOccupied++;
                     continue;
                 }
+                if (!plantDef.CanEverPlantAt(cell, map, true, false)) continue;
                 zone.AddCell(cell);
             }
 
@@ -273,14 +225,14 @@ namespace RIMAPI.Helpers
 
         public static float CalculateDaysUntilHarvest(Plant plant)
         {
-            if (plant.Growth >= plant.def.plant.harvestMinGrowth)
+            if (plant.Blighted) return -1f;
+            if (plant.Growth >= 1f)
             {
-                return 0f; // Already harvestable
+                return 0f; // Mature for normal automatic harvesting.
             }
 
-            float remainingGrowth = plant.def.plant.harvestMinGrowth - plant.Growth;
-            int ticksUntilHarvest = (int)(remainingGrowth / plant.def.plant.growDays);
-            return ticksUntilHarvest; // Convert ticks to days
+            return PlantAutomationHelper.CalendarDays(plant.def, plant.Growth,
+                plant.Map.fertilityGrid.FertilityAt(plant.Position), plant.Position.GetTemperature(plant.Map));
         }
 
         public static bool IsPlantResting(Plant plant)

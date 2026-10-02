@@ -39,6 +39,21 @@ def raid(fighters, hostiles, defenses=()):
 
 
 class CombatScenarioTests(unittest.TestCase):
+    def test_kidnapper_exposes_interception_without_undrafting(self):
+        shooter = fighter(1, distance=38, range_cells=25)
+        shooter["is_drafted"] = True
+        snapshot = raid([shooter], [{"id": 99, "kind_def": "Raider",
+                                     "health": 1.0, "current_job": "Kidnap",
+                                     "carrying_pawn_id": 8,
+                                     "position": {"x": 49, "z": 10}}])
+        criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
+        self.assertIn("intercept_kidnapper", criteria)
+        self.assertNotIn("prepare_undrafted", criteria)
+        action = bridge.plan_action(snapshot, {"choice": "intercept_kidnapper"})
+        self.assertTrue(any(command.get("body", {}).get("tactic") == "intercept_kidnapper"
+                            and command["body"].get("target_pawn_id") == 99
+                            for command in action["commands"]))
+
     def test_wall_blocked_gun_is_not_counted_as_cover_even_inside_range(self):
         shooter = fighter(1, distance=9, range_cells=25)
         shooter["shootable_opponent_ids"] = []
@@ -758,7 +773,8 @@ class CombatScenarioTests(unittest.TestCase):
     def test_distant_preparing_raid_cannot_provoke_with_short_range_or_unarmed_pawns(self):
         snapshot = raid(
             [fighter(1, distance=80, range_cells=15), fighter(2, ranged=False, weapon=None, distance=80)],
-            [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Combat", "position": {"x": 100, "z": 100}}],
+            [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Wander",
+              "lord_toil_name": "LordToil_Stage", "position": {"x": 100, "z": 100}}],
         )
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertNotIn("prepare_undrafted", options)
@@ -846,12 +862,52 @@ class CombatScenarioTests(unittest.TestCase):
         )
         self.assertEqual(colony_combat.choose_default_target(snapshot, "focus_fire"), 99)
 
-    def test_infestation_choke_requires_real_door_armed_armored_melee(self):
-        insect = {"id": 99, "kind_def": "Megaspider", "health": 1.0, "position": {"x": 22, "z": 10}}
-        unarmored = raid([fighter(1, ranged=False, weapon="MeleeWeapon_Gladius")], [insect], [{"kind": "door"}])
+    def test_infestation_choke_requires_flanked_door_armored_blocker_and_guns(self):
+        insect = {"id": 99, "kind_def": "Megaspider", "health": 1.0,
+                  "current_job": "AttackMelee", "position": {"x": 22, "z": 10}}
+        defenses = [{"id": 50, "kind": "door", "position": {"x": 17, "z": 10}},
+                    {"id": 51, "kind": "wall", "position": {"x": 17, "z": 9}},
+                    {"id": 52, "kind": "wall", "position": {"x": 17, "z": 11}}]
+        melee = fighter(1, ranged=False, weapon="MeleeWeapon_Gladius", armor=0.55)
+        shooters = [fighter(2), fighter(3)]
+        unarmored = raid([fighter(1, ranged=False, weapon="MeleeWeapon_Gladius")]
+                         + shooters, [insect], defenses)
         self.assertNotIn("infestation_choke", colony_combat.available_tactics(unarmored))
-        armored = raid([fighter(1, ranged=False, weapon="MeleeWeapon_Gladius", armor=0.55)], [insect], [{"kind": "door"}])
+        unsupported = raid([melee], [insect], defenses)
+        self.assertNotIn("infestation_choke", colony_combat.available_tactics(unsupported))
+        open_door = raid([melee] + shooters, [insect], defenses[:1])
+        self.assertNotIn("infestation_choke", colony_combat.available_tactics(open_door))
+        armored = raid([melee] + shooters, [insect], defenses)
+        self.assertEqual(colony_combat.insect_choke_door(armored), 50)
         self.assertIn("infestation_choke", colony_combat.available_tactics(armored))
+        flanked = raid([melee] + shooters, [insect, {
+            "id": 100, "kind_def": "Megascarab", "health": 1.0,
+            "position": {"x": 14, "z": 10}}], defenses)
+        self.assertNotIn("infestation_choke", colony_combat.available_tactics(flanked))
+        shooters[0]["shootable_opponent_ids"] = [99]
+        shooters[1]["shootable_opponent_ids"] = []
+        action = bridge.plan_action(armored, {"choice": "infestation_choke"})
+        commands = [row["body"] for row in action["commands"]
+                    if row["endpoint"] == "/api/v1/combat/tactic"]
+        self.assertEqual([(row["tactic"], row["fighter_ids"]) for row in commands],
+                         [("infestation_choke", [1]), ("focus_fire", [2]),
+                          ("fallback_line", [3])])
+        self.assertTrue(all(row["defense_building_id"] == 50 for row in commands))
+
+    def test_unarmored_founders_do_not_charge_active_insects(self):
+        insect = {"id": 99, "kind_def": "Megaspider", "health": 1.0,
+                  "current_job": "AttackMelee", "position": {"x": 22, "z": 10}}
+        alone = raid([fighter(1, ranged=False, weapon="MeleeWeapon_Gladius", distance=9)],
+                     [insect])
+        options = colony_combat.available_tactics(alone)
+        self.assertIn("withdraw_and_regroup", options)
+        self.assertNotIn("melee_assault", options)
+        self.assertNotIn("melee_hold_line", options)
+        blocked = raid([fighter(1, distance=9)], [insect])
+        blocked["combat"]["colonists"][0]["shootable_opponent_ids"] = []
+        options = colony_combat.available_tactics(blocked)
+        self.assertIn("withdraw_and_regroup", options)
+        self.assertNotIn("advance_to_range", options)
 
     def test_combat_prompt_starts_with_live_battle_instead_of_farm_data(self):
         snapshot = raid([fighter(1)], [{"id": 99, "kind_def": "Raider", "health": 1.0, "current_job": "AttackStatic"}], [{"kind": "barricade"}])

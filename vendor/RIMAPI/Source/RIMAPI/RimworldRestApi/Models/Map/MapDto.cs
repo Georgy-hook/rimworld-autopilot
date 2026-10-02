@@ -56,6 +56,11 @@ namespace RIMAPI.Models
         public bool IsColonyAnimal { get; set; }
         public float Health { get; set; }
         public float Hunger { get; set; }
+        public float Rest { get; set; }
+        public float Consciousness { get; set; }
+        public float Moving { get; set; }
+        public float Pain { get; set; }
+        public List<AnimalConditionDto> HealthConditions { get; set; } = new List<AnimalConditionDto>();
         public float BleedingRate { get; set; }
         public bool TendableNow { get; set; }
         public bool Downed { get; set; }
@@ -63,6 +68,13 @@ namespace RIMAPI.Models
         public string CurrentJob { get; set; }
         public PositionDto Position { get; set; }
         public int? Trainer { get; set; }
+        public int? MasterPawnId { get; set; }
+        public int? BondedPawnId { get; set; }
+        public bool FollowDrafted { get; set; }
+        public bool AnimalsReleased { get; set; }
+        public string Trainability { get; set; }
+        public bool InMentalState { get; set; }
+        public List<AnimalTrainableDto> Trainables { get; set; } = new List<AnimalTrainableDto>();
         public bool Pregnant { get; set; }
         public string Gender { get; set; }
         public float Wildness { get; set; }
@@ -80,6 +92,21 @@ namespace RIMAPI.Models
         public float HarmRevengeChance { get; set; }
         public float MinComfortableTemperature { get; set; }
         public float MaxComfortableTemperature { get; set; }
+    }
+
+    public class AnimalConditionDto
+    {
+        public string DefName { get; set; }
+        public string Label { get; set; }
+        public float Severity { get; set; }
+        public string Stage { get; set; }
+        public bool TendableNow { get; set; }
+        public bool IsPermanent { get; set; }
+        public bool IsCurrentlyLifeThreatening { get; set; }
+        public bool CanEverKill { get; set; }
+        public float? Immunity { get; set; }
+        public float? TendQuality { get; set; }
+        public int? TendTicksLeft { get; set; }
     }
 
     public class TameAnimalRequestDto
@@ -132,6 +159,7 @@ namespace RIMAPI.Models
 
     public class MapFarmSummaryDto
     {
+        public int TotalPlantGrowers { get; set; }
         public int TotalGrowingZones { get; set; }
         public int TotalPlants { get; set; }
         public int TotalExpectedYield { get; set; }
@@ -142,6 +170,8 @@ namespace RIMAPI.Models
 
     public class CropTypeDto
     {
+        public int GrowthBlockedPlants { get; set; }
+        public List<string> GrowerIds { get; set; } = new List<string>();
         public string PlantDefName { get; set; }
         public string PlantLabel { get; set; }
         public string PlantCategory { get; set; }

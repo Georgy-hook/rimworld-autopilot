@@ -51,6 +51,17 @@ class RosterAgent:
 
 
 class BridgeTests(unittest.TestCase):
+    def test_combat_medical_state_replaces_placeholder_bleeding_rate(self):
+        colonists = [{"id": 65, "bleeding_rate": 0.1, "tendable_now": True,
+                      "downed": False, "current_job": "unknown"}]
+        bridge.annotate_combat_medical_state(colonists, {"colonists": [
+            {"id": 65, "bleeding_rate": 2.85833263, "tendable_now": True,
+             "is_downed": True, "current_job": "Wait_Downed"},
+        ]})
+        self.assertEqual(colonists[0]["bleeding_rate"], 2.858)
+        self.assertTrue(colonists[0]["downed"])
+        self.assertEqual(colonists[0]["current_job"], "Wait_Downed")
+
     def test_disappeared_combat_target_does_not_stop_director(self):
         client = mock.Mock()
         client.post.side_effect = [
@@ -98,7 +109,7 @@ class BridgeTests(unittest.TestCase):
             return "downloaded-root-model"
         fake_hub = types.SimpleNamespace(snapshot_download=download)
         fake_laya = types.SimpleNamespace(load=lambda path, device: (path, device, inner))
-        with mock.patch.dict(sys.modules, {"huggingface_hub": fake_hub, "laya": fake_laya}):
+        with mock.patch.dict(sys.modules, {"huggingface_hub": fake_hub, "laya": fake_laya, "torch": mock.Mock()}):
             with mock.patch.object(pathlib.Path, "is_file", return_value=True):
                 agent = bridge.load_agent(bridge.DEFAULT_MODEL, "cpu")
         self.assertEqual(agent.inner, ("downloaded-root-model", "cpu", inner))
@@ -210,7 +221,7 @@ class BridgeTests(unittest.TestCase):
         decision = bridge.decide(None, snapshot, 0.6)
         self.assertEqual(decision["choice"], "prepare_undrafted")
 
-    def test_staging_raid_keeps_both_preparation_and_combat_options(self):
+    def test_staging_raid_keeps_active_drafted_line_and_combat_options(self):
         snapshot = self.snapshot()
         snapshot["map"]["enemies"] = 2
         snapshot["combat"] = {
@@ -231,8 +242,9 @@ class BridgeTests(unittest.TestCase):
             "available_weapons": [],
         }
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
-        self.assertTrue({"prepare_undrafted", "hold_and_observe", "preemptive_strike",
+        self.assertTrue({"hold_and_observe", "preemptive_strike",
                          "advance_to_range", "hold_cover"}.issubset(criteria))
+        self.assertNotIn("prepare_undrafted", criteria)
         action = bridge.plan_action(snapshot, {"choice": "prepare_undrafted"})
         self.assertEqual(action["commands"][0]["body"], {"pawn_id": 10, "is_drafted": False})
 

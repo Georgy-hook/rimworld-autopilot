@@ -25,6 +25,32 @@ def kinds(actions):
 
 
 class StreamObserverTests(unittest.TestCase):
+    def test_research_and_quest_tabs_close_after_thirty_wall_seconds(self):
+        closer = observer.TimedWindowCloser()
+        windows = [{"window_type": "MainTabWindow_Research"},
+                   {"window_type": "MainTabWindow_Quests"},
+                   {"window_type": "Dialog_NodeTree"},
+                   {"window_type": "MainTabWindow_Menu"}]
+        self.assertEqual(closer.step(windows, 100), [])
+        self.assertEqual(closer.step(windows, 129.9), [])
+        due = closer.step(windows, 130)
+        self.assertEqual({row["window_type"] for row in due},
+                         {"MainTabWindow_Research", "MainTabWindow_Quests"})
+        self.assertEqual(closer.step(windows, 131), [])
+        self.assertEqual(len(closer.step(windows, 135)), 2)
+        self.assertEqual(closer.step([], 136), [])
+        self.assertEqual(closer.step([windows[0]], 137), [])
+        self.assertEqual(closer.step([windows[0]], 166), [])
+        self.assertEqual(closer.step([windows[0]], 167),
+                         [{"kind": "close_window", "window_type": "MainTabWindow_Research"}])
+
+    def test_window_close_targets_only_the_elapsed_tab(self):
+        api = mock.Mock()
+        observer._execute(api, {"kind": "close_window", "window_type": "MainTabWindow_Quests"})
+        api.request.assert_called_once_with(
+            "/api/v1/ui/window/close", post=True,
+            body={"window_types": ["MainTabWindow_Quests"], "force_pause_only": False})
+
     def test_status_replace_contention_does_not_stop_observer(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             status = Path(temp_dir) / "observer-status.json"
@@ -163,6 +189,20 @@ class StreamObserverTests(unittest.TestCase):
                          [{"kind": "ensure_speed", "speed": 1}])
         self.assertEqual(planner.pacing_actions(game, 2),
                          [{"kind": "ensure_speed", "speed": 3}])
+
+    def test_dangerous_disease_slows_even_without_bleeding_or_low_summary_health(self):
+        for name in ("WoundInfection", "Malaria", "Flu", "Plague"):
+            rows = [{"health": 1, "detailes": {"medical_info": {"hediffs": [{
+                "def_name": name, "severity": 0.82, "lethal_severity": 1,
+                "immunity": 0.62, "can_ever_kill": True}]}}}]
+            self.assertTrue(observer._critical_disease(rows))
+            planner = observer.ObserverPlanner()
+            game = state()["game"]
+            self.assertEqual(planner.pacing_actions(game, 0, critical_disease=True),
+                             [{"kind": "ensure_speed", "speed": 1}])
+            rows[0]["detailes"]["medical_info"]["hediffs"][0]["immunity"] = 1
+            self.assertFalse(observer._critical_disease(rows))
+            self.assertEqual(planner.pacing_actions(game, 1), [{"kind": "ensure_speed", "speed": 3}])
 
     def test_downed_colonist_with_active_enemy_slows_then_returns_to_three(self):
         planner = observer.ObserverPlanner()

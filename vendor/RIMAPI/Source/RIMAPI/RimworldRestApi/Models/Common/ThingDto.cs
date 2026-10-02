@@ -7,6 +7,14 @@ namespace RIMAPI.Models
 {
     public class ThingDto
     {
+        public bool? Blighted { get; set; }
+        public bool? IsCultivated { get; set; }
+        public bool? Dying { get; set; }
+        public bool? DyingFromPollution { get; set; }
+        public bool? DyingFromNoPollution { get; set; }
+        public bool? IsDesignatedForCut { get; set; }
+        public float? GrowthRate { get; set; }
+        public float? DaysUntilHarvestEstimate { get; set; }
         public int ThingId { get; set; }
         public string DefName { get; set; }
         public string Label { get; set; }
@@ -24,6 +32,7 @@ namespace RIMAPI.Models
         public string Description { get; set; }
         public float Growth { get; set; }
         public bool HarvestableNow { get; set; }
+        public bool IsDesignatedForHarvest { get; set; }
         public int HarvestYield { get; set; }
         public string HarvestedThingDef { get; set; }
         public string InnerDefName { get; set; }

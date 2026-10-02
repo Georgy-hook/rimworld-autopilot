@@ -59,7 +59,11 @@ namespace RIMAPI.Helpers
 
         public static bool AssignTendJob(Pawn doctor, Pawn patient)
         {
-            Job job = JobMaker.MakeJob(JobDefOf.TendPatient, patient);
+            // Use the game's reachable medicine selection, including the patient's
+            // care policy, instead of silently ordering treatment without medicine.
+            Thing medicine = HealthAIUtility.FindBestMedicine(doctor, patient);
+            Job job = JobMaker.MakeJob(JobDefOf.TendPatient, patient, medicine);
+            if (medicine != null) job.count = 1;
             return doctor.jobs.TryTakeOrderedJob(job);
         }
 
@@ -69,7 +73,8 @@ namespace RIMAPI.Helpers
             {
                 patient.ownership.ClaimBedIfNonMedical(bed);
             }
-            Job job = JobMaker.MakeJob(JobDefOf.LayDown, patient.ownership.OwnedBed ?? bed);
+            Job job = JobMaker.MakeJob(JobDefOf.LayDown, bed ?? patient.ownership.OwnedBed);
+            job.restUntilHealed = true;
             return patient.jobs.TryTakeOrderedJob(job);
         }
 
@@ -120,18 +125,18 @@ namespace RIMAPI.Helpers
             {
                 return new PawnDetailedDto
                 {
-                    Sleep = pawn.needs.rest?.CurLevel ?? 0,
-                    Comfort = pawn.needs.comfort?.CurLevel ?? 0,
-                    Beauty = pawn.needs.beauty?.CurLevel ?? 0,
-                    Joy = pawn.needs.joy?.CurLevel ?? 0,
-                    Energy = pawn.needs.energy?.CurLevel ?? 0,
-                    DrugsDesire = pawn.needs.drugsDesire?.CurLevel ?? 0,
-                    SurroundingBeauty = pawn.needs.beauty?.CurLevel ?? 0,
-                    FreshAir = pawn.needs.outdoors?.CurLevel ?? 0,
+                    Sleep = pawn.needs?.rest?.CurLevel ?? 0,
+                    Comfort = pawn.needs?.comfort?.CurLevel ?? 0,
+                    Beauty = pawn.needs?.beauty?.CurLevel ?? 0,
+                    Joy = pawn.needs?.joy?.CurLevel ?? 0,
+                    Energy = pawn.needs?.energy?.CurLevel ?? 0,
+                    DrugsDesire = pawn.needs?.drugsDesire?.CurLevel ?? 0,
+                    SurroundingBeauty = pawn.needs?.beauty?.CurLevel ?? 0,
+                    FreshAir = pawn.needs?.outdoors?.CurLevel ?? 0,
                     WorkInfo = new WorkInfoDto
                     {
                         Skills =
-                            pawn.skills.skills?.Where(skill => skill != null && skill.def != null)
+                            pawn.skills?.skills?.Where(skill => skill != null && skill.def != null)
                                 .Select(skill => new SkillDto
                                 {
                                     Name = skill.def.defName,
@@ -159,7 +164,7 @@ namespace RIMAPI.Helpers
                     PoliciesInfo = new PoliciesInfoDto
                     {
                         FoodPolicyId = pawn.foodRestriction?.CurrentFoodPolicy?.id ?? 0,
-                        HostilityResponse = (int)pawn.playerSettings.hostilityResponse,
+                        HostilityResponse = pawn.playerSettings == null ? 0 : (int)pawn.playerSettings.hostilityResponse,
                     },
                     MedicalInfo = new MedicalInfoDto
                     {
@@ -176,6 +181,11 @@ namespace RIMAPI.Helpers
                             pawn.playerSettings?.medCare ?? MedicalCareCategory.NoCare
                         ),
                         IsSelfTendAllowed = pawn.playerSettings?.selfTend ?? false,
+                        PatientFeedingEligible = !pawn.Dead && FeedPatientUtility.ShouldBeFed(pawn)
+                                                 && FeedPatientUtility.IsHungry(pawn),
+                        PatientRawFoodAllowed = (int)(pawn.needs?.food?.CurCategory ?? HungerCategory.Fed)
+                                                >= (int)HungerCategory.UrgentlyHungry
+                                                || pawn.genes?.DontMindRawFood == true,
                     },
                     SocialInfo = CreatePawnSocialInfoDto(pawn),
                 };
@@ -194,9 +204,10 @@ namespace RIMAPI.Helpers
                 Id = pawn.ThingID,
                 Name = pawn.Name?.ToString(),
                 DirectRelations = new List<RelationDto>(),
-                ChildrenCount = pawn.relations.ChildrenCount,
+                ChildrenCount = pawn.relations?.ChildrenCount ?? 0,
             };
 
+            if (pawn.relations == null) return dto;
             foreach (var relation in pawn.relations.DirectRelations)
             {
                 dto.DirectRelations.Add(
@@ -258,6 +269,11 @@ namespace RIMAPI.Helpers
                 IsLethal = hediff.IsLethal,
                 IsCurrentlyLifeThreatening = hediff.IsCurrentlyLifeThreatening,
                 CanEverKill = hediff.CanEverKill(),
+                Immunity = hediff.TryGetComp<HediffComp_Immunizable>()?.Immunity,
+                LethalSeverity = hediff.def != null && hediff.def.lethalSeverity > 0
+                    && !float.IsInfinity(hediff.def.lethalSeverity) ? (float?)hediff.def.lethalSeverity : null,
+                TendQuality = hediff.TryGetComp<HediffComp_TendDuration>()?.tendQuality,
+                TendTicksLeft = hediff.TryGetComp<HediffComp_TendDuration>()?.tendTicksLeft,
 
                 SourceDefName = hediff.sourceDef?.defName,
                 SourceLabel = hediff.sourceDef?.label,
