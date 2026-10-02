@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 import colony_combat as combat_planner
+import colony_capabilities as capabilities
 import laya_preferences
 from laya_decisions import ask_laya_choice
 
@@ -44,6 +45,8 @@ COMBAT_CHOICES = {
     "focus_mechanoids",
     "focus_insects",
     "emergency_self_tend",
+    "release_trained_animals",
+    "recall_combat_animals",
 }
 COMBAT_CHOICES.update(combat_planner.TACTICS)
 
@@ -425,6 +428,14 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
                 "gender": str(row.get("gender") or "None"),
                 "wildness": round(first_number(row.get("wildness"), 1.0), 3),
                 "minimum_handling_skill": int(first_number(row.get("minimum_handling_skill"))),
+                "master_pawn_id": row.get("master_pawn_id"),
+                "bonded_pawn_id": row.get("bonded_pawn_id"),
+                "follow_drafted": bool(row.get("follow_drafted")),
+                "animals_released": bool(row.get("animals_released")),
+                "trainability": row.get("trainability"),
+                "trainables": row.get("trainables") or [],
+                "in_mental_state": bool(row.get("in_mental_state")),
+                "combat_power": first_number(row.get("combat_power")),
                 "manhunter_on_tame_fail_chance": round(first_number(row.get("manhunter_on_tame_fail_chance")), 3),
                 "reproductive": bool(row.get("reproductive")),
                 "requires_pen": row.get("requires_pen"),
@@ -472,6 +483,7 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
             "colonists": fighters if isinstance(fighters, list) else [],
             "hostiles": hostiles if isinstance(hostiles, list) else [],
             "available_weapons": weapons if isinstance(weapons, list) else [],
+            "colony_animals": combat.get("colony_animals") or [],
             "defenses": combat.get("defenses", []) if isinstance(combat, dict) else [],
         },
         "warnings": warnings,
@@ -699,6 +711,9 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
                    f"{sum(not bool(row.get('weapon_def')) for row in available)} unarmed; "
                    f"{len(active)} enemies; {sum(bool(row.get('is_downed')) for row in combat.get('colonists', []))} allies down"),
         "covering_guns": f"{covering_now}/{len(shooters)} have clear firing lanes",
+        "trained_combat_animals": [{"id": a.get("id"), "name": a.get("name"), "master": a.get("master_pawn_id"),
+                                     "power": a.get("combat_power"), "health": a.get("health"), "released": a.get("animals_released")}
+                                    for a in capabilities.combat_animals(snapshot)],
         **({"immediate_threat": immediate_threat} if immediate_threat else {}),
         "ally_weapons": allied_gear,
         "enemy_weapons": enemy_gear,
@@ -814,7 +829,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             and first_number(pawn.get("sight"), 1) >= 0.65
             and first_number(pawn.get("manipulation"), 1) >= 0.65
             for weapon in snapshot["combat"].get("available_weapons", [])
-            if weapon.get("is_ranged") and not combat_planner.errand_exposed(
+            if weapon.get("is_ranged") and capabilities.weapon_compatible(pawn, weapon) and not combat_planner.errand_exposed(
                 snapshot, weapon.get("position"), pawn.get("position"))
         ]
         actively_fighting = any(pawn.get("is_drafted") and str(pawn.get("current_job") or "").lower() in {
@@ -939,6 +954,10 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if any(row.get("carrying_pawn_id") or "kidnap" in str(row.get("current_job") or "").lower()
                for row in hostile_rows):
             criteria.pop("prepare_undrafted", None)
+        if capabilities.combat_animals(snapshot):
+            criteria["release_trained_animals"] = "Release trained healthy following animals with their master into combat. Compare allied power, enemy fire, melee danger and animal losses; this does not draft livestock."
+        if capabilities.combat_animals(snapshot, released=True):
+            criteria["recall_combat_animals"] = "Disable release with the master; animals resume following, though recall may not stop an attack instantly. Preserve wounded or outmatched animals."
         if combat_planner.guarded_hive_outside_contact(snapshot):
             # A generic focus-fire order repositions out-of-range shooters
             # toward its target. At a passive hive that is an attack order,
@@ -946,7 +965,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             allowed = {"civilian_retreat", "withdraw_and_regroup", "backstep_fire",
                        "prepare_undrafted", "continue_safe_colony_work", "hold_and_observe",
                        "emergency_self_tend", "equip_ranged_weapon", "equip_melee_weapon",
-                       "equip_emp_weapon"}
+                       "equip_emp_weapon", "recall_combat_animals"}
             criteria = {name: description for name, description in criteria.items() if name in allowed}
             if not criteria:
                 criteria["hold_and_observe"] = "Watch the guarded hive without sending colonists into its territory."
@@ -1086,6 +1105,48 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
                 choice = "advance_to_range"
     selected_fighter_ids = None
     psycast_plan = None
+    animal_master_id = None
+    weapon_pawn_id = weapon_item_id = None
+    if choice in {"release_trained_animals", "recall_combat_animals"}:
+        animal_rows = capabilities.combat_animals(snapshot, released=choice == "recall_combat_animals")
+        master_options = {str(a["master_pawn_id"]): "; ".join(
+            f"{b.get('name')}: hp {b.get('health')}, power {b.get('combat_power')}, position {b.get('position')}"
+            for b in animal_rows if b.get("master_pawn_id") == a["master_pawn_id"]) for a in animal_rows}
+        selected, animal_raw = ask_laya_choice(agent, visible_state, "animal_master",
+            "Choose the master and its trained group; consider damage risk and distance. A bond is not training. Animals can die in a charge.", master_options)
+        if selected not in master_options:
+            raise ValueError("Infeasible combat animal master")
+        animal_master_id = int(selected)
+        raw["animal_choice"] = animal_raw
+    if choice in {"equip_ranged_weapon", "equip_melee_weapon", "equip_emp_weapon"}:
+        eligible = {}
+        for pawn in snapshot["combat"].get("colonists") or []:
+            if pawn.get("is_downed") or pawn.get("is_dead") or pawn.get("is_in_mental_state") or pawn.get("current_job") in capabilities.CARE_JOBS:
+                continue
+            if choice == "equip_ranged_weapon" and pawn.get("has_ranged_weapon"):
+                continue
+            weapons = {key: w for key, w in capabilities.safe_weapons(snapshot, pawn).items()
+                       if bool(w.get("is_ranged")) == (choice != "equip_melee_weapon")
+                       and (choice != "equip_emp_weapon" or w.get("emp") or "emp" in str(w.get("def_name") or "").lower())}
+            if weapons:
+                eligible[str(pawn["id"])] = {"pawn": pawn, "weapons": weapons}
+        if eligible:
+            selected, pawn_raw = ask_laya_choice(agent, visible_state, "weapon_pawn",
+                "Choose a fighter by skills, health, current weapon and pickup safety.",
+                {key: f"{p['pawn'].get('name')}; shooting {p['pawn'].get('shooting_skill')}, melee {p['pawn'].get('melee_skill')}; current {capabilities.weapon_note(p['pawn'].get('weapon_info') or {})}" for key, p in eligible.items()})
+            if selected not in eligible:
+                raise ValueError("Infeasible weapon recipient")
+            weapon_pawn_id = int(selected)
+            items = eligible[selected]["weapons"]
+            weapon_context = {"choice_context": {"fighter": {k: eligible[str(weapon_pawn_id)]["pawn"].get(k) for k in
+                ("id", "shooting_skill", "melee_skill", "sight", "manipulation", "weapon_def")}}, "colony": visible_state}
+            selected, weapon_raw = ask_laya_choice(agent, weapon_context, "weapon_item",
+                "Choose an actual compatible weapon by damage, range, accuracy, AP, quality, pawn skills and enemy armor. Explosives/fire can hurt allies; EMP is specialized against machines. Price alone does not measure effectiveness.",
+                {key: capabilities.weapon_note(w) for key, w in items.items()}, detailed=True)
+            if selected not in items:
+                raise ValueError("Infeasible weapon")
+            weapon_item_id = int(selected)
+            raw["weapon_choice"] = {"pawn": pawn_raw, "weapon": weapon_raw}
     if choice in {"psycast_control", "psycast_support"}:
         options = combat_planner.psycast_options(snapshot, hostile=choice == "psycast_control")
         if options:
@@ -1320,6 +1381,9 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
         "melee_roles": melee_roles,
         "psycast_plan": psycast_plan,
         "medical_target_id": medical_target_id,
+        "animal_master_id": animal_master_id,
+        "weapon_pawn_id": weapon_pawn_id,
+        "weapon_item_id": weapon_item_id,
     }
 
 
@@ -1411,12 +1475,30 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
     if choice in {"hold_and_observe", "remain_drafted"}:
         return {"kind": "noop", "description": choice.replace("_", " ")}
+    if choice in {"release_trained_animals", "recall_combat_animals"}:
+        master_id = decision.get("animal_master_id")
+        animals = capabilities.combat_animals(snapshot, released=choice == "recall_combat_animals")
+        if master_id not in {a.get("master_pawn_id") for a in animals}:
+            return {"kind": "noop", "description": "No verified trained animal group and master"}
+        if choice == "release_trained_animals" and combat_planner.guarded_hive_outside_contact(snapshot):
+            return {"kind": "noop", "description": "No animal charge into a guarded passive hive"}
+        commands = []
+        if choice == "release_trained_animals":
+            commands.append({"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": master_id, "is_drafted": True}})
+        commands.append({"endpoint": "/api/v1/combat/animals/release", "body": {
+            "map_id": snapshot["map"]["id"], "master_pawn_id": master_id, "release": choice == "release_trained_animals"}})
+        if resume_command:
+            commands.append(resume_command)
+        return {"kind": "commands", "description": choice.replace("_", " "), "commands": commands}
     if choice == "stand_down":
         drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")]
         commands = [
             {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": c["id"], "is_drafted": False}}
             for c in drafted
         ]
+        for master in {a.get("master_pawn_id") for a in snapshot["combat"].get("colony_animals") or snapshot.get("animals") or [] if a.get("animals_released")}:
+            if master:
+                commands.insert(0, {"endpoint": "/api/v1/combat/animals/release", "body": {"map_id": snapshot["map"]["id"], "master_pawn_id": master, "release": False}})
         if snapshot["game"].get("is_paused"):
             commands.append({"endpoint": "/api/v1/game/speed", "query": {"speed": 1}})
         return {
@@ -1756,7 +1838,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             if choice == "equip_emp_weapon":
                 weapons = [
                     w for w in weapons
-                    if "emp" in (str(w.get("def_name") or "") + " " + str(w.get("label") or "")).lower()
+                    if w.get("emp") or "emp" in (str(w.get("def_name") or "") + " " + str(w.get("label") or "")).lower()
                 ]
             if not weapons:
                 return {"kind": "noop", "description": "No suitable free weapon is available"}
@@ -1765,7 +1847,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             if choice == "equip_ranged_weapon":
                 unarmed = [pawn for pawn in ranked_fighters if not pawn.get("has_ranged_weapon")]
             elif choice == "equip_emp_weapon":
-                unarmed = [pawn for pawn in ranked_fighters if "emp" not in str(pawn.get("weapon_def") or "").lower()]
+                unarmed = [pawn for pawn in ranked_fighters if not (pawn.get("weapon_info") or {}).get("emp")
+                           and "emp" not in str(pawn.get("weapon_def") or "").lower()]
             else:
                 unarmed = ranked_fighters
             commands: list[dict[str, Any]] = []
@@ -1773,16 +1856,17 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             remaining = list(weapons)
             for defender in unarmed:
                 safe_weapons = [weapon for weapon in remaining if not combat_planner.errand_exposed(
-                    snapshot, weapon.get("position"), defender.get("position"))]
+                    snapshot, weapon.get("position"), defender.get("position")) and capabilities.weapon_compatible(defender, weapon)]
+                if decision.get("weapon_pawn_id") is not None:
+                    if defender["id"] != decision["weapon_pawn_id"]:
+                        continue
+                    safe_weapons = [w for w in safe_weapons if w["id"] == decision.get("weapon_item_id")]
                 if not safe_weapons:
                     continue
                 dx = first_number((defender.get("position") or {}).get("x"))
                 dz = first_number((defender.get("position") or {}).get("z"))
-                weapon = min(safe_weapons, key=lambda w: (
-                    first_number((w.get("position") or {}).get("x")) - dx
-                ) ** 2 + (
-                    first_number((w.get("position") or {}).get("z")) - dz
-                ) ** 2)
+                weapon = max(safe_weapons, key=lambda w: capabilities.weapon_score(defender, w,
+                    first_number(defender.get("distance_to_nearest_opponent"), 20)))
                 remaining.remove(weapon)
                 if weapon.get("is_forbidden"):
                     commands.append({

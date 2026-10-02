@@ -68,7 +68,7 @@ class RecordingClient:
     def get(self, endpoint, **query):
         if endpoint == "/api/v1/map/things":
             return self.things
-        if endpoint == "/api/v1/map/buildings":
+        if endpoint in {"/api/v1/map/buildings", "/api/v1/map/rooms"}:
             return []
         if endpoint == "/api/v1/game/settings":
             return {"language": "English"}

@@ -260,6 +260,13 @@ namespace RIMAPI.Helpers
                             .relations?.DirectRelations.Where(r => r.def == PawnRelationDefOf.Bond)
                             .Select(r => r.otherPawn?.thingIDNumber)
                             .FirstOrDefault(),
+                        BondedPawnId = p.relations?.DirectRelations.FirstOrDefault(r => r.def == PawnRelationDefOf.Bond)?.otherPawn?.thingIDNumber,
+                        MasterPawnId = p.playerSettings?.Master?.thingIDNumber,
+                        InMentalState = p.InMentalState,
+                        FollowDrafted = p.playerSettings?.followDrafted ?? false,
+                        AnimalsReleased = p.playerSettings?.Master?.playerSettings?.animalsReleased ?? false,
+                        Trainability = p.RaceProps?.trainability?.defName,
+                        Trainables = AnimalTrainingAutomationHelper.Describe(p),
                         Pregnant = p.health?.hediffSet?.HasHediff(HediffDefOf.Pregnant) ?? false,
                         Gender = p.gender.ToString(),
                         Wildness = p.GetStatValue(StatDefOf.Wildness),

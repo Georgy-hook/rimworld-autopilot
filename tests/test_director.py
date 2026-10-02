@@ -3642,6 +3642,9 @@ class DirectorTests(unittest.TestCase):
                 "item_counts": {"WoodLog": 9000, "Steel": 5000},
                 "material": "WoodLog", "powered": True, "climate": "cold"}
         for program in director.architect.PROGRAM_CATALOG:
+            if program.startswith("greenhouse_"):
+                self.assertEqual(director.architect.generate_program_variants(program, base), {})
+                continue  # Unresearched composite layouts are tested with live-style metadata separately.
             for entry_side in ("north", "east", "south", "west"):
                 for seed in range(4):
                     variants = director.architect.generate_program_variants(
@@ -4170,8 +4173,8 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(record["result"]["applied"])
         purchase_state = next(state for state, question in zip(agent.states, agent.calls)
                               if "purchase_priority" in question)
-        self.assertEqual(purchase_state["growth"]["able_workers"], 2)
-        self.assertEqual(purchase_state["growth"]["bedbound"], 1)
+        self.assertEqual(purchase_state["colony"]["growth"]["able_workers"], 2)
+        self.assertEqual(purchase_state["colony"]["growth"]["bedbound"], 1)
 
     def test_strategy_catalog_covers_core_and_every_official_expansion(self):
         expansions = {row.get("expansion") or "core" for row in colony_strategy.DIRECTIONS.values()}

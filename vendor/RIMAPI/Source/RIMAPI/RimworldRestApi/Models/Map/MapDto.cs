@@ -68,6 +68,13 @@ namespace RIMAPI.Models
         public string CurrentJob { get; set; }
         public PositionDto Position { get; set; }
         public int? Trainer { get; set; }
+        public int? MasterPawnId { get; set; }
+        public int? BondedPawnId { get; set; }
+        public bool FollowDrafted { get; set; }
+        public bool AnimalsReleased { get; set; }
+        public string Trainability { get; set; }
+        public bool InMentalState { get; set; }
+        public List<AnimalTrainableDto> Trainables { get; set; } = new List<AnimalTrainableDto>();
         public bool Pregnant { get; set; }
         public string Gender { get; set; }
         public float Wildness { get; set; }
@@ -152,6 +159,7 @@ namespace RIMAPI.Models
 
     public class MapFarmSummaryDto
     {
+        public int TotalPlantGrowers { get; set; }
         public int TotalGrowingZones { get; set; }
         public int TotalPlants { get; set; }
         public int TotalExpectedYield { get; set; }
@@ -162,6 +170,8 @@ namespace RIMAPI.Models
 
     public class CropTypeDto
     {
+        public int GrowthBlockedPlants { get; set; }
+        public List<string> GrowerIds { get; set; } = new List<string>();
         public string PlantDefName { get; set; }
         public string PlantLabel { get; set; }
         public string PlantCategory { get; set; }

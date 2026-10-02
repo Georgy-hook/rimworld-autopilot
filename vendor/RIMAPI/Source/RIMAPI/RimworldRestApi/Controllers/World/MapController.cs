@@ -191,7 +191,7 @@ namespace RIMAPI.Controllers
         public async Task GetMapGrowingZoneById(HttpListenerContext context)
         {
             var mapId = RequestParser.GetMapId(context);
-            var zoneId = RequestParser.GetMapId(context);
+            var zoneId = RequestParser.GetIntParameter(context, "zone_id");
             var result = _mapService.GetGrowingZoneById(mapId, zoneId);
             await context.SendJsonResponse(result);
         }

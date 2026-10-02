@@ -300,3 +300,17 @@ Notes and main Laya failures:
 - Actual local butchery continued to produce horse, hare and dromedary meat/leather. Pemmican research completed; PackagedSurvivalMeal reached 30.5%. Prepared meals were zero in sampled snapshots after the opening survival meal, no new trade was recorded, and no power grid was operating. Three shelves remained; no new residential altar was observed. A saved ship_escape doctrine did not amount to successful long-term execution.
 - The director stopped normally on Game Over at 12:26:50; Python stderr logs were empty. The observer erroneously continued pacing the empty map until the review paused it at tick 2,611,073. The observer now requires zero colony population plus a terminal game letter, pauses and stops; empty caravan/loading states alone do not trigger this. Hourly automation laya was deleted after the terminal outcome.
 - Verification: 375 director/observer/combat/hourly regression tests pass; RIMAPI Release-1.6 has zero warnings and errors. Installed DLL SHA256: 621C9BAA5200A831DC1B6C6A879D34815B560015A648497D9CA6FF8A8669A7BB. The final saved ruins verified real fuel/power values, explicit non-applied feeding/refueling responses and terminal observer pause. No new colony or revived-survivor run was started. Positive refueling and future survival remain unverified; startup NullReferenceException and short CPU spikes remain open.
+
+## Test 16 — Closed-game capability audit (2026-09-30)
+
+The user requested code fixes and a report while leaving RimWorld closed. No colony, replay or live gameplay was launched for this package.
+
+- Added live plant/crop suitability, blight cutting and dying-yield recovery; farm reporting includes hydroponics and standing crops after a selection change. Forecasts use normal maturity, fertility, temperature and calendar growth time.
+- Wood providers follow the real WoodLog product, including fibercorn and stumps. A full sowing catalog no longer hides harvestable wild trees. Special-tree descriptions and a defer option reach Laya. Wood purchases use actual live deals.
+- Added normal augmentation recipe/stock/patient/ideology/doctor/bed context and native deferred choices, exact part purchases and ordinary surgery bills without preliminary amputation.
+- Added complete loaded weapon definitions, actual instance stats and compatibility, exact recipient/item choices and no-swap outcomes; trained animals expose real master/follow/release state and normal training/combat commands.
+- Added researched soil/hydroponic greenhouse layouts, supported roofs, clear paths, continuous conduits and actual material/peak-power requirements. Short-season research uses a startable prerequisite frontier.
+- Full suite: 466 tests pass, including 35 capability tests. Release-1.6 build uses 1.6.4871 references and has zero warnings/errors. Real cached Laya tokenizer check retains both long alternatives inside its 312-token state budget (294 tokens). Installer payload includes the new module.
+- These are source/compile/behavioral-fixture checks, not positive game execution. Native model decision quality, actual operations, blight recovery, animal combat, greenhouse crops, runtime performance and the previous colony's survival blockers still need live validation. Startup NullReferenceException and reported short CPU spikes remain open.
+
+Detailed Russian audit: [Capabilities, 30 September](docs/playtests/Capabilities-2026-09-30.md).

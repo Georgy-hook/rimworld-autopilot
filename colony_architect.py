@@ -20,6 +20,8 @@ PROGRAM_CATALOG: dict[str, dict[str, Any]] = {
     "dining_recreation": {"label": "dining and recreation hall", "category": "community", "skills": ["Construction", "Artistic"]},
     "kitchen": {"label": "clean dedicated kitchen", "category": "food", "skills": ["Cooking", "Construction"]},
     "freezer": {"label": "freezer and food storage", "category": "food", "skills": ["Construction"]},
+    "greenhouse_soil": {"label": "heated soil greenhouse", "category": "food", "skills": ["Plants", "Construction"]},
+    "greenhouse_hydroponics": {"label": "heated hydroponic greenhouse", "category": "food", "skills": ["Plants", "Construction"]},
     "hospital": {"label": "hospital or medical annex", "category": "medical", "skills": ["Medicine", "Construction"]},
     "throne_room": {"label": "royal throne hall", "category": "culture", "skills": ["Construction", "Artistic"]},
     "temple": {"label": "ideology temple", "category": "culture", "skills": ["Construction", "Artistic"]},
@@ -446,7 +448,84 @@ def _defense_variant(material: str, variant: int, index: dict[str, dict[str, Any
     return blueprint(items, width, height)
 
 
+def greenhouse_context(context: dict[str, Any]) -> dict[str, Any]:
+    index = catalog_index(context.get("building_catalog") or [])
+    climate = str(context.get("climate") or "temperate")
+    required = ["SunLamp", "PowerConduit", "Wall", "Door"]
+    if climate == "cold":
+        required.append("Heater")
+    elif climate == "hot":
+        required.append("Cooler")
+    prerequisites = sorted({r for name in required + ["HydroponicsBasin"]
+                            for r in (index.get(name) or {}).get("research_prerequisites") or []
+                            if r not in set(context.get("finished_research") or [])})
+    short_season = "tundra" in str(context.get("biome") or "").lower() or "ice" in str(context.get("biome") or "").lower()
+    watts = float((index.get("SunLamp") or {}).get("nominal_power_consumption") or 2900)
+    if climate == "cold":
+        watts += (2 if short_season else 1) * float((index.get("Heater") or {}).get("nominal_power_consumption") or 175)
+    elif climate == "hot":
+        watts += float((index.get("Cooler") or {}).get("nominal_power_consumption") or 200)
+    basic = all(index.get(name, {}).get("available_now") for name in required)
+    hydro = basic and index.get("HydroponicsBasin", {}).get("available_now", False)
+    counts = context.get("building_counts") or {}
+    roofed_beds = int(context.get("sheltered_beds") or 0)
+    settled = bool(context.get("colonists")) and roofed_beds >= len(context["colonists"])
+    supply = float((context.get("power_info") or {}).get("current_power") or 0)
+    demand = float((context.get("power_info") or {}).get("total_consumption") or 0)
+    return {"required_buildings": required, "missing_research": prerequisites, "short_season": short_season,
+            "soil_unlocked": basic, "hydroponics_unlocked": hydro, "settled": settled,
+            "soil_daytime_w": watts, "hydroponics_daytime_w": watts + 8 * float((index.get("HydroponicsBasin") or {}).get("nominal_power_consumption") or 70),
+            "current_generation_w": supply, "current_consumption_w": demand,
+            "has_sun_lamp": bool(counts.get("SunLamp")),
+            "guidance": "Research early in tundra/ice or short growing seasons. Finish warm human shelter first. A greenhouse needs roof, grow light, suitable soil or researched basins, heating/cooling and continuous connected power. Lamp draws daytime peak; basins/heating need night power. Brownouts can kill hydroponic crops. Choose energy supply and crops separately; do not assume a single wood generator is sufficient."}
+
+
+def generate_greenhouse_variants(program: str, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    info = greenhouse_context(context)
+    hydro = program == "greenhouse_hydroponics"
+    if not info["hydroponics_unlocked" if hydro else "soil_unlocked"] or not info["settled"]:
+        return {}
+    # Compact enough for a supported roof, with no floors covering fertile soil.
+    width = height = 13
+    material = str(context.get("material") or "WoodLog")
+    index = catalog_index(context.get("building_catalog") or [])
+    items = _shell(width, height, material, str(context.get("entry_side") or "south"), 6)
+    items.append(building("SunLamp", 6, 6))
+    if context.get("climate") == "cold":
+        items.append(building("Heater", 11, 6))
+        if info["short_season"]:
+            items.append(building("Heater", 1, 6))
+    elif context.get("climate") == "hot":
+        cooler_z = 8 if context.get("entry_side") == "east" else 6
+        items = [i for i in items if (i["rel_x"], i["rel_z"]) != (12, cooler_z)]
+        items.append(building("Cooler", 12, cooler_z, rotation=1))
+    if hydro:
+        # Vanilla basins are 1x4 north-facing; rotation east makes a 4x1 row.
+        basin = index["HydroponicsBasin"]
+        if (int(basin.get("size_x") or 1), int(basin.get("size_z") or 4)) != (1, 4):
+            return {}  # A modded footprint needs a compatible layout, not clipping.
+        for z in (3, 5, 7, 9):
+            for x in (3, 8):
+                items.append(building("HydroponicsBasin", x, z, rotation=1))
+    # Transmitters may share cells with walls and other buildings, including the
+    # lamp. A continuous cross avoids a wire stopping at a wall or dead-end.
+    cables = {(x, 6) for x in range(1, 12)} | {(6, z) for z in range(13)}
+    items.extend(building("PowerConduit", x, z) for x, z in sorted(cables))
+    layout = resolve_layout_materials({**blueprint(items, width, height), "roof": True}, index, context.get("item_counts") or {})
+    if layout is None:
+        return {}
+    watts = sum(float(index.get(i["def_name"], {}).get("nominal_power_consumption") or 0)
+                for i in items)
+    if not watts:
+        watts = info["hydroponics_daytime_w" if hydro else "soil_daytime_w"]
+    return {program + "_1": {"program": program, "style": "hydroponics" if hydro else "soil", "name": PROGRAM_CATALOG[program]["label"],
+            "width": width, "height": height, "layout": layout, "planned_power_w": watts,
+            "summary": f"13×13 roofed room, SunLamp, {'8 basins/32 growing cells' if hydro else 'unfloored fertile soil'}; climate {context.get('climate')}; connected internal cable cross; peak about {watts:.0f} W plus existing colony demand. Requires external grid connection and dependable supply. Select crops after temperature/light/power are verified; do not sow on cold blueprints."}}
+
+
 def generate_program_variants(program: str, context: dict[str, Any], *, seed: int = 0) -> dict[str, dict[str, Any]]:
+    if program in {"greenhouse_soil", "greenhouse_hydroponics"}:
+        return generate_greenhouse_variants(program, context)
     catalog = context.get("building_catalog") or []
     if program == "freezer" and not _available(catalog_index(catalog), "Cooler"):
         return {}
@@ -558,6 +637,10 @@ def layout_anchor_conflicts(layout: dict[str, Any]) -> list[tuple[int, int]]:
     conflicts: list[tuple[int, int]] = []
     for item in layout.get("buildings") or []:
         cell = (int(item.get("rel_x") or 0), int(item.get("rel_z") or 0))
+        if item.get("def_name") in {"PowerConduit", "HiddenConduit", "WaterproofConduit"}:
+            if not (0 <= cell[0] < width and 0 <= cell[1] < height):
+                conflicts.append(cell)
+            continue
         if cell in occupied or not (0 <= cell[0] < width and 0 <= cell[1] < height):
             conflicts.append(cell)
         occupied.add(cell)
@@ -614,6 +697,12 @@ def program_options(context: dict[str, Any]) -> dict[str, str]:
     medical_beds = sum(1 for row in context.get("buildings") or [] if row.get("medical"))
     patient_count = len(context.get("potential_patients") or [])
     options: dict[str, str] = {}
+    greenhouse = greenhouse_context(context)
+    if greenhouse["settled"] and not greenhouse["has_sun_lamp"]:
+        for program, available in (("greenhouse_soil", greenhouse["soil_unlocked"]), ("greenhouse_hydroponics", greenhouse["hydroponics_unlocked"])):
+            if available:
+                watts = greenhouse["hydroponics_daytime_w" if "hydroponics" in program else "soil_daytime_w"]
+                options[program] = (f"{'Short outdoor season; ' if greenhouse['short_season'] else ''}{PROGRAM_CATALOG[program]['label']}; researched components; about {watts:.0f} W peak added to existing demand; generation now {greenhouse['current_generation_w']:.0f} W. Choose sufficient power and roofed thermal control; crops later. Soil variant needs fertile ground, hydroponics admits only compatible crops.")
     if private_rooms < len(colonists):
         options["residence"] = f"Housing shortage: {private_rooms} private bedrooms for {len(colonists)} colonists; 24 generated house variants"
         if len(colonists) - private_rooms >= 3:

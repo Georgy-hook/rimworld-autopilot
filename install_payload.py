@@ -10,6 +10,7 @@ from pathlib import Path
 RUNTIME_FILES = (
     "RimWorld-Autopilot.exe",
     "colony_architect.py",
+    "colony_capabilities.py",
     "colony_combat.py",
     "colony_director.py",
     "colony_events.py",

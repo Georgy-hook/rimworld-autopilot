@@ -24,6 +24,8 @@ namespace RIMAPI.Models
         public bool IsPowerGenerator { get; set; }
         public bool RequiresFuel { get; set; }
         public float NominalPowerOutput { get; set; }
+        public float NominalPowerConsumption { get; set; }
+        public float GrowthLightRadius { get; set; }
         public int MinimumConstructionSkill { get; set; }
         public float LightRadius { get; set; }
         public List<string> BuildingTags { get; set; }

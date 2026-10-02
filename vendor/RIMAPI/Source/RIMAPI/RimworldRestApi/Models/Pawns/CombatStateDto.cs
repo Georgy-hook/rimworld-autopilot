@@ -12,6 +12,7 @@ namespace RIMAPI.Models
         public List<CombatPawnDto> NeutralDowned { get; set; } = new List<CombatPawnDto>();
         public List<CombatWeaponDto> AvailableWeapons { get; set; } = new List<CombatWeaponDto>();
         public List<CombatDefenseDto> Defenses { get; set; } = new List<CombatDefenseDto>();
+        public List<AnimalDto> ColonyAnimals { get; set; } = new List<AnimalDto>();
     }
 
     public class CombatPawnDto
@@ -32,6 +33,8 @@ namespace RIMAPI.Models
         public int MeleeSkill { get; set; }
         public string WeaponDef { get; set; }
         public string WeaponLabel { get; set; }
+        public CombatWeaponDto WeaponInfo { get; set; }
+        public bool HasShieldBelt { get; set; }
         public bool HasRangedWeapon { get; set; }
         public string CurrentJob { get; set; }
         public int? CurrentJobTargetId { get; set; }
@@ -86,5 +89,28 @@ namespace RIMAPI.Models
         public bool IsForbidden { get; set; }
         public float MarketValue { get; set; }
         public PositionDto Position { get; set; }
+        public float Range { get; set; }
+        public float MinRange { get; set; }
+        public float Damage { get; set; }
+        public string DamageDef { get; set; }
+        public float ArmorPenetration { get; set; }
+        public int BurstShots { get; set; }
+        public float Warmup { get; set; }
+        public float Cooldown { get; set; }
+        public float AccuracyTouch { get; set; }
+        public float AccuracyShort { get; set; }
+        public float AccuracyMedium { get; set; }
+        public float AccuracyLong { get; set; }
+        public float MeleeDps { get; set; }
+        public int? Quality { get; set; }
+        public int? BiocodedPawnId { get; set; }
+        public bool Equippable { get; set; }
+        public List<int> CompatiblePawnIds { get; set; }
+        public bool Explosive { get; set; }
+        public bool Incendiary { get; set; }
+        public bool Emp { get; set; }
+        public bool SingleUse { get; set; }
+        public string Description { get; set; }
+        public float HitPointsPercent { get; set; }
     }
 }

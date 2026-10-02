@@ -503,6 +503,15 @@ namespace RIMAPI.Services
                 }
 
                 if (count == 0) return ApiResult.Fail(string.Join("; ", warnings.Take(8)));
+                if (request.Blueprint.Roof)
+                {
+                    for (int dx = 1; dx < request.Blueprint.Width - 1; dx++)
+                    for (int dz = 1; dz < request.Blueprint.Height - 1; dz++)
+                    {
+                        var cell = new IntVec3(request.Position.X + dx, 0, request.Position.Z + dz);
+                        if (cell.InBounds(map)) map.areaManager.BuildRoof[cell] = true;
+                    }
+                }
                 return warnings.Count == 0 ? ApiResult.Ok() : ApiResult.Partial(warnings);
             }
             catch (Exception ex)

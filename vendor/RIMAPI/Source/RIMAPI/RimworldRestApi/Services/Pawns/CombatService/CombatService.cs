@@ -40,24 +40,16 @@ namespace RIMAPI.Services
                     .ToList();
                 var weapons = map.listerThings.AllThings
                     .Where(t => t != null && t.Spawned && !t.Destroyed && t.def != null
-                        && t.def.IsWeapon && t.def.weaponTags != null && t.def.weaponTags.Count > 0)
-                    .Select(t => new CombatWeaponDto
-                    {
-                        Id = t.thingIDNumber,
-                        DefName = t.def.defName,
-                        Label = t.LabelShortCap,
-                        IsRanged = t.def.IsRangedWeapon,
-                        IsForbidden = t.IsForbidden(Faction.OfPlayer),
-                        MarketValue = t.MarketValue,
-                        Position = new PositionDto
-                        {
-                            X = t.Position.x,
-                            Y = t.Position.y,
-                            Z = t.Position.z,
-                        },
-                    })
+                        && t.def.IsWeapon)
+                    .Select(t => WeaponAutomationHelper.Describe(t.def, t))
                     .OrderByDescending(w => w.MarketValue)
                     .ToList();
+                foreach (var weapon in weapons)
+                {
+                    Thing item = MapHelper.GetThingOnMapById(mapId, weapon.Id);
+                    weapon.CompatiblePawnIds = colonists.Where(p => EquipmentUtility.CanEquip(item, p, out string reason))
+                        .Select(p => p.thingIDNumber).ToList();
+                }
 
                 var defenses = map.listerBuildings.allBuildingsColonist
                     .Where(b => b != null && !b.Destroyed && b.def != null && IsDefensiveBuilding(b))
@@ -83,6 +75,7 @@ namespace RIMAPI.Services
                     NeutralDowned = neutralDowned.Select(p => ToCombatPawn(p, false, colonists)).ToList(),
                     AvailableWeapons = weapons,
                     Defenses = defenses,
+                    ColonyAnimals = MapHelper.GetMapAnimals(mapId).Where(a => a.IsColonyAnimal && !a.Dead).ToList(),
                 };
                 return ApiResult<CombatStateDto>.Ok(result);
             }
@@ -147,6 +140,8 @@ namespace RIMAPI.Services
                 ShootingSkill = shooting?.Level ?? 0,
                 MeleeSkill = melee?.Level ?? 0,
                 WeaponDef = primary?.def?.defName,
+                WeaponInfo = primary == null ? null : WeaponAutomationHelper.Describe(primary.def, primary),
+                HasShieldBelt = pawn.apparel?.WornApparel.Any(a => a.TryGetComp<CompShield>() != null) ?? false,
                 WeaponLabel = primary?.LabelShortCap,
                 HasRangedWeapon = primary?.def?.IsRangedWeapon ?? false,
                 CurrentJob = pawn.CurJobDef?.defName,

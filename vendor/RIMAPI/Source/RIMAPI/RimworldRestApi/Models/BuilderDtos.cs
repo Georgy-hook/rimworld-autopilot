@@ -108,6 +108,7 @@ namespace RIMAPI.Models
     // --- The Blueprint Data Structure ---
     public class BlueprintDto
     {
+        public bool Roof { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
         public List<SavedTerrainDto> Floors { get; set; } = new List<SavedTerrainDto>();

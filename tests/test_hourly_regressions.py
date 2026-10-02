@@ -43,6 +43,15 @@ def hot_colony(wood=0):
 
 
 class HourlyRegressionTests(unittest.TestCase):
+    def test_sowable_wood_species_still_can_be_harvested_with_full_catalog(self):
+        snapshot = hot_colony()
+        snapshot["development"]["plant_catalog"] = {"plants": [
+            {"def_name": "Plant_SaguaroCactus", "sowable": True, "category": "wood"}], "growers": []}
+        snapshot["development"]["plants"][0]["is_cultivated"] = True
+        choices, details = director.candidate_actions(None, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}})
+        self.assertIn("harvest_nearby_trees", choices)
+        self.assertEqual(details["tree_options"]["Plant_SaguaroCactus"]["ids"], [401])
+
     def test_saguaro_is_an_available_fuel_source_with_no_construction_projects(self):
         snapshot = hot_colony()
         choices, details = director.candidate_actions(None, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}})

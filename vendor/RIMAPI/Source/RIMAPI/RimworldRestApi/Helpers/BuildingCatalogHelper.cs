@@ -67,6 +67,12 @@ namespace RIMAPI.Helpers
                                 && typeof(CompPowerPlant).IsAssignableFrom(comp.compClass))
                             .Select(comp => Math.Abs(comp.PowerConsumption)).DefaultIfEmpty(0f).Max() ?? 0f,
                         MinimumConstructionSkill = def.constructionSkillPrerequisite,
+                        NominalPowerConsumption = def.comps?.OfType<CompProperties_Power>()
+                            .Where(comp => comp.compClass != null && typeof(CompPowerTrader).IsAssignableFrom(comp.compClass)
+                                && !typeof(CompPowerPlant).IsAssignableFrom(comp.compClass))
+                            .Select(comp => Math.Max(0, comp.PowerConsumption)).DefaultIfEmpty(0f).Max() ?? 0f,
+                        GrowthLightRadius = def.comps?.OfType<CompProperties_Glower>()
+                            .Select(comp => comp.overlightRadius).DefaultIfEmpty(0f).Max() ?? 0f,
                         LightRadius = def.comps?.OfType<CompProperties_Glower>()
                             .Select(comp => comp.glowRadius).DefaultIfEmpty(0f).Max() ?? 0f,
                         BuildingTags = def.building?.buildingTags?.ToList() ?? new List<string>(),
