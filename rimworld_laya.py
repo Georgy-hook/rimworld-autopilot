@@ -644,6 +644,7 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
         }
     combat = snapshot["combat"]
     active = [row for row in combat.get("hostiles", []) if not row.get("is_dead") and not row.get("is_downed")]
+    tactical_facts = combat_planner.threat_facts(snapshot)
     available = [row for row in combat.get("colonists", []) if not row.get("is_dead")
                  and not row.get("is_downed") and not row.get("is_in_mental_state")
                  and row.get("can_fight", True)]
@@ -704,6 +705,7 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
         state["roles_already_assigned"] = assigned_roles or {}
     state.update({
         "task": "Whole-squad combat",
+        "choice_context": tactical_facts,
         "paused": bool(snapshot["game"].get("is_paused")),
         "phase": "preparing" if active and all(combat_planner.hostile_is_preparing(row) for row in active) else "assault",
         "forces": (f"{len(available)} allies, {sum(bool(row.get('has_ranged_weapon')) for row in available)} guns, "
@@ -763,6 +765,10 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
                 f"{round(first_number(row.get('distance_to_nearest_opponent'), 9999))}cells")
     compact = {
         "task": "Combat: decide for all fighters",
+        **({"contact_ids": tactical_facts["contact_fighters"][:4]}
+           if tactical_facts["contact_fighters"] else {}),
+        **({"carriers": [{"id": row["id"], "carrying": row["carrying_pawn_id"]}
+                        for row in tactical_facts["carriers"][:2]]} if tactical_facts["carriers"] else {}),
         "forces": state["forces"],
         "covering_guns": state["covering_guns"],
         "ally_weapons": state["ally_weapons"],

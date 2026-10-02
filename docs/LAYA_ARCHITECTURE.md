@@ -1,5 +1,8 @@
 # Laya as colony director: capabilities and limits
 
+For the 0.0.7 domain contract, bounded consequence comparisons and observed
+outcomes, see [Modular decisions](MODULE_ARCHITECTURE_0.0.7.md).
+
 This project is an experiment in giving Laya the strategic decision, while the
 RimWorld bridge supplies observations and executable affordances. It is **not**
 yet a reliable autonomous RimWorld player. Do not use an irreplaceable save to

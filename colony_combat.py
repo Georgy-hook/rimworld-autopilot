@@ -1,6 +1,19 @@
 from __future__ import annotations
 
 from typing import Any
+import math
+
+
+def opponent_distance(row: dict[str, Any], unknown: float = 9999) -> float:
+    """Preserve contact at zero; missing/nonfinite telemetry cannot prove distance."""
+    value = row.get("distance_to_nearest_opponent")
+    if value is None:
+        return unknown
+    try:
+        distance = float(value)
+    except (TypeError, ValueError):
+        return unknown
+    return distance if math.isfinite(distance) and distance >= 0 else unknown
 
 
 def _cell(row: dict[str, Any] | None) -> tuple[float, float] | None:
@@ -26,7 +39,7 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
             and str(row.get("current_job") or "").lower() == "tendpatient"
             and row.get("current_job_target_id") is not None
             and int(row["current_job_target_id"]) in untreated_patients
-            and float(row.get("distance_to_nearest_opponent") or 9999) > 4}
+            and opponent_distance(row, 0) > 4}
 
 
 def threat_radius(hostile: dict[str, Any]) -> float:
@@ -296,8 +309,7 @@ def guarded_hive_outside_contact(snapshot: dict[str, Any]) -> bool:
     return bool(hostiles) and all(
         "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
         and hostile_is_preparing(row)
-        and float(row.get("distance_to_nearest_opponent")
-                  if row.get("distance_to_nearest_opponent") is not None else 9999) > 8
+        and opponent_distance(row) > 8
         for row in hostiles
     )
 
@@ -382,7 +394,7 @@ def has_clear_shot(shooter: dict[str, Any], hostiles: list[dict[str, Any]]) -> b
         return bool(live_ids.intersection(int(pawn_id) for pawn_id in shootable))
     # Older installed RIMAPI builds exposed only distance. Keep their behavior
     # while the updated combat-state field is being deployed.
-    return 2 < float(shooter.get("distance_to_nearest_opponent") or 9999) <= float(shooter.get("weapon_range") or 0) + 1
+    return 2 < opponent_distance(shooter, 9999) <= float(shooter.get("weapon_range") or 0) + 1
 
 
 def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
@@ -411,14 +423,14 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     has_insects = any(any(token in text for token in INSECT_TOKENS) for text in hostile_text)
     insects_only = all(any(token in text for token in INSECT_TOKENS) for text in hostile_text)
     has_kidnapper = "kidnap" in hostile_jobs or any(row.get("carrying_pawn_id") for row in hostiles)
-    staging = bool(fighters) and all(float(row.get("distance_to_nearest_opponent") or 0) > 35 for row in fighters) and all(
+    staging = bool(fighters) and all(opponent_distance(row, 0) > 35 for row in fighters) and all(
         hostile_is_preparing(row) for row in hostiles
     )
 
     in_range = [row for row in ranged if has_clear_shot(row, hostiles)]
     exposed_civilians = [row for row in fighters if not row.get("weapon_def")
-                         and float(row.get("distance_to_nearest_opponent") or 9999) <= 18]
-    contact = [row for row in ranged if float(row.get("distance_to_nearest_opponent") or 9999) <= 2]
+                         and opponent_distance(row, 9999) <= 18]
+    contact = [row for row in ranged if opponent_distance(row, 9999) <= 2]
     names: list[str] = ["hold_cover"] if ranged and len(contact) < len(ranged) else []
     if armed_melee:
         names += ["melee_assault", "melee_hold_line"]
@@ -433,7 +445,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         default=0.0,
     )))
     if any(float(row.get("moving", 1)) >= 0.65
-           and float(row.get("distance_to_nearest_opponent") or 9999) < retreat_distance
+           and opponent_distance(row, 9999) < retreat_distance
            for row in fighters):
         names.append("withdraw_and_regroup")
     if not ranged and not armed_melee and any(float(row.get("moving", 1)) >= 0.65 for row in fighters):
@@ -461,10 +473,10 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         # lure already outside pursuit distance) merely abandons the shooters.
         if any(
             float(lure.get("moving", 1)) >= 0.85
-            and float(lure.get("distance_to_nearest_opponent") or 9999) <= 16
+            and opponent_distance(lure, 9999) <= 16
             and any(
                 support.get("id") != lure.get("id")
-                and float(support.get("distance_to_nearest_opponent") or 9999)
+                and opponent_distance(support, 9999)
                 <= float(support.get("weapon_range") or 0) + 12
                 for support in ranged
             )
@@ -472,14 +484,14 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         ):
             names.append("kite")
     if ranged and all(not row.get("has_ranged_weapon") for row in hostiles):
-        if any(float(row.get("distance_to_nearest_opponent") or 9999) <= 12
+        if any(opponent_distance(row, 9999) <= 12
                and float(row.get("moving", 1)) >= 0.7 for row in ranged):
             names.append("backstep_fire")
         if any(float(row.get("moving", 1)) >= 0.65
                and int(row.get("melee_skill") or 0) >= 3
-               and float(row.get("distance_to_nearest_opponent") or 9999) <= 20
+               and opponent_distance(row, 9999) <= 20
                for row in melee) and any(
-                   float(row.get("distance_to_nearest_opponent") or 9999)
+                   opponent_distance(row, 9999)
                    <= float(row.get("weapon_range") or 0) + 1 for row in ranged):
             names.append("screen_melee")
     if any("gun" in text or "sniper" in text or "lancer" in text for text in hostile_text) and armored_melee:
@@ -494,7 +506,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     if not names:
         names = ["civilian_retreat"] if any(float(row.get("moving", 1)) >= 0.65 for row in fighters) else []
     insect_contact = insects_only and any(
-        float(row.get("distance_to_nearest_opponent") or 9999) < 18 for row in fighters)
+        opponent_distance(row, 9999) < 18 for row in fighters)
     if insect_contact and not armored_melee and len(armed_melee) < max(2, len(hostiles)):
         # One unarmored founder should not charge an active insect. A larger
         # sword group can still coordinate against a small number of bugs.
@@ -538,7 +550,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
                 description += (" Pursue the carrier in long trap-free moves and fire whenever a shot opens; "
                                 "this exposes the pursuer and may leave the base undefended.")
             if name in {"focus_fire", "hold_cover", "firing_line"} and any(
-                float(row.get("distance_to_nearest_opponent") or 9999) <= 6 for row in ranged
+                opponent_distance(row, 9999) <= 6 for row in ranged
             ):
                 description += " Risk: a nearby melee enemy may prevent a shooter from firing; a short retreat or melee screen may be better."
             result[name] = description
@@ -578,8 +590,7 @@ def choose_default_target(snapshot: dict[str, Any], tactic: str) -> int | None:
     active_threats = [row for row in hostiles if not (
         "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
         and hostile_is_preparing(row)
-        and float(row.get("distance_to_nearest_opponent")
-                  if row.get("distance_to_nearest_opponent") is not None else 9999) > 8
+        and opponent_distance(row) > 8
     )]
     if active_threats:
         hostiles = active_threats
@@ -591,17 +602,33 @@ def choose_default_target(snapshot: dict[str, Any], tactic: str) -> int | None:
         mechs = [row for row in hostiles if any(token in _text(row) for token in MECH_TOKENS)]
         if mechs:
             hostiles = mechs
-    fighters = [row for row in snapshot.get("combat", {}).get("colonists", []) if not row.get("is_dead") and not row.get("is_downed")]
+    fighters = [row for row in snapshot.get("combat", {}).get("colonists", [])
+                if not row.get("is_dead") and not row.get("is_downed") and not row.get("is_in_mental_state")
+                and row.get("can_fight", True) and _cell(row) is not None]
     def distance(row: dict[str, Any]) -> float:
         position = row.get("position") or {}
         if not fighters or "x" not in position or "z" not in position:
-            return 0.0
+            return opponent_distance(row, float("inf"))
         return min(((float(position["x"]) - float((pawn.get("position") or {}).get("x", position["x"]))) ** 2
                     + (float(position["z"]) - float((pawn.get("position") or {}).get("z", position["z"]))) ** 2) ** 0.5
                    for pawn in fighters)
     return int(max(hostiles, key=lambda row: (
         bool(row.get("carrying_pawn_id")),
-        -int(distance(row) // 12),
+        -(distance(row) // 12 if math.isfinite(distance(row)) else float("inf")),
         float(row.get("combat_power") or 0),
         -float(row.get("health") if row.get("health") is not None else 1),
     )).get("id"))
+
+
+def threat_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Compact live evidence for tactical choices; unknown mechanics stay explicit."""
+    enemies = live_hostiles(snapshot)
+    colonists = (snapshot.get("combat") or {}).get("colonists") or []
+    return {
+        "contact_fighters": [p.get("id") for p in colonists if not p.get("is_dead") and not p.get("is_downed") and opponent_distance(p) <= 2],
+        "carriers": [{"id": e.get("id"), "carrying_pawn_id": e.get("carrying_pawn_id"), "job": e.get("current_job")} for e in enemies if e.get("carrying_pawn_id")],
+        "preparing_hostiles": [e.get("id") for e in enemies if hostile_is_preparing(e)],
+        "mental_state_colonists": [p.get("id") for p in colonists if p.get("is_in_mental_state")],
+        "decision_facts": "Contact distance zero is immediate danger. Carrying a pawn does not prove kidnapping. Preparing enemies can wake or assault. Tactics require live geometry and job validation.",
+        "uncertainty": "Pawn telemetry alone does not establish hostile turret coverage, active fires, anomaly regeneration, smoke effectiveness or EMP adaptation. Templates do not guarantee safety.",
+    }

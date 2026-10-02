@@ -11,6 +11,72 @@ import json
 from typing import Any
 
 
+def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
+    """Pack both upside and downside for each compared option, within budget.
+
+    Allocate by field, not by prefix of a giant JSON document. Otherwise a long
+    benefit description erases every risk appearing later in the observation.
+    No extra model critique call or uncalibrated risk score is introduced.
+    """
+    tokenizer = getattr(agent, "tok", None)
+    config = getattr(agent, "cfg", {}) or {}
+    budget = int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8
+    if budget < 96:
+        raise ValueError("Laya state budget is too small for consequence comparisons")
+    fields = ("benefit", "risk", "cost", "inaction", "uncertainty")
+    source = state.get("option_effects") or {}
+    facts = state.get("decision_facts") or state.get("choice_context") or {}
+    visible = {"facts": facts, "effects": {key: {field: str((source.get(key) or {}).get(field) or "Unknown")
+                                                      for field in fields} for key in options}}
+    if state.get("last_outcome"):
+        visible["last_outcome"] = str(state["last_outcome"])
+    if tokenizer is None:
+        return visible
+
+    # Cache only within this prediction: bounded lifetime, no accumulating map
+    # histories or large model/tokenizer references held across colonies.
+    counts: dict[str, int] = {}
+
+    def size(value: Any) -> int:
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        if text not in counts:
+            counts[text] = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+        return counts[text]
+
+    def clip(value: Any, limit: int) -> str:
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if size(text[:mid]) <= limit:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo]
+
+    # Start with equal field budgets. Risk and benefit cannot be crowded out
+    # by one another, and a long action ID is counted in the complete envelope.
+    limit = max(4, (budget - 100) // max(1, len(options) * len(fields)))
+    visible["facts"] = clip(facts, min(64, budget // 5))
+    if "last_outcome" in visible:
+        visible["last_outcome"] = clip(visible["last_outcome"], 32)
+    for row in visible["effects"].values():
+        for field in fields:
+            row[field] = clip(row[field], limit)
+    while size(visible) > budget:
+        # Shrink all compared options symmetrically, retaining named fields.
+        if limit > 2:
+            limit -= 1
+            for row in visible["effects"].values():
+                for field in fields:
+                    row[field] = clip(row[field], limit)
+        elif visible["facts"]:
+            visible["facts"] = clip(visible["facts"], max(0, size(visible["facts"]) - 4))
+        else:
+            raise ValueError("Consequence envelope exceeds Laya state budget")
+    return visible
+
+
 def _bounded_question(agent: Any, instructions: str, options: dict[str, str]) -> dict[str, Any]:
     """Reserve Laya's short decision head for every option, not just the first few."""
     tokenizer = getattr(agent, "tok", None)
@@ -18,22 +84,27 @@ def _bounded_question(agent: Any, instructions: str, options: dict[str, str]) ->
         return {"type": "choice", "instructions": instructions, "criteria": options}
     config = getattr(agent, "cfg", {}) or {}
     head_limit = int(config.get("head_max_len", 192))
-    instruction = str(instructions)
-    while len(tokenizer(f"choice question: {instruction}", add_special_tokens=False)["input_ids"]) > 28:
-        instruction = instruction[:max(8, len(instruction) - 16)]
+    def clip(prefix: str, value: str, budget: int) -> str:
+        lo, hi = 0, len(value)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if len(tokenizer(prefix + value[:mid], add_special_tokens=False)["input_ids"]) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        return value[:lo]
+
+    instruction = clip("choice question: ", str(instructions), 28)
     per_option = min(45, max(8, (head_limit - 36) // max(1, len(options)) - 1))
     criteria = {}
     for key, value in options.items():
-        description = str(value)
-        while description and len(tokenizer(f" {key}: {description}", add_special_tokens=False)["input_ids"]) > per_option:
-            description = description[:max(0, len(description) - 12)]
-        criteria[key] = description
+        criteria[key] = clip(f" {key}: ", str(value), per_option)
     return {"type": "choice", "instructions": instruction, "criteria": criteria}
 
 
 def _detailed_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
     """Reserve space for both alternatives before the encoder truncates state."""
-    facts = state.get("choice_context") or {k: state[k] for k in
+    facts = state.get("choice_context") or state.get("decision_facts") or {k: state[k] for k in
         ("growth", "trade", "owned_parts", "patient_roles_beliefs") if k in state}
     visible = {"decision_facts": facts, "alternatives": options, "colony": state}
     tokenizer = getattr(agent, "tok", None)
@@ -93,16 +164,28 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
     remaining = dict(options)
     narrowing: list[dict[str, Any]] = []
     round_number = 0
-    group_size = 2 if detailed else 6
+    consequences = bool(state.get("option_effects"))
+    group_size = 2 if detailed or consequences else 6
 
     def predict(stage_id: str, chunk: dict[str, str]) -> dict[str, Any]:
         question = _bounded_question(agent, instructions, chunk)
         # The decision head has a small option-description budget. Medical,
         # crop and equipment comparisons reserve space for both alternatives
         # before the broader colony context can be truncated.
-        visible = _detailed_state(agent, state, chunk) if detailed else state
+        visible = (_consequence_state(agent, state, chunk) if consequences else
+                   _detailed_state(agent, state, chunk) if detailed else state)
         result = agent.predict(visible, {stage_id: question})
         result["question"] = {"id": stage_id, **question}
+        result["visible_state"] = visible
+        tokenizer = getattr(agent, "tok", None)
+        if tokenizer is not None:
+            config = getattr(agent, "cfg", {}) or {}
+            result["prompt_budget"] = {
+                "state_tokens": len(tokenizer(json.dumps(visible, ensure_ascii=False, default=str),
+                                               add_special_tokens=False)["input_ids"]),
+                "state_budget": int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8,
+                "compared_options": len(chunk),
+            }
         return result
 
     while len(remaining) > group_size:
