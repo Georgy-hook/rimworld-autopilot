@@ -4,6 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$versionFile = Join-Path $projectRoot "VERSION"
+$version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version: $version" }
 $buildEnvironment = Join-Path $projectRoot ".build-venv"
 $builder = Join-Path $buildEnvironment "Scripts\python.exe"
 $assetRoot = Join-Path $projectRoot "assets\gui"
@@ -33,6 +36,7 @@ try {
         "--noconfirm", "--clean", "--onefile", "--windowed",
         "--distpath", $distribution,
         "--add-data", "$assetRoot;assets\gui",
+        "--add-data", "$versionFile;.",
         "--icon", $icon
     )
 
@@ -42,8 +46,6 @@ try {
     & $builder -m PyInstaller @shared --uac-admin --name "RimWorld-Autopilot-Setup" (Join-Path $projectRoot "autopilot_setup.py")
     if ($LASTEXITCODE -ne 0) { throw "RimWorld Autopilot Setup build failed." }
 
-    $version = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
-    if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version: $version" }
     $releaseName = "RimWorld-Autopilot-$version"
     $releaseDirectory = Join-Path $distribution $releaseName
     $resolvedDistribution = [IO.Path]::GetFullPath($distribution)
@@ -98,7 +100,7 @@ try {
     if (-not $innoCompiler) {
         throw "Inno Setup 6.7+ is required. Install JRSoftware.InnoSetup with winget."
     }
-    & $innoCompiler $installerScript
+    & $innoCompiler "/DAppVersion=$version" $installerScript
     if ($LASTEXITCODE -ne 0) { throw "Windows installer build failed." }
 
     # Keep a fixed asset name for GitHub's /releases/latest/download/ URL.

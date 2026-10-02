@@ -1,6 +1,7 @@
 """Complete live native choices before normal work can supersede them."""
 from __future__ import annotations
 from typing import Any
+import time
 from laya_decisions import ask_laya_choice
 import colony_modules
 
@@ -73,10 +74,18 @@ def target_choice(agent: Any, context: dict, previous: dict | None = None) -> tu
             facts = target_group_facts(members)
             choices[key] = (f"{stage} {key}: {facts}"
                             if stage != "target" else f"{row.get('label')} at {row.get('x')},{row.get('z')}")
+            actual = [r.get("actual_cost") for r in members if isinstance(r.get("actual_cost"), dict)]
+            native_cost = {"psyfocus": max((r.get("psyfocus") or 0 for r in actual), default=None),
+                           "heat": max((r.get("heat") or 0 for r in actual), default=None),
+                           "charges": min((r.get("charges") for r in actual if isinstance(r.get("charges"), (int, float)) and r["charges"] >= 0), default=-1)} if actual else context.get("effect_cost")
+            stages = [stage for member in members for stage in (member.get("clinical") or {}).get("stages") or []]
+            stages.sort(key=lambda r: (not r.get("life_threatening"), -int(r.get("stage") or 0)))
+            clinical = ",".join(dict.fromkeys(f"{r.get('def_name')}:{r.get('stage')}{'!' if r.get('life_threatening') else ''}" for r in stages))[:120]
+            affected = max((r.get("affected_allies") or 0 for r in members), default=0)
             effects[key] = {
                 "benefit": f"{context.get('effect_label')}: {facts}. {context.get('effect_description')}",
-                "risk": f"Group fire {any(r.get('fire') for r in members)}, max nearby enemies {max((r.get('hostiles_within_twenty') or 0 for r in members), default=0)}, max nearby allies {max((r.get('allies_within_five') or 0 for r in members), default=0)}. Check collateral effects.",
-                "cost": f"{context.get('effect_cost')}; temperature {row.get('temperature')}, roof {row.get('roof')}.",
+                "risk": f"AoE allies {affected}; clinical {clinical}; group fire {any(r.get('fire') for r in members)}, max nearby enemies {max((r.get('hostiles_within_twenty') or 0 for r in members), default=0)}, max nearby allies {max((r.get('allies_within_five') or 0 for r in members), default=0)}. Check collateral effects.",
+                "cost": f"Actual maximum cost / minimum charges {native_cost}; temperature {row.get('temperature')}, roof {row.get('roof')}.",
                 "inaction": "Cancel preserves resources but gives up this target/effect.",
                 "uncertainty": f"{facts}. Native validity proves legal targeting only.",
             }
@@ -96,15 +105,93 @@ def target_choice(agent: Any, context: dict, previous: dict | None = None) -> tu
     return {"session_id": context["session_id"], "map_id": context["map_id"],
             "target_id": row.get("target_id") or 0, "x": row["x"], "z": row["z"], "cancel": False}, {"steps": steps}
 
+def targeting_evidence(context: dict, selected: dict) -> dict | None:
+    """Bind consequences of this target; moving identified pawns stay identified."""
+    rows = context.get("options") or []
+    row = next((r for r in rows if (r.get("target_id") == selected["target_id"] if selected["target_id"]
+                                  else not r.get("target_id") and r.get("x") == selected["x"] and r.get("z") == selected["z"])), None)
+    if row is None:
+        return None
+    return {"session_id": context.get("session_id"), "map_id": context.get("map_id"),
+            "effect_identity": context.get("effect_identity"), "source": context.get("source"),
+            "effect_cost": context.get("effect_cost"), "caster_facts": context.get("caster_facts"),
+            **{k: row.get(k) for k in ("target_id", "kind", "definition", "hostile", "downed", "clinical",
+                                      "actual_cost", "roof", "fire", "allies_within_five", "affected_allies", "hostiles_within_twenty")}}
+
+
+def targeting_changed(prior: dict | None, fresh: dict | None) -> bool:
+    if prior is None or fresh is None:
+        return True
+    import colony_affordances
+    def clinical_changed(old, new):
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            return old != new
+        if set(old) != set(new):
+            return True
+        return any(abs(old[k] - new[k]) > .020001 if k in {"health", "bleed_rate"}
+                   and isinstance(old[k], (int, float)) and isinstance(new[k], (int, float))
+                   else old[k] != new[k] for k in old)
+    for key in prior:
+        if key in {"clinical", "caster_facts"}:
+            if clinical_changed(prior[key], fresh.get(key)):
+                return True
+        elif key == "actual_cost":
+            old, new = prior[key], fresh.get(key)
+            if isinstance(old, dict) and isinstance(new, dict):
+                if old.get("charges") != new.get("charges") or colony_affordances.evidence_changed(old, new):
+                    return True
+            elif old != new:
+                return True
+        elif prior[key] != fresh.get(key):
+            return True
+    return False
+
+def _target_retry_signature(context, selected=None):
+    import colony_affordances
+    rows = [{k: r.get(k) for k in ("key", "target_id", "kind", "definition", "hostile", "downed", "clinical", "actual_cost", "roof", "fire", "allies_within_five", "affected_allies", "hostiles_within_twenty")}
+            for r in context.get("options") or [] if r.get("kind") != "cell" or selected and not selected.get("target_id") and r.get("x") == selected.get("x") and r.get("z") == selected.get("z")]
+    return colony_affordances.state_fingerprint({"session": context.get("session_id"), "map": context.get("map_id"),
+        "effect": context.get("effect_identity"), "cost": context.get("effect_cost"), "caster": context.get("caster_facts"), "rows": rows})
+
+
+def _target_failed(map_state, context, selected):
+    signature = _target_retry_signature(context, selected)
+    prior = map_state.get("native_target_retry") or {}
+    if not isinstance(prior, dict): prior = {}
+    delay = min(5, max(1, int(prior.get("delay") or 0) * 2)) if prior.get("signature") == signature else 1
+    map_state["native_target_retry"] = {"signature": signature, "selected": selected, "delay": delay, "until": time.time() + delay}
+
 def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, world_only=False) -> dict | None:
     windows = client.get("/api/v1/ui/windows") or []
     top = next((w for w in reversed(windows) if w.get("force_pause") or w.get("blocks_input")), None)
     targeting = client.get("/api/v1/affordances/targeting") if top is None and not world_only else {}
     if isinstance(targeting, dict) and targeting.get("active"):
+        retry = map_state.get("native_target_retry") or {}
+        now = time.time()
+        if not isinstance(retry, dict) or not isinstance(retry.get("until"), (int, float)) or retry.get("until", 0) > now + 5:
+            retry = {}; map_state.pop("native_target_retry", None)
+        if targeting.get("options") and retry.get("signature") == _target_retry_signature(targeting, retry.get("selected")) and now < retry.get("until", 0):
+            return {"mode": "native-target-wait", "quiet": True, "decision": {"choice": "wait_for_target_retry"},
+                    "result": {"applied": False, "reason": "target_retry_cooling", "completion": "unverified"}}
         selected, raw = target_choice(agent, targeting, map_state.get("native_intent"))
-        result = client.post("/api/v1/affordances/targeting", query=selected)
+        if not selected["cancel"]:
+            fresh = client.get("/api/v1/affordances/targeting") or {}
+            if not fresh.get("active") or targeting_changed(targeting_evidence(targeting, selected), targeting_evidence(fresh, selected)):
+                _target_failed(map_state, fresh if fresh.get("active") else targeting, selected)
+                return {"mode": "native-target", "decision": {"choice": "target", "selected": selected, "raw": raw},
+                        "result": {"applied": False, "reason": "target_effect_or_consequences_changed", "completion": "unverified"}}
+        try:
+            result = client.post("/api/v1/affordances/targeting", query=selected)
+        except Exception:
+            if not selected["cancel"]: _target_failed(map_state, targeting, selected)
+            raise
+        if not selected["cancel"] and (not isinstance(result, dict) or result.get("applied") is not True):
+            _target_failed(map_state, fresh, selected)
+        else:
+            map_state.pop("native_target_retry", None)
         return {"mode": "native-target", "decision": {"choice": "cancel" if selected["cancel"] else "target",
                 "selected": selected, "raw": raw}, "result": result}
+    map_state.pop("native_target_retry", None)
     # No module may reach through a higher unhandled modal window.
     candidates = [m for m in colony_modules.modules()
                   if top and top.get("window_type") in getattr(m, "PENDING_WINDOWS", ())]
@@ -122,6 +209,15 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
         action = getattr(module, "pending_action", lambda _: None)(snapshot["development"][name])
         if action is None:
             continue
+        blocker = getattr(module, "pending_blocker", lambda _: None)(snapshot["development"][name])
+        if blocker:
+            key = name + ":" + str(action) + ":" + str(blocker)
+            quiet = map_state.get("blocked_native_continuation") == key
+            map_state["blocked_native_continuation"] = key
+            return {"mode": "native-continuation-wait", "quiet": quiet,
+                    "decision": {"choice": "wait_for_native_readiness", "action": action},
+                    "result": {"applied": False, "blocked": True, "reason": str(blocker), "completion": "unverified"}}
+        map_state.pop("blocked_native_continuation", None)
         selected, raw = module.choose(agent, {"pending_native_choice": True}, action, snapshot)
         result = colony_modules.execute(client, snapshot, map_state, action, selected)
         return {"mode": "native-continuation", "decision": {"choice": action, "selected": selected, "raw": raw}, "result": result}
@@ -133,4 +229,5 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
                 "decision": {"choice": "wait_for_native_window", "window": top.get("window_type")},
                 "result": {"applied": False, "reason": "pending_native_window", "completion": "unverified"}}
     map_state.pop("blocked_native_window", None)
+    map_state.pop("blocked_native_continuation", None)
     return None

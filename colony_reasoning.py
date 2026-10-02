@@ -93,6 +93,7 @@ def decision_facts(state: dict[str, Any]) -> dict[str, Any]:
     needs = state.get("needs") or {}
     result = {"endgame": (state.get("course") or {}).get("endgame") or state.get("endgame"),
               "goal_requirements": state.get("goal_requirements"),
+              "last_expedition_attempt": state.get("last_expedition_attempt"),
               "people": state.get("people"), "threats": state.get("threats"),
               "food_days": needs.get("food_runway_days_estimate", state.get("food_runway_days_estimate")),
               "downed": needs.get("downed", state.get("downed")),

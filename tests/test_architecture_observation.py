@@ -4,8 +4,10 @@ import colony_director as d
 
 class Client:
     def __init__(self, projects): self.projects=projects;self.posts=[]
-    def get(self,path,**kwargs): return {'projects':self.projects} if path.endswith('/projects') else [] if path.endswith('/buildings') else {}
-    def post(self,path,**kwargs):self.posts.append((path,kwargs));return {'success':True,'warnings':['Partial native placement']}
+    def get(self,path,**kwargs):
+        if path.endswith('/catalog'): return [{'def_name':n,'available_now':True,'cost_list':[]} for n in ('Wall','Door')]
+        return {'projects':self.projects} if path.endswith('/projects') else [] if path.endswith('/buildings') else {}
+    def post(self,path,**kwargs):self.posts.append((path,kwargs));return {'all_placeable':True} if path.endswith('/preview') else {'success':True,'warnings':['Partial native placement']}
 
 class ArchitectureObservationTests(unittest.TestCase):
     def execute(self, projects):

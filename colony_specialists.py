@@ -1,7 +1,10 @@
 """Observed DLC hazards and native mech/containment choices, without instant effects."""
 from __future__ import annotations
 from typing import Any
+import json
+import time
 from laya_decisions import ask_laya_choice
+from colony_retry import failure_record, recent as retry_recent
 
 DESCRIPTIONS = {
     "specialists_royal_assign": "Assign an existing native qualifying bedroom or throne to a noble or royal guest. Compare ownership, guest needs and room requirements; this changes ownership and cannot improve room quality or guarantee hospitality.",
@@ -74,12 +77,80 @@ def collect(client: Any, snapshot: dict) -> dict:
         }
         for key, endpoint in NATIVE_SPECIALISTS.values():
             try:
-                result[key] = client.get(endpoint)
+                result[key] = client.get(endpoint, map_id=snapshot["map"]["id"])
             except Exception as exc:
                 result[key] = {"available": False, "reason": str(exc)}
         return result
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
+
+QUERY_FIELDS = ("operation", "map_id", "thing_id", "label", "pawn_id", "role_id", "selected", "permit", "faction_id", "policy", "value", "session_id")
+BODY_FIELDS = ("kind", "mechanitor_id", "group_index", "value", "platform_id", "worker_id", "pawn_id", "thing_id")
+
+
+def _payload(row, action):
+    fields = QUERY_FIELDS if action in NATIVE_SPECIALISTS else BODY_FIELDS
+    return {k: row[k] for k in fields if k in row}
+
+
+def _key(row, action):
+    return json.dumps(_payload(row, action), sort_keys=True)
+
+
+def _subject(row, action):
+    family = row.get('operation') if action == 'specialists_policy' else row.get('kind') if action == 'specialists_royal_assign' else (action + ':' + str(row.get('permit'))) if action == 'specialists_permit' else action
+    target = row.get('pawn_id') or row.get('thing_id') or row.get('platform_id') or row.get('mechanitor_id') or row.get('session_id') or 'native'
+    return str(family) + ':' + str(target) + (':' + str(row['group_index']) if row.get('group_index') is not None else '')
+
+
+def _fingerprint(value):
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _readiness(row, action):
+    native = row.get('context') or {}
+    result = {'session_id': native.get('session_id'), 'map_id': native.get('map_id')}
+    if row.get('operation') == 'begin':
+        keys = ('configuration', 'quality', 'blockers', 'can_begin', 'complexity', 'metabolism', 'archites', 'max_complexity')
+        result.update({k: native.get(k) for k in keys if k in native})
+        result['selected_packs'] = [p for p in native.get('packs') or [] if p.get('selected')]
+    if action == 'specialists_mech_mode':
+        result['energy_bands'] = [int(float(m.get('energy') or 0) * 4) for m in native.get('mechs') or []]
+        result['mode'] = native.get('mode')
+    if action == 'specialists_suppress_entity':
+        entity = native.get('entity') or {}
+        result['activity_band'] = int(float(entity.get('activity') or 0) * 4)
+        result['unsafe'] = float(entity.get('containment_strength') or 0) < float(entity.get('minimum_strength') or 0)
+    if action in ('specialists_mech_boss', 'specialists_permit'):
+        result.update({k: row[k] for k in ('hostile_pawns', 'mobile_defenders', 'favor', 'on_cooldown') if k in row})
+    if action == 'specialists_policy':
+        result.update({k: row[k] for k in ('pruning_hours', 'warning', 'desired', 'max_dryads') if k in row})
+    return result
+
+
+def _material(native):
+    return _fingerprint({'material_state': native.get('material_state'), 'blockers': native.get('blockers'), 'can_begin': native.get('can_begin'),
+                         'capacity': native.get('max_complexity'),
+                         'packs': [(p.get('thing_id'), p.get('powered'), p.get('genes')) for p in native.get('packs') or []]})
+
+
+def pending_blocker(context):
+    action = pending_action(context)
+    if action and not (context.get(NATIVE_SPECIALISTS[action][0]) or {}).get('session_id'):
+        return 'Native dialog identity unavailable; continuation requires a fresh window session.'
+    if action and not (context.get('options') or {}).get(action):
+        return 'No eligible native continuation; wait for readiness or inspect the dialog.'
+    return None
+
+
+def _native_effect(row, action, snapshot):
+    base = assess(action, snapshot)
+    facts = '; '.join(f'{k}={row[k]}' for k in ('favor', 'on_cooldown', 'hostile_pawns', 'mobile_defenders', 'strength', 'minimum', 'current', 'desired', 'pruning_hours', 'pawn_health') if k in row)
+    explanation = '; '.join(str(row[k]) for k in ('description', 'genes', 'disabled_work', 'consequence', 'warning') if k in row)
+    return {**base, 'benefit': facts + '; ' + str(row.get('label') or row.get('operation')) + '; ' + explanation,
+            'cost': facts + '; ' + base['cost'] + '; ' + explanation,
+            'risk': facts + '; current job=' + str(row.get('pawn_job') or row.get('current_job')) + '; ' + base['risk'] + '; ' + explanation}
+
 
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault("development", {}).setdefault("specialists", {})
@@ -131,7 +202,87 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
                 options["specialists_suppress_entity"][key] = {"kind": "suppress", "platform_id": entity["platform_id"], "worker_id": worker["pawn_id"], "context": {"entity": entity, "worker": worker}}
     context["options"] = options
     tick = int(snapshot.get("game", {}).get("tick") or 0)
-    return [a for a, rows in options.items() if rows and ((a == "specialists_policy" and (context.get("policies") or {}).get("configuring")) or (a == "specialists_ritual" and ritual.get("configuring")) or (a == "specialists_genetics" and genetics.get("configuring")) or tick < int((map_state.get("issued") or {}).get("specialists:" + a, -1000000)) or tick - int((map_state.get("issued") or {}).get("specialists:" + a, -1000000)) >= 15000)]
+    memory = map_state.get('specialists_memory')
+    if not isinstance(memory, dict):
+        memory = {}
+        map_state['specialists_memory'] = memory
+    now = time.time()
+    for bucket in ('issued', 'deferred', 'failed'):
+        records = memory.get(bucket) or {}
+        if not isinstance(records, dict):
+            memory.pop(bucket, None); continue
+        for key, record in list(records.items()):
+            paused = isinstance(record, dict) and bucket == 'failed' and record.get('paused')
+            timestamp = record.get('time' if paused else 'tick') if isinstance(record, dict) else None
+            if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool):
+                del records[key]; continue
+            active = (0 <= now - timestamp < 2) if paused else retry_recent(record, tick, 60 if bucket == 'failed' else 15000, now=now)
+            if not active:
+                del records[key]
+        if not records:
+            memory.pop(bucket, None)
+    sessions = memory.get('sessions')
+    if not isinstance(sessions, dict):
+        sessions = {}; memory['sessions'] = sessions
+    active_sessions = set()
+    for action, (name, _) in NATIVE_SPECIALISTS.items():
+        native = context.get(name) or {}
+        sid = native.get('session_id') if native.get('configuring') else None
+        if not sid:
+            continue
+        active_sessions.add(sid)
+        session = sessions.get(sid)
+        if not isinstance(session, dict):
+            session = {'edges': [], 'named': []}; sessions[sid] = session
+        if not isinstance(session.get('edges'), list):
+            session['edges'] = []
+        if not isinstance(session.get('named'), list):
+            session['named'] = []
+        session['edges'] = [edge for edge in session['edges'] if isinstance(edge, list) and len(edge) == 2 and all(isinstance(k, str) for k in edge)][-32:]
+        session['named'] = [name for name in session['named'] if isinstance(name, str)][-16:]
+        config = _fingerprint(native.get('configuration'))
+        material = _material(native)
+        pending = session.pop('pending', None)
+        if not isinstance(pending, dict) or not isinstance(pending.get('from'), str) or not isinstance(pending.get('option'), str):
+            pending = None
+        if pending and config != pending['from']:
+            session['edges'] = (session['edges'] + [[pending['from'], pending['option']]])[-32:]
+        elif session.get('material') not in (None, material):
+            session['edges'] = []
+        elif session.get('configuration') not in (None, config) and not pending:
+            session['edges'] = []  # External actual configuration change.
+        session.update(configuration=config, material=material)
+        native['recent_configuration_effects'] = session.get('last_effect')
+        for key, row in list(options[action].items()):
+            row['session_id'] = sid
+            row['map_id'] = native.get('map_id', snapshot['map']['id'])
+            if row.get('operation') in ('begin', 'cancel'):
+                continue
+            composition = _fingerprint((native.get('configuration') or {}).get('selected_packs'))
+            if [config, _key(row, action)] in session['edges'] or (row.get('operation') == 'name' and composition in session['named']):
+                del options[action][key]
+                native['repeat_blocker'] = 'Repeated configuration transition suppressed; Begin, Cancel and new configurations remain explicit.'
+    for sid in list(sessions):
+        if sid not in active_sessions:
+            del sessions[sid]
+    if not sessions:
+        memory.pop('sessions', None)
+    for action, rows in options.items():
+        for key, row in list(rows.items()):
+            native = row.get('context') or {}
+            if not native.get('configuring') and row.get('map_id') not in (None, snapshot['map']['id']):
+                del rows[key]; continue
+            if row.get('operation') == 'cancel':
+                continue
+            failed = (memory.get('failed') or {}).get(_key(row, action))
+            subject = _subject(row, action)
+            deferred = (memory.get('deferred') or {}).get(subject)
+            if failed or (not native.get('configuring') and ((memory.get('issued') or {}).get(subject) or (deferred and deferred.get('state') == _fingerprint(_readiness(row, action))))):
+                del rows[key]
+    if not memory:
+        map_state.pop('specialists_memory', None)
+    context['eligible_actions'] = [a for a, rows in options.items() if rows]
+    return context['eligible_actions']
 
 def assess(action: str, snapshot: dict) -> dict:
     if action == "specialists_royal_assign":
@@ -175,7 +326,7 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         pending = pending_action(context) == action
         if not pending:
             targets["defer"] = "Prepare and preserve current work."
-        focused, first = ask_laya_choice(agent, {"colony": state, "option_effects": {key: effects for key in targets}}, action + "_target",
+        focused, first = ask_laya_choice(agent, {"colony": state, "option_effects": {key: next((_native_effect(row, action, snapshot) for row in plans.values() if target(row) == key), effects) for key in targets}}, action + "_target",
                                          "Choose one native specialist target or defer.", targets, detailed=True)
         if focused == "defer":
             return {"defer": True}, first
@@ -184,11 +335,9 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         if not pending:
             choices["defer"] = "Keep preparations and current participants; defer this decision."
         native = context.get(NATIVE_SPECIALISTS[action][0]) or {}
-        facts = {key: native.get(key) for key in ("label", "description", "quality", "blockers", "complexity", "metabolism", "archites", "max_complexity", "warning") if key in native}
+        facts = {key: native.get(key) for key in ("label", "description", "quality", "blockers", "complexity", "metabolism", "archites", "max_complexity", "warning", "recent_configuration_effects", "repeat_blocker") if key in native}
         selected, raw = ask_laya_choice(agent, {"colony": state, "decision_facts": facts,
-                                       "option_effects": {key: {**effects, "benefit": effects["benefit"] + "; " + str(row.get("genes") or row.get("description") or row.get("disabled_work") or row.get("label")),
-                                                               "cost": effects["cost"] + "; pruning hours " + str(row.get("pruning_hours")) + "; " + str(row.get("warning") or ""),
-                                                               "risk": effects["risk"] + "; current job " + str(row.get("pawn_job") or row.get("current_job"))} for key, row in plans.items()}}, action,
+                                       "option_effects": {key: _native_effect(row, action, snapshot) for key, row in plans.items()}}, action,
                                        DESCRIPTIONS[action], choices, detailed=True)
         raw["specialist_target_choice"] = first
         return ({"defer": True} if selected == "defer" else plans[selected]), raw
@@ -249,27 +398,44 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     return ({"defer": True} if key == "defer" else {k: v for k, v in plans[key].items() if k != "context"}), raw
 
 def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
-    if selected.get("defer"):
-        map_state.setdefault("issued", {})["specialists:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-        return {"applied": False, "reason": "laya_deferred"}
-    if action in NATIVE_SPECIALISTS:
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    memory = map_state.setdefault('specialists_memory', {})
+    if selected.get('defer'):
+        for row in (snapshot.get('development', {}).get('specialists', {}).get('options', {}).get(action) or {}).values():
+            memory.setdefault('deferred', {})[_subject(row, action)] = {'tick': tick, 'state': _fingerprint(_readiness(row, action))}
+        return {'applied': False, 'reason': 'laya_deferred'}
+    payload = _payload(selected, action)
+    def failed():
+        memory.setdefault('failed', {})[_key(selected, action)] = {**failure_record(tick), 'time': time.time(), 'paused': bool((selected.get('context') or {}).get('configuring'))}
+    try:
         live = collect(client, snapshot)
-        prepare({"map": snapshot["map"], "development": {"specialists": live}}, {})
-        if selected not in (live.get("options", {}).get(action) or {}).values():
-            return {"applied": False, "reason": "ritual participants, quality, blockers or native option changed"}
-        fields = ("operation", "map_id", "thing_id", "label", "pawn_id", "role_id", "selected", "permit", "faction_id", "policy", "value")
-        result = client.post(NATIVE_SPECIALISTS[action][1], query={**{key: selected[key] for key in fields if key in selected}, "confirmed": True})
-        applied = result in ("ritual_native_command_requested", "ritual_begin_requested", "ritual_assignment_updated", "ritual_cancelled", "gene_design_opened", "gene_selection_updated", "gene_name_chosen", "gene_design_cancelled", "gene_assembly_requested", "specialist_policy_requested", "boss_summon_job_requested", "permit_native_action_requested")
-        if applied and (selected.get("operation") == "begin" or action in ("specialists_mech_boss", "specialists_permit")):
-            map_state.setdefault("issued", {})["specialists:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-        return {"applied": applied, "reason": str(result), "completed": False}
-    payload = {k: selected[k] for k in ("kind", "mechanitor_id", "group_index", "value", "platform_id", "worker_id", "pawn_id", "thing_id") if k in selected}
-    live = collect(client, snapshot)
-    prepare({"map": snapshot["map"], "development": {"specialists": live}}, {})
-    rows = live.get("options", {}).get(action) or {}
-    if not any({k: v for k, v in row.items() if k != "context"} == payload for row in rows.values()):
-        return {"applied": False, "reason": "selection_no_longer_feasible"}
-    result = client.post("/api/v1/specialists/order", body={"map_id": snapshot["map"]["id"], **payload})
-    if isinstance(result, dict) and result.get("applied"):
-        map_state.setdefault("issued", {})["specialists:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-    return result if isinstance(result, dict) else {"applied": False, "reason": "invalid_response"}
+        prepare({'map': snapshot['map'], 'game': snapshot.get('game') or {}, 'development': {'specialists': live}}, {})
+        rows = live.get('options', {}).get(action) or {}
+        row = next((row for row in rows.values() if _payload(row, action) == payload), None)
+        if row is None or (action in NATIVE_SPECIALISTS and _readiness(row, action) != _readiness(selected, action)):
+            failed()
+            return {'applied': False, 'reason': 'selected_native_identity_or_relevant_readiness_changed'}
+        if action in NATIVE_SPECIALISTS:
+            result = client.post(NATIVE_SPECIALISTS[action][1], query={**payload, 'confirmed': True})
+            applied = result in ('ritual_native_command_requested', 'ritual_begin_requested', 'ritual_assignment_updated', 'ritual_cancelled', 'gene_design_opened', 'gene_selection_updated', 'gene_name_chosen', 'gene_design_cancelled', 'gene_assembly_requested', 'specialist_policy_requested', 'boss_summon_job_requested', 'permit_native_action_requested')
+            outcome = {'applied': applied, 'reason': str(result), 'completed': False}
+        else:
+            result = client.post('/api/v1/specialists/order', body={'map_id': snapshot['map']['id'], **payload})
+            outcome = result if isinstance(result, dict) else {'applied': False, 'reason': 'invalid_response'}
+            applied = outcome.get('applied') is True
+    except Exception:
+        failed(); raise
+    if applied:
+        native = row.get('context') or {}
+        sid = native.get('session_id')
+        if sid and native.get('configuring'):
+            session = memory.setdefault('sessions', {}).setdefault(sid, {'edges': [], 'named': []})
+            session['pending'] = {'from': _fingerprint(native.get('configuration')), 'option': _key(row, action)}
+            session['last_effect'] = {'operation': payload, 'result': outcome['reason']}
+            if row.get('operation') == 'name':
+                session['named'] = (session['named'] + [_fingerprint((native.get('configuration') or {}).get('selected_packs'))])[-16:]
+        else:
+            memory.setdefault('issued', {})[_subject(row, action)] = {'tick': tick}
+    else:
+        failed()
+    return outcome

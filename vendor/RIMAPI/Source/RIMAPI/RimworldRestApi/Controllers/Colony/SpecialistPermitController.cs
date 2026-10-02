@@ -16,8 +16,8 @@ namespace RIMAPI.Controllers
         [Get("/api/v1/specialists/permits")]
         [EndpointMetadata("Read owned Royalty permit options, cooldown/honor costs and native targeting/confirmation requirements")]
         public async Task Context(HttpListenerContext context) {
-            var options = new List<object>();
-            if (ModsConfig.RoyaltyActive) foreach (var pawn in PawnsFinder.AllMaps_FreeColonistsSpawned.Where(p => p.royalty != null && !SpecialistNativeSafety.Protected(p)))
+            var options = new List<object>(); int mapId=RequestParser.GetMapId(context);
+            if (ModsConfig.RoyaltyActive) foreach (var pawn in PawnsFinder.AllMaps_FreeColonistsSpawned.Where(p => p.Map.uniqueID==mapId && p.royalty != null && !SpecialistNativeSafety.Protected(p)))
                 foreach (var permit in pawn.royalty.AllFactionPermits.Where(p => !p.Faction.HostileTo(Faction.OfPlayer)))
                     foreach (var option in Options(pawn, permit).Where(o => o.action != null && !o.Disabled))
                         options.Add(new { pawn_id = pawn.thingIDNumber, map_id = pawn.Map.uniqueID, permit = permit.Permit.defName,

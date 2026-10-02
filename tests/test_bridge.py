@@ -75,11 +75,19 @@ class BridgeTests(unittest.TestCase):
         result = bridge.apply_action(client, action)
         self.assertTrue(result["stale_target"])
         self.assertTrue(result["applied"])
-        self.assertEqual(len(result["responses"]), 1)
+        self.assertEqual(len(result["responses"]), 2)
+        self.assertEqual(result["command_acceptance"], [True, False])
+        self.assertTrue(result["responses"][0]["success"])
+        self.assertFalse(result["responses"][1]["applied"])
+        self.assertFalse(result["responses"][1]["outcome_unknown"])
 
         client.post.side_effect = bridge.RimApiError("/api/v1/pawn/job: HTTP 400: Job is not allowed")
-        with self.assertRaises(bridge.RimApiError):
-            bridge.apply_action(client, {"kind": "commands", "commands": [action["commands"][1]]})
+        rejected = bridge.apply_action(client, {"kind": "commands", "commands": [action["commands"][1]]})
+        self.assertFalse(rejected["applied"])
+        self.assertEqual(rejected["failed_command_index"], 0)
+        self.assertEqual(rejected["failure_retry_seconds"], 5)
+        self.assertTrue(rejected["outcome_unknown"])
+        self.assertIn("Job is not allowed", rejected["error"])
 
     def test_food_summary_preserves_short_term_spoilage(self):
         summary = {"critical_resources": {"food_summary": {

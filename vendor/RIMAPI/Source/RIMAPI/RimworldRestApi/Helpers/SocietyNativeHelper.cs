@@ -35,7 +35,7 @@ namespace RIMAPI.Helpers
             if (def == null || worker.WorkTypeIsDisabled(def.workType) || (worker.workSettings?.GetPriority(def.workType) ?? 0) == 0
                 || (def.requiredCapacities != null && def.requiredCapacities.Any(c => !worker.health.capacities.CapableOf(c)))
                 || !worker.CanReach(patient,PathEndMode.Touch,Danger.Some)) return null;
-            if (kind != "baby_safe" && !ResilienceAutomationHelper.RoutineRouteSafe(worker,patient)) return null;
+            if (!(kind == "baby_safe" ? ResilienceAutomationHelper.RescueRouteSafe(worker,patient) : ResilienceAutomationHelper.RoutineRouteSafe(worker,patient))) return null;
             // Native play candidates use random order; preserve gameplay RNG while reading.
             Rand.PushState(17591);
             try
@@ -71,9 +71,15 @@ namespace RIMAPI.Helpers
         }
         private static bool JobSafe(Pawn worker,Job job,Pawn exposedBaby=null)
         {
-            if (job == null) return false;
+            if (job == null || (exposedBaby != null && !ResilienceAutomationHelper.RescueRouteSafe(worker,exposedBaby))) return false;
             return new[]{job.targetA,job.targetB,job.targetC}.Where(t => t.HasThing && t.Thing.Spawned && t.Thing != exposedBaby)
                 .All(t => ResilienceAutomationHelper.RoutineRouteSafe(worker,t.Thing));
+        }
+        private static string CareBenefit(Pawn person,Pawn worker,string kind)
+        {
+            if(kind=="hemogen_feed")return $"{person.LabelShort} hemogen={person.genes?.GetFirstGeneOfType<Gene_Hemogen>()?.ValuePercent:0.00} packs_allowed={person.genes?.GetFirstGeneOfType<Gene_Hemogen>()?.hemogenPacksAllowed}";
+            if(kind=="teach")return $"{person.LabelShort} learning={person.needs.TryGetNeed<Need_Learning>()?.CurLevelPercentage:0.00} desires={string.Join(",",person.learning?.ActiveLearningDesires.Select(d=>d.defName) ?? Enumerable.Empty<string>())} teacher={string.Join(",",worker.skills.skills.Select(s=>s.def.defName+":"+s.Level))}";
+            return $"{person.LabelShort} {kind}; food={person.needs.food?.CurLevelPercentage:0.00} play={person.needs.play?.CurLevelPercentage:0.00} awake={person.Awake()}";
         }
         public static void AddContext(Map map,SocietyContextDto result)
         {
@@ -85,7 +91,7 @@ namespace RIMAPI.Helpers
                 SocietyPersonDto row=result.People.FirstOrDefault(p => p.PawnId == person.thingIDNumber);
                 if (row != null)
                 {
-                    row.Development=new {age=person.ageTracker.AgeBiologicalYearsFloat,stage=person.DevelopmentalStage.ToString(),awake=person.Awake(),growth_tier=person.ageTracker.GrowthTier,
+                    row.Development=new {temperature=person.Position.GetTemperature(map),comfortable_min=person.GetStatValue(StatDefOf.ComfyTemperatureMin),comfortable_max=person.GetStatValue(StatDefOf.ComfyTemperatureMax),roofed=person.Position.Roofed(map),tox_gas=(int)map.gasGrid.DensityAt(person.Position,GasType.ToxGas),age=person.ageTracker.AgeBiologicalYearsFloat,stage=person.DevelopmentalStage.ToString(),awake=person.Awake(),growth_tier=person.ageTracker.GrowthTier,
                         growth_points=person.ageTracker.growthPoints,childcare_priority=DefDatabase<WorkTypeDef>.GetNamedSilentFail("Childcare") is WorkTypeDef childcare ? person.workSettings?.GetPriority(childcare) : null,
                         learning_level=person.needs.TryGetNeed<Need_Learning>()?.CurLevelPercentage,play_level=person.needs.play?.CurLevelPercentage,
                         lesson_pending=ModsConfig.BiotechActive && SchoolUtility.NeedsTeacher(person)};
@@ -101,8 +107,8 @@ namespace RIMAPI.Helpers
                     foreach (Pawn worker in people.Where(p=>p != person && Idle(p))) foreach (var pair in Jobs) foreach(string giver in pair.Value)
                         if (Scanner(worker,person,pair.Key,giver) != null)
                             result.NativeOptions.Add(Option(pair.Key,person,worker,giver,0,$"{worker.LabelShort}: {giver} for {person.LabelShort}",
-                                Effects($"{person.LabelShort} {pair.Key}; food={person.needs.food?.CurLevelPercentage:0.00} play={person.needs.play?.CurLevelPercentage:0.00}",
-                                    pair.Key == "baby_safe" ? "Rescuer can face temperature/fallout exposure" : "Supplies/path/awake state can change", "Caregiver labor; feeding consumes food/milk/hemogen", "Unmet hunger/play/learning/exposure persists", "Normal job must complete; no instant need gain")));
+                                Effects(CareBenefit(person,worker,pair.Key),
+                                    pair.Key == "baby_safe" ? $"Rescuer exposure T={person.Position.GetTemperature(map):0.0} roof={person.Position.Roofed(map)} tox={map.gasGrid.DensityAt(person.Position,GasType.ToxGas)}; hostile corridors excluded" : "Supplies/path/awake state can change", "Caregiver labor; feeding consumes food/milk/hemogen", "Unmet hunger/play/learning/exposure persists", "Normal job must complete; no instant need gain")));
                     DeathrestOptions(person,map,result);
                 }
                 DrugOptions(person,map,result);
@@ -210,7 +216,7 @@ namespace RIMAPI.Helpers
             else if(request.Kind=="drug_entry"){SetDrugEntry(person,request.Value);result.Applied=true;result.Reason="personal_policy_entry_set; autonomous_jobs_required";}
             else if(request.Kind=="deathrest_wake"){person.genes.GetFirstGeneOfType<Gene_Deathrest>().autoWake=request.Value=="auto";result.Applied=true;result.Reason="deathrest_wake_policy_set";}
             else if(request.Kind=="deathrest")
-            {var bed=MapHelper.GetThingOnMapById(request.MapId,request.TargetId);var job=JobMaker.MakeJob(JobDefOf.Deathrest,bed);job.forceSleep=true;result.Applied=person.jobs.TryTakeOrderedJob(job,JobTag.Misc);result.Reason="normal_deathrest_job_scheduled; completion_unobserved";}
+            {var bed=MapHelper.GetThingOnMapById(request.MapId,request.TargetId);var job=JobMaker.MakeJob(JobDefOf.Deathrest,bed);job.forceSleep=true;result.Applied=person.jobs.TryTakeOrderedJob(job,JobTag.Misc);result.Reason=result.Applied ? "normal_deathrest_job_scheduled; completion_unobserved" : "deathrest_job_rejected";}
             else if(request.Kind=="growth_prepare")return SocietyGrowthHelper.Execute(request);
             else if(request.Kind=="medical_recipe")return SocietyMedicalHelper.Execute(request);
             return ApiResult<CapabilityOrderResultDto>.Ok(result);

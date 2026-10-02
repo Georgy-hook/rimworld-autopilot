@@ -1,12 +1,19 @@
 # Local runtime state and player data
 logs/
 *.jsonl
+!tests/fixtures/**/*.jsonl
 *.rws
+*.rws.old
+*.rws.bak
 *.failed-*
 laya-control.json
 laya-preferences.json
 rimworld-autopilot.json
 autopilot-preferences.json
+.env
+.env.*
+!.env.example
+!.env.template
 
 # Python
 .venv/

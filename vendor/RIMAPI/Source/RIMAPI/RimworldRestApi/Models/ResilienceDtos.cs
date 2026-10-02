@@ -19,6 +19,7 @@ namespace RIMAPI.Models
         public int MedicineSkill { get; set; }
         public float? RoomCleanliness { get; set; }
         public float? CurrentTemperature { get; set; }
+        public float? CurrentTargetTemperature { get; set; }
         public bool? PowerOn { get; set; }
         public float? SurgerySuccess { get; set; }
     }

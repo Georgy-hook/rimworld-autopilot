@@ -32,7 +32,8 @@ flowchart TD
 | `colony_progression` | Prerequisite frontier and finite Core/DLC ending chains | Native quests, blockers, intermediate choices and persisted credits evidence |
 | `colony_specialists` | Mechs, containment, rituals, genes, permits, meditation and dryads | Active DLC, native dialogs and current capabilities |
 | `colony_affordances`, `colony_sessions` | Loaded abilities/interactions and pending native choices | Current callbacks/targets, costs, effect identity and modal/session validation |
-| `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Previous capability audit; retained |
+| `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Subject history, native atomic command guards and repair of partial auxiliary steps |
+| `colony_expeditions` | Shared trade, raid and rescue planning outside the domain registry | Native two-leg ETA, nutrition, mass, home reserves, exact confirmation and persisted formation identity |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
 | `colony_architect` | Building purpose, materials and generated layouts | Actual catalog, stock, research and placement checks |
 | `colony_shipbuilding` | Persistent connected ship layout and separately funded building stages | Native blueprint preview, completed beams before caskets, observed placements, unallocated stock |
@@ -57,6 +58,9 @@ Each registered domain defines `DESCRIPTIONS`, `LABELS`, `ACTIONS`, `DOMAINS` an
 Module identifiers are static code registrations. Duplicate or wrongly prefixed
 actions are rejected. Collection errors clear stale module context, suppress
 that domain's candidates and produce a warning; unrelated modules remain usable.
+Proposal preparation errors also clear only that domain's partial context,
+record the failing phase, and allow unrelated modules to continue. A fresh
+collection is required before retrying it. Registration errors remain explicit.
 All new runtime modules are included in `install_payload.py`.
 
 ## What “consider negative outcomes” means here
@@ -109,6 +113,9 @@ bounded prefixes; this limitation is distinct from the new consequence cards.
 - Every module records observation time (`read_ms`). These measurements support
   later profiling; no claim is made that the previously reported CPU spikes
   have been reproduced or fixed.
+- The director's retry gate covers pending world/modal reads before map
+  collection. Repeated failures obey exponential backoff even with no map;
+  the local heartbeat continues without repeating those API calls.
 
 ## Observation, memory and intent
 
@@ -194,7 +201,8 @@ timeline's order.
 See the [comprehensive inventory and closure audit](COMPREHENSIVE_AUDIT_0.0.7.md),
 [production](modules/production.md), [society](modules/society.md),
 [progression](modules/progression.md), [combat](modules/combat.md) and
-[specialists](modules/specialists.md). Each distinguishes executable additions,
+[specialists](modules/specialists.md), plus [affordances and targeting](modules/affordances.md).
+Each distinguishes executable additions,
 read-only context and missing mechanics. Installed RimWorld 1.6 definitions and
 engine methods are the primary compatibility evidence; web sources supply
 reference context. Odyssey is not treated as active on this installation.
@@ -203,3 +211,19 @@ Offline fixtures, compilation and tokenizer checks establish code and protocol
 properties. They do not establish successful colony survival, correct live job
 completion or victory. No game, colony, director or observer was started for
 this change. No model weights were trained.
+
+## Failure clocks across game speeds
+
+`colony_retry` provides JSON-safe tick and wall-clock expiry. Resilience and
+society failed options wait at least 15 seconds; production, sustenance,
+specialists, affordances and capabilities wait at least 30 seconds. Their
+existing tick horizons must expire as well. Only the same failed option is
+suppressed; successful/deferred policies retain game-time semantics. Malformed
+records and either clock moving backwards invalidate that record. Pending
+specialist dialogs retain their two-second retry, and pending native targeters
+retain their bounded 1/2/4/5-second schedule. Combat/event retries are separate.
+Construction repairs and legacy hospital failures wait for both 2500 ticks and
+30 seconds; rescue-site failures retain a 15-second/60-tick floor. These guards
+apply to the selected failed project or mission operation.
+These intervals suppress transport/rejection churn; they do not certify that
+Laya has learned a successful strategy.

@@ -94,7 +94,16 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     for name, module in zip(MODULE_NAMES, modules()):
         if (dev.get("module_status", {}).get(name) or {}).get("available") is False:
             continue
-        proposed = module.prepare(snapshot, map_state)
+        try:
+            proposed = module.prepare(snapshot, map_state)
+        except Exception as exc:
+            # A malformed observation in one domain must not repeatedly abort
+            # the entire colony cycle. Never retain partially prepared targets.
+            dev[name] = {}
+            status = dev.setdefault("module_status", {}).setdefault(name, {})
+            status.update(available=False, phase="prepare", error=str(exc)[:240])
+            snapshot.setdefault("warnings", []).append(f"{name} prepare: {str(exc)[:240]}")
+            continue
         if any(action not in module.ACTIONS for action in proposed):
             raise ValueError(f"{name} proposed an unregistered action")
         result.extend(proposed)

@@ -36,3 +36,127 @@ These are offline contract tests with native-shaped API fixtures. They do not es
 Journey food budgets use each selected pawn's actual native food consumption rate, including gene effects, through `NutritionBetweenHungryAndFed` and `TicksUntilHungryWhenFedIgnoringMalnutrition`. A native `DaysWorthOfFoodCalculator` estimate is exposed separately. Every packed item must satisfy `CaravanPawnsNeedsUtility.CanEatForNutritionEver` and every traveler's current food policy. Only nonrottable packaged survival meals are packed; pemmican is conservatively excluded because installed `Items_Food.xml` shows it rots after 70 days and remaining shelf life on a hot route is unknown. Food days are not native route ETA. Targets require a nonhidden, nondismissed ending quest look target or already generated escape ship map; unknown/hidden Site parts are excluded. Plans carry no animals and expose scout/migration groups without arbitrary pawn/item editing. A migration can contain one healthy traveler. Scout preserves at least two armed mobile defenders; migration explicitly shows whoever remains. Long routes, changing needs, biome, illness and events can defeat a feasible starting plan. Pending route callbacks remove a stale destination or reject native invalid arrival; victory is never inferred from that route state.
 
 Completion across all endings remains a conditional executable architecture, not a guarantee that any seed, storyteller, starting pawn set or chosen model policy wins. Resource acquisition, hospitality, discovery, combat and rebuilding require the root's adjacent module audit; authoritative credits evidence is the terminal proof.
+
+
+## Reviewed follow-up: continuation and freshness fixes
+
+Parent approved four reproduced defects before edits. Implementation changes:
+
+1. `EndingJourneyState` persists `FormingLord` with Scribe references, origin map,
+   formation ID, and last lifecycle result. A Harmony prefix captures the exact
+   native forming lord at `CaravanExitMapUtility.ExitMapAndCreateCaravan`;
+   postfix receives the actual caravan. Only this matched callback sets the
+   ending arrival action. Missing/cancelled lord, missing target, changed owned
+   roster or downed companion invalidates intent, removing the blocking route.
+   Old records without identity are invalidated without touching another lord.
+   No elapsed-time cancellation and no unrelated caravan lookup/rerouting.
+2. Journey freshness uses real roster IDs and supplies manifest. GET supplies
+   `home_pawn_ids` and `manifest:[{def_name,count}]`; POST supplies sorted home
+   IDs and `manifest=DefName:count,...`. Empty home IDs are valid migration.
+   Native plans regenerate safety/stock thresholds. Ordinary reserve drift is
+   accepted; changed roster, cost or substantial ETA/food-margin changes fail.
+3. Empty continuation reports `native-continuation-wait` with blocked reason,
+   quiet repeated results, no model calls, and resumes when native choices exist.
+   Odyssey exposes required landing map and marker session; explicit
+   `view_landing_map` sets that map after identity revalidation. Placement and
+   landing also verify marker session. An empty coarse placement sample now
+   searches at most 256 additional native cells per GET for viable recovery, otherwise records a blocker. There
+   is no implicit strategic cancellation or fabricated landing success.
+4. Boarding permits ordinary Goto/Wait job progress while rechecking identity,
+   readiness and care protection. Site jobs similarly tolerate ordinary jobs;
+   native `SpecialistNativeSafety.Protected` regenerates care/health eligibility.
+
+Installed assembly evidence inspected with ILSpy, without game execution:
+`RimWorld.LordJob_FormAndSendCaravan.SendCaravan` calls
+`RimWorld.Planet.CaravanFormingUtility.FormAndCreateCaravan`, which immediately
+calls the exact six-argument PlanetTile overload of
+`CaravanExitMapUtility.ExitMapAndCreateCaravan`. `downedPawns` is public;
+`StopFormingCaravan` removes its actual lord. Native gravship controller already
+uses `Current.Game.CurrentMap = map`, the same API used for explicit recovery.
+
+Offline regression evidence: `python -m unittest tests.test_progression` passes
+35 tests. New tests exercise ordinary boarding job progress vs care, reserve
+consumption vs changed manifest/roster/cost, empty continuation without model,
+quiet wait and recovery, landing POST identity/session freshness. Source contract
+assertions check persisted lord/callback and landing bounded incremental fallback. Source
+assertions do not execute Harmony/native lifecycle and must not be described as
+runtime proof. No build, game, live API, model weights, observer or git operation
+was run for this follow-up. Parent compilation/review remains required; native
+save/load, caravan creation and Odyssey landing are still runtime-unverified.
+
+
+## Reviewed follow-up: affordances and targeting
+
+Parent reviewed and approved semantic freshness, native targeting generation,
+scanner identity/ingredients and remaining-charge evidence, followed by visible
+comparison cards and retry repairs. See `docs/modules/affordances.md` for exact
+DTOs and lifetime/retry contracts. Model cards now expose actual target costs,
+minimum finite remaining charges, maximum actual-radius allied exposure and worst
+clinical stages. Scanner state and affected person identities appear first.
+
+Stable identity and state fingerprints are separate: successful 2500-tick dwell
+survives its own charge use; defer binds actually offered current-stage options;
+failed/stale/rejected/API-error options retry after 150 ticks and reopen on
+meaningful state change. Expired/future/malformed/legacy timestamps are removed.
+Paused targeting uses one JSON retry record, wall-clock 1/2/4/5-second delays and
+immediate new-session/meaningful-context bypass. Fresh native context reads still
+occur; repeated identical failures suppress model and POST calls. Empty target
+catalogue permits cancellation; native cancellation has no retry restriction.
+
+Offline progression+affordances suite passes 60 tests. New regressions cover
+visible model evidence within the 312-token state budget, deferred-new-target
+availability, accepted dwell after charge use, stale/rejected/GET/POST failures,
+expiry/rollback/JSON and paused targeting retry. Installed ILSpy confirms five
+public `Targeter.BeginTargeting` overloads and `StopTargeting`, native scanner
+State/Occupant/GetRequiredCountOf and inherited public SelectedPawn. Harmony source
+assertions and Python transport tests are not live native proof. No build/game/
+live API/model weights/observer/git operation was used. Separate combat findings
+were reported read-only and are awaiting parent review before edits.
+
+
+## Event and growth follow-up
+
+Approved event fixes preserve explicit observation/defer acknowledgments, but
+rejected or unknown mutation results no longer enter handled-event history.
+Native non-generic `success:true` quest acknowledgments remain accepted; explicit
+`applied:false` takes precedence. Failed options use persisted wall-clock retry
+5/10/20/30 seconds; history prunes malformed, expired and future timestamps.
+The native caravan planning/lifecycle redesign remains a proposal awaiting review.
+Growth cards count mental-state and bedbound pawns as unavailable; best skills
+exclude unavailable workers and disabled skills. Bedbound remains a clinical
+mobility count, with a separate unavailable_workers value.
+Offline tests exercise rejection→bounded retry→acceptance→tick rollback and
+existing unavailable-trade acknowledgment. No game, API server or Harmony runtime
+was launched; native expedition execution remains unproven.
+
+
+## Shared ordinary expedition contracts (approved follow-up)
+
+The trade/raid/rescue helper previously used raw ration counts (10/12/14 per
+person) and a nonpersisted route list matched by ANY original pawn. All three
+starts now delegate to shared `ExpeditionPlanHelper`: read-only native preview,
+explicit Laya confirm/defer, regenerated exact roster/cargo/policy and native
+nutrition/diet/ETA/capacity checks. `ExpeditionRouteState` persists the exact Lord
+and native creation callback dispatch; canceled/compromised intents never
+restart or reroute overlapping unrelated caravans. Invalidating intent does not
+cancel an ordinary vanilla formation. Native graph references are never sent to
+JSON; bounded scalar projections expose still-active formation.
+
+Focused gate: 13 offline tests across expedition contracts, event/growth
+follow-up, baseline bridge stale-response regression and legacy rescue readiness.
+This includes the real choice adapter with fake tokenizer at its 512-token
+configuration; it is not a checkpoint inference or native runtime test.
+Native source checks assert exact hook/roster/persistence/diet/cost contracts,
+not live interception or saved-game roundtrip execution. See
+[expedition module/helper documentation](../modules/expeditions.md) for precise
+units, API changes, supported rations and remaining execution limitations.
+
+Residual strategy/professions audit coverage: active expansion filters,
+endgame-coherent axes, direction→research/native-plan integration, disabled skill
+handling and profession ranking were read. Confirmed secondary security skill
+`Medical` was corrected to installed native `Medicine`; fixture verifies Medicine
+16 contributes 9.6 to its 0.3 weighted security score. Training potential is a
+long-term assessment with deliberate minimum health/capacity factors; it does
+not itself verify an executable current job. No additional confirmed strategy
+DTO mismatch was found in this narrow read-only pass. This is not a claim of
+complete scenario/runtime coverage for every strategic direction.

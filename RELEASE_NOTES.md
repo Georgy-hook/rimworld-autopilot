@@ -1,3 +1,33 @@
+# 0.0.7 — Unreleased candidate
+
+This section describes source changes in `fix/0.0.7-cold-start`. It is not a
+published installer or a claim of demonstrated autonomous victory. See the
+[current documentation index](docs/README.md) and
+[API/loop audit](docs/audits/api-loop-audit-2026-10-02.md) for reviewed coverage.
+
+- Added registered production, sustenance, resilience, society, progression,
+  specialist and affordance domains. Laya receives bounded benefit, risk, cost,
+  inaction and uncertainty for choices; subsequent observations remain distinct
+  from command acceptance.
+- Expanded live crop/season, blight, augmentation, equipment, trained-animal,
+  medical, kitchen, storage and DLC context with ordinary game executors.
+- Added campaign identity and cross-map goal persistence, staged connected ship
+  construction, travel supply/manifest checks, royal hospitality prerequisites
+  and explicit Core/DLC ending continuations. Odyssey runtime validation remains
+  pending where its Data is unavailable.
+- Corrected repeated or suppressed care/utility decisions, stale API selection
+  handling, canceled caravan intent, empty native continuations and target/session
+  freshness. Per-module audit reports distinguish Python fixtures, native source
+  checks and actual gameplay evidence.
+- Isolated domain preparation failures and extended retry backoff to world/modal
+  reads. Updated source/installer version metadata and the documentation map.
+- Added exact-plan expedition previews with native nutrition, both travel legs,
+  carrying capacity and home reserves. Failed previews become dated planning
+  evidence; formation acceptance is separate from travel or rescue completion.
+- Reconcile partial rooms and hospitals against their saved layouts before
+  repairing missing elements. Failed choices retain a real-time retry floor at
+  3× game speed without hiding other patients, buildings or projects.
+
 # 0.0.6 — construction coverage, fire response and colony survival
 
 The 0.0.6 release includes the construction and fire changes originally developed on the 0.0.7 feature branch. Live results and remaining limitations are recorded in `docs/RELEASE_READINESS_0.0.6.md` and `docs/CONSTRUCTION_FIRE_AUDIT_0.0.6.md`.

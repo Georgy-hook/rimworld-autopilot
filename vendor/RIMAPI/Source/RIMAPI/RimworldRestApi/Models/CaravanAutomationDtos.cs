@@ -1,16 +1,6 @@
 namespace RIMAPI.Models
 {
-    public class StartTradeCaravanRequestDto
-    {
-        public int MapId { get; set; }
-        public int DestinationSettlementId { get; set; }
-        public int MinimumHomeDefenders { get; set; } = 2;
-        public int MinimumFoodAtHome { get; set; } = 20;
-        public int MinimumMedicineAtHome { get; set; } = 8;
-        public System.Collections.Generic.List<string> SaleCategories { get; set; }
-        public System.Collections.Generic.List<string> PurchasePriorities { get; set; }
-        public System.Collections.Generic.List<int> PrisonerIds { get; set; }
-    }
+    public class StartTradeCaravanRequestDto : ExpeditionRequestDto { }
 
     public class KnownTradeItemDto
     {
@@ -60,18 +50,12 @@ namespace RIMAPI.Models
         public bool WouldStartWar { get; set; }
     }
 
-    public class StartRaidCaravanRequestDto
-    {
-        public int MapId { get; set; }
-        public int DestinationSettlementId { get; set; }
-        public int MinimumHomeDefenders { get; set; } = 2;
-        public int MinimumFoodAtHome { get; set; } = 30;
-        public int MinimumMedicineAtHome { get; set; } = 10;
-        public bool AllowStartingWar { get; set; }
-    }
+    public class StartRaidCaravanRequestDto : ExpeditionRequestDto { }
 
     public class StartTradeCaravanResponseDto
     {
+        public bool Applied { get; set; }
+        public string FormationId { get; set; }
         public string Status { get; set; }
         public int DestinationSettlementId { get; set; }
         public string DestinationName { get; set; }

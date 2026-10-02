@@ -6,16 +6,22 @@ from collections import Counter
 import colony_architect as architect
 
 
+NON_DIRECTIONAL = {"Ship_ComputerCore", "Ship_SensorCluster"}  # Installed Core defs: rotatable=false.
+
 def identity(row, origin=None):
+    definition = row.get("def") or row.get("def_name")
+    rotation = None if definition in NON_DIRECTIONAL else row.get("rotation", 0) if origin is not None else row.get("rotation")
     if origin is not None:
-        return (row["def_name"], origin["x"] + row["rel_x"], origin["z"] + row["rel_z"])
+        return (row["def_name"], origin["x"] + row["rel_x"], origin["z"] + row["rel_z"], rotation)
     pos = row.get("position") or {}
-    return (row.get("def") or row.get("def_name"), pos.get("x"), pos.get("z"))
+    return (row.get("def") or row.get("def_name"), pos.get("x"), pos.get("z"), rotation)
 
 
 def prepare(snapshot, memory, layout):
     dev = snapshot.setdefault("development", {})
     project = memory.get("ship_project")
+    if project is not None and project.get("map_id") not in (None, snapshot.get("map", {}).get("id")):
+        return None
     if project is None:
         anchor = memory.get("anchor") or dev.get("base_anchor")
         if not anchor:
@@ -36,7 +42,7 @@ def prepare(snapshot, memory, layout):
             budget[str(cost.get("def_name"))] -= max(0, int(cost.get("required_count") or 0))
     chosen, shortages, blocked_defs = [], Counter(), []
     for row in stage:
-        if row["def_name"] not in catalog:
+        if row["def_name"] not in catalog or catalog[row["def_name"]].get("available_now") is False:
             blocked_defs.append(row["def_name"])
             continue
         cost = architect.estimated_stuff_cost({"buildings": [row]}, list(catalog.values()))
@@ -70,6 +76,11 @@ def execute(client, snapshot, memory, layout):
         if not row.get("is_forbidden"):
             stock[str(row.get("def_name"))] += max(1, int(row.get("stack_count") or 1))
     dev["item_counts"] = dict(stock)
+    previous = memory.get("ship_project")
+    if previous and previous.get("map_id") in (None, map_id):
+        physical = {identity(row) for row in dev["buildings"] + dev["construction_projects"]}
+        if not any(identity(row, previous["origin"]) in physical for row in previous["layout"]["buildings"]):
+            memory.pop("ship_project", None)
     plan = prepare(fresh, memory, layout)
     if not plan or not plan["ready_layout"]["buildings"]:
         return {"applied": False, "reason": "ship_waiting_for_parts_materials_or_beams", "completion": "unverified"}
@@ -98,14 +109,28 @@ def execute(client, snapshot, memory, layout):
     if not proposed["buildings"]:
         memory["ship_site_retry_tick"] = int(snapshot.get("game", {}).get("tick") or 0)
         return {"applied": False, "reason": "ship_native_placement_blocked", "preview": checked, "completion": "unverified"}
-    memory["ship_project"] = {"origin": origin, "layout": plan["layout"]}
-    response = client.post("/api/v1/builder/blueprint", body={"map_id": map_id,
+    response = None
+    placement_error = None
+    try:
+        response = client.post("/api/v1/builder/blueprint", body={"map_id": map_id,
         "position": {"x": origin["x"], "y": 0, "z": origin["z"]},
-        "blueprint": proposed, "clear_obstacles": False})
-    after = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
-    after_built = client.get("/api/v1/map/buildings", map_id=map_id)
+            "blueprint": proposed, "clear_obstacles": False})
+    except Exception as error:
+        placement_error = error
+    # Transport failure may follow a native mutation. Observe before releasing the site.
+    try:
+        after = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
+        after_built = client.get("/api/v1/map/buildings", map_id=map_id)
+    except Exception:
+        memory["ship_project"] = {"map_id": map_id, "origin": origin, "layout": plan["layout"], "observation_pending": True}
+        raise
     observed = {identity(row) for row in after + after_built}
     accepted = [row for row in plan["ready_layout"]["buildings"] if identity(row, origin) in observed]
+    if accepted or any(identity(row, origin) in observed for row in plan["layout"]["buildings"]):
+        memory["ship_project"] = {"map_id": map_id, "origin": origin, "layout": plan["layout"]}
+    else:
+        memory.pop("ship_project", None)
+        memory["ship_site_retry_tick"] = int(snapshot.get("game", {}).get("tick") or 0)
     return {"applied": bool(accepted), "reason": "ship_blueprints_observed" if accepted else "no_ship_blueprints_observed",
             "placed": len(accepted), "requested": len(plan["ready_layout"]["buildings"]),
-            "completion": "unverified", "response": response}
+            "completion": "unverified", "response": response, "transport_error": str(placement_error) if placement_error else None}

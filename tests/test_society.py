@@ -93,7 +93,59 @@ class SocietyTests(unittest.TestCase):
             state = {}
             society.execute(client, snap, state, "society_free_time", selected)
             self.assertEqual(client.posts[0][1]["body"], {"map_id": 7, "pawn_id": 1, "kind": "timetable", "hour": 1, "value": "Joy"})
-            self.assertEqual(bool(state.get("issued")), applied)
+            self.assertEqual(bool((state.get("society_memory") or {}).get("issued")), applied)
+
+    def test_semantic_cooldown_and_failed_option_are_not_global(self):
+        snap = snapshot()
+        society.prepare(snap, {})
+        row = next(iter(snap['development']['society']['options']['society_free_time'].values()))
+        state = {}
+        society.execute(Client(snap['development']['society']), snap, state, 'society_free_time', society._payload(row))
+        snap['development']['society']['people'].append(dict(snap['development']['society']['people'][0], pawn_id=99))
+        society.prepare(snap, state)
+        self.assertEqual({r['pawn_id'] for r in snap['development']['society']['options']['society_free_time'].values()}, {99})
+        state = {}
+        society.execute(Client({'people': []}), snap, state, 'society_free_time', society._payload(row))
+        society.prepare(snap, state)
+        self.assertEqual({r['pawn_id'] for r in snap['development']['society']['options']['society_free_time'].values()}, {99})
+
+    def test_defer_discrete_state_json_rollback_and_history_pruning(self):
+        snap = snapshot()
+        snap['development']['society']['people'][0]['needs'][0]['level'] = .4
+        society.prepare(snap, {})
+        state = {}
+        society.execute(Client({}), snap, state, 'society_free_time', {'defer': True})
+        state = json.loads(json.dumps(state))
+        snap['development']['society']['people'][0]['needs'][0]['level'] = .41
+        self.assertEqual(society.prepare(snap, state), [])
+        snap['development']['society']['people'][0]['needs'][0]['level'] = .1
+        self.assertIn('society_free_time', society.prepare(snap, state))
+        snap['game']['tick'] -= 1
+        society.prepare(snap, state)
+        self.assertNotIn('society_memory', state)
+        state = {'society_memory': {'issued': {'society_baby_feed:' + str(i): {'tick': 0} for i in range(10000)}, 'failed': {'x': {'tick': 0}}}}
+        society.prepare(snap, state)
+        self.assertNotIn('society_memory', state)
+
+    def test_native_source_rescue_drug_due_care_and_deathrest_rejection(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1] / 'vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Helpers'
+        native = (root / 'SocietyNativeHelper.cs').read_text()
+        medical = (root / 'SocietyMedicalHelper.cs').read_text()
+        route = (root / 'ResilienceAutomationHelper.cs').read_text()
+        self.assertIn('RescueRouteSafe(worker,patient)', native)
+        self.assertIn('RescueRouteSafe(worker,exposedBaby)', native)
+        self.assertIn('RescueRouteSafe(Pawn worker, Thing target) => Safe(worker,target,true)', route)
+        self.assertIn('deathrest_job_rejected', native)
+        self.assertIn('!CombatNativeHelper.HasCareJob(p)', medical)
+        self.assertIn('need.CurCategory!=DrugDesireCategory.Satisfied', medical)
+        self.assertIn('c.LinkedGene?.Active==true && c.ShouldSatify', medical)
+        self.assertIn('PenoxycylineHigh', medical)
+        self.assertIn('hemogen={', native)
+        self.assertIn('learning={', native)
+        self.assertIn('teacher={', native)
+        self.assertIn('tox={', native)
+        self.assertIn('dependency_due=', medical)
 
     def test_unavailable_endpoint_is_honest_no_options(self):
         class Missing:

@@ -25,9 +25,9 @@ namespace RIMAPI.Helpers
                 + "; " + string.Join(", ", r.addsHediff?.stages?.SelectMany(s => s.statOffsets ?? new List<StatModifier>())
                     .Select(s => s.stat.defName + " " + s.value) ?? Enumerable.Empty<string>()))) + "; " + item.description;
         }
-        private static bool CareJob(Pawn p) => p.CurJobDef == JobDefOf.TendPatient || p.CurJobDef == JobDefOf.Rescue || p.CurJobDef == JobDefOf.FeedPatient || p.CurJobDef == JobDefOf.DoBill;
+        private static bool CareJob(Pawn p) => CombatNativeHelper.HasCareJob(p) || p.CurJobDef == JobDefOf.Ingest;
         private static bool PatientSafe(Pawn p) => p.health.hediffSet.BleedRateTotal <= 0
-            && !p.InMentalState && !p.Drafted
+            && !p.InMentalState && !p.Drafted && !CareJob(p)
             && !p.health.hediffSet.hediffs.Any(h => h.IsCurrentlyLifeThreatening
                 || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immune && immune.Immunity < 1)
                 || (h.def.defName == "Heatstroke" && h.Severity > 0.05f)
@@ -36,6 +36,8 @@ namespace RIMAPI.Helpers
         private static bool Doctor(Pawn d, Pawn patient, RecipeDef recipe) => d != patient && !d.Dead && !d.Downed
             && !d.InMentalState && !d.Drafted && !CareJob(d) && !d.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
             && (recipe.skillRequirements == null || recipe.skillRequirements.All(s => s.PawnSatisfies(d)))
+            && DefDatabase<WorkGiverDef>.AllDefs.Any(g => g.workType == WorkTypeDefOf.Doctor && g.billGiversAllHumanlikes
+                && g.Worker is WorkGiver_DoBill && g.Worker.MissingRequiredCapacity(d) == null)
             && d.CanReach(patient, PathEndMode.Touch, Danger.Some);
 
         private static bool IngredientsReachable(Pawn doctor, Pawn patient, RecipeDef recipe, List<Thing> materials) =>
@@ -144,6 +146,8 @@ namespace RIMAPI.Helpers
                 if (!context.Success) return ApiResult<CapabilityOrderResultDto>.Fail("Cannot inspect current augmentation requirements.");
                 var option = context.Data.Options.FirstOrDefault(o => o.PatientPawnId == request.PatientPawnId
                     && o.RecipeDef == request.RecipeDef && o.BodyPartIndex == request.BodyPartIndex);
+                if (option?.AlreadyQueued == true)
+                { result.Reason = "operation_already_queued"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                 if (option == null || !option.Ready || !option.DoctorIds.Contains(request.DoctorPawnId) || !option.BedIds.Contains(request.BedId))
                 { result.Reason = option?.Reason ?? "operation_no_longer_available"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                 var patient = PawnHelper.FindPawnById(request.PatientPawnId);
@@ -152,7 +156,7 @@ namespace RIMAPI.Helpers
                 var recipe = DefDatabase<RecipeDef>.GetNamedSilentFail(request.RecipeDef);
                 var part = request.BodyPartIndex < 0 ? null : patient.RaceProps.body.AllParts.First(p => p.Index == request.BodyPartIndex);
                 var bill = patient.BillStack.Bills.OfType<Bill_Medical>().FirstOrDefault(b => b.recipe == recipe && b.Part == part);
-                if (doctor.CurJobDef == JobDefOf.DoBill && doctor.CurJob.targetA.Thing == patient)
+                if (patient.Map.mapPawns.AllPawnsSpawned.Any(p => p.CurJobDef == JobDefOf.DoBill && p.CurJob.targetA.Thing == patient))
                 { result.Reason = "surgery_in_progress"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                 bed.Medical = true;
                 if (patient.CurrentBed() != bed && !PawnHelper.AssignBedRest(patient, bed))
@@ -160,7 +164,8 @@ namespace RIMAPI.Helpers
                 if (bill == null) bill = HealthCardUtility.CreateSurgeryBill(patient, recipe, part, null, true);
                 bill.SetPawnRestriction(doctor);
                 bill.suspended = false;
-                var scanner = DefDatabase<WorkGiverDef>.AllDefs.Where(d => d.workType == WorkTypeDefOf.Doctor)
+                var scanner = DefDatabase<WorkGiverDef>.AllDefs.Where(d => d.workType == WorkTypeDefOf.Doctor && d.billGiversAllHumanlikes
+                    && d.Worker.MissingRequiredCapacity(doctor) == null)
                     .Select(d => d.Worker).OfType<WorkGiver_DoBill>().FirstOrDefault();
                 Job job = scanner?.JobOnThing(doctor, patient, true);
                 result.Applied = true;

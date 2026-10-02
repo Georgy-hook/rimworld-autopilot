@@ -26,10 +26,10 @@ namespace RIMAPI.Controllers
         [Get("/api/v1/specialists/rituals")]
         [EndpointMetadata("Read native Ideology and Anomaly ritual commands, participant assignments, role changes and live start blockers")]
         public async Task Context(HttpListenerContext context) {
-            var dialog = Dialog;
+            var dialog = Dialog; int mapId=RequestParser.GetMapId(context);
             var choices = new List<object>();
             var starts = new List<object>();
-            if (dialog == null) foreach (var map in Find.Maps) foreach (var thing in map.listerThings.AllThings.Where(t => (t.Faction == Faction.OfPlayer && (t is Building || t is Pawn) || t.Spawned && !t.Position.Fogged(t.Map) && t.TryGetComp<CompTreeConnection>() != null)))
+            if (dialog == null) foreach (var map in Find.Maps.Where(m=>m.uniqueID==mapId)) foreach (var thing in map.listerThings.AllThings.Where(t => (t.Faction == Faction.OfPlayer && (t is Building || t is Pawn) || t.Spawned && !t.Position.Fogged(t.Map) && t.TryGetComp<CompTreeConnection>() != null)))
                 foreach (var command in Commands(thing).Where(c => !c.Disabled && !c.defaultLabel.StartsWith("DEV")))
                     starts.Add(new { map_id = map.uniqueID, thing_id = thing.thingIDNumber, label = command.defaultLabel,
                         description = command.Desc, inspect = thing.GetInspectString() });
@@ -37,13 +37,13 @@ namespace RIMAPI.Controllers
                 var assignments = Field<RitualRoleAssignments>(ordinary, "assignments");
                 var target = Field<TargetInfo>(ordinary, "target");
                 foreach (var role in assignments.AllRolesForReading)
-                    foreach (var pawn in assignments.CandidatesForRole(role, target, true, true).Where(p => !assignments.Forced(p) && !SpecialistNativeSafety.Protected(p)))
+                    foreach (var pawn in assignments.CandidatesForRole(role, target, true, true).Where(p => !assignments.Forced(p) && assignments.RoleForPawn(p)!=role && !SpecialistNativeSafety.Protected(p)))
                         choices.Add(new { operation = "assign", role_id = role.id, pawn_id = pawn.thingIDNumber,
                             label = pawn.LabelShortCap + " → " + role.Label, assigned = assignments.RoleForPawn(pawn)?.id,
                             pawn_job = pawn.CurJob?.def.defName, pawn_health = pawn.health.summaryHealth.SummaryHealthPercent });
-                foreach (var pawn in assignments.Participants.Where(p => !assignments.Forced(p)))
+                foreach (var pawn in assignments.Participants.Where(p => !assignments.Forced(p) && assignments.RoleForPawn(p)!=null))
                     choices.Add(new { operation = "remove", pawn_id = pawn.thingIDNumber, label = "Remove " + pawn.LabelShortCap });
-                foreach (var pawn in assignments.SpectatorCandidates().Where(p => !assignments.Forced(p) && !SpecialistNativeSafety.Protected(p)))
+                foreach (var pawn in assignments.SpectatorCandidates().Where(p => !assignments.SpectatorsForReading.Contains(p) && !assignments.Forced(p) && !SpecialistNativeSafety.Protected(p)))
                     choices.Add(new { operation = "spectate", pawn_id = pawn.thingIDNumber, label = "Spectate: " + pawn.LabelShortCap });
                 var changer = assignments.AllRolesForReading.OfType<RitualRoleIdeoRoleChanger>().Select(r => assignments.FirstAssignedPawn(r)).FirstOrDefault(p => p != null);
                 foreach (var role in changer == null ? Enumerable.Empty<Precept_Role>() : RitualUtility.AllRolesForPawn(changer).Where(r => r.Active && r.RequirementsMet(changer)))
@@ -54,7 +54,7 @@ namespace RIMAPI.Controllers
                 var assignments = Field<PsychicRitualRoleAssignments>(psychicDialog, "assignments");
                 var def = Field<PsychicRitualDef>(psychicDialog, "psychicRitualDef");
                 foreach (var role in def.Roles) foreach (var pawn in def.FindCandidatePool().AllCandidatePawns)
-                    if (assignments.ForcedRole(pawn) == null && !SpecialistNativeSafety.Protected(pawn) && assignments.PawnNotAssignableReason(pawn, role).NullOrEmpty())
+                    if (assignments.ForcedRole(pawn) == null && assignments.RoleForPawn(pawn)!=role && !SpecialistNativeSafety.Protected(pawn) && assignments.PawnNotAssignableReason(pawn, role).NullOrEmpty())
                         choices.Add(new { operation = "assign", role_id = role.defName, pawn_id = pawn.thingIDNumber,
                             label = pawn.LabelShortCap + " → " + role.LabelCap, pawn_job = pawn.CurJob?.def.defName,
                             pawn_health = pawn.health.summaryHealth.SummaryHealthPercent });
@@ -77,7 +77,8 @@ namespace RIMAPI.Controllers
                 quality = new { minimum = range.min, maximum = range.max, duration = dialog.ExpectedDurationLabel(range).ToString() };
             }
             await context.SendJsonResponse(ApiResult<object>.Ok(new { available = ModsConfig.IdeologyActive || ModsConfig.AnomalyActive,
-                configuring = dialog != null, label = dialog?.HeaderLabel.ToString(), description = dialog?.DescriptionLabel.ToString(),
+                configuring = dialog != null, session_id=SpecialistWindowSessionHelper.Token(dialog),
+                map_id=dialog==null ? mapId : Field<Map>(dialog,"map").uniqueID, configuration=Configuration(dialog), label = dialog?.HeaderLabel.ToString(), description = dialog?.DescriptionLabel.ToString(),
                 can_begin = (dialog?.CanBegin ?? false) && !ParticipantsProtected(dialog), blockers, quality, commands = starts, choices,
                 warning = "Ritual assignments may remove doctors, defenders and workers from current jobs. Quality and psychic power are uncertain, offerings consumed and some target effects irreversible. Explicit native confirmation remains required." }));
         }
@@ -95,6 +96,7 @@ namespace RIMAPI.Controllers
                 if (command != null) { command.ProcessInput(new Event()); await context.SendJsonResponse(ApiResult<string>.Ok("ritual_native_command_requested")); return; }
             }
             if (dialog == null) { await context.SendJsonResponse(ApiResult<string>.Fail("Ritual stage changed")); return; }
+            if(!SpecialistWindowSessionHelper.Matches(dialog,context)) { await context.SendJsonResponse(ApiResult<string>.Fail("Ritual dialog session changed"));return; }
             if (operation == "cancel") {
                 AccessTools.Method(dialog.GetType(), "Cancel").Invoke(dialog, null);
                 await context.SendJsonResponse(ApiResult<string>.Ok("ritual_cancelled")); return;
@@ -103,13 +105,14 @@ namespace RIMAPI.Controllers
                 AccessTools.Method(dialog.GetType(), "Start").Invoke(dialog, null);
                 await context.SendJsonResponse(ApiResult<string>.Ok("ritual_begin_requested")); return;
             }
-            int pawnId = RequestParser.GetIntParameter(context, "pawn_id");
-            string roleId = RequestParser.GetStringParameter(context, "role_id");
+            int pawnId = new[]{"assign","remove","spectate"}.Contains(operation) ? RequestParser.GetIntParameter(context, "pawn_id") : -1;
+            string roleId = operation=="assign" || operation=="role" ? RequestParser.GetStringParameter(context, "role_id") : null;
             bool applied = false;
             if (operation == "policy" && dialog is Dialog_BeginGravshipLaunch launchDialog) {
                 string policy = RequestParser.GetStringParameter(context, "policy");
                 if (new[] { "forceVisitorsToLeave", "boardColonyAnimals", "boardColonyMechs" }.Contains(policy) && (policy != "boardColonyMechs" || ModsConfig.BiotechActive)) {
-                    AccessTools.Field(typeof(Dialog_BeginGravshipLaunch), policy).SetValue(launchDialog, RequestParser.GetBooleanParameter(context, "value"));
+                    if(!bool.TryParse(RequestParser.GetStringParameter(context,"value"),out bool desired)) { await context.SendJsonResponse(ApiResult<string>.Fail("Explicit boarding boolean required"));return; }
+                    AccessTools.Field(typeof(Dialog_BeginGravshipLaunch), policy).SetValue(launchDialog, desired);
                     applied = true;
                 }
             }
@@ -117,10 +120,10 @@ namespace RIMAPI.Controllers
                 var assignments = Field<RitualRoleAssignments>(ordinary, "assignments");
                 var pawn = assignments.AllCandidatePawns.FirstOrDefault(p => p.thingIDNumber == pawnId);
                 if (operation == "remove" && pawn != null && !assignments.Forced(pawn)) applied = assignments.TryUnassignAnyRole(pawn);
-                if (operation == "spectate" && pawn != null && !assignments.Forced(pawn) && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssignSpectate(pawn);
+                if (operation == "spectate" && pawn != null && !assignments.Forced(pawn) && !assignments.SpectatorsForReading.Contains(pawn) && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssignSpectate(pawn);
                 if (operation == "assign" && pawn != null) {
                     var role = assignments.GetRole(roleId);
-                    if (role != null && !assignments.Forced(pawn) && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssign(pawn, role, out var reason);
+                    if (role != null && assignments.RoleForPawn(pawn)!=role && !assignments.Forced(pawn) && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssign(pawn, role, out var reason);
                 }
                 if (operation == "role") {
                     var changer = assignments.AllRolesForReading.OfType<RitualRoleIdeoRoleChanger>().Select(r => assignments.FirstAssignedPawn(r)).FirstOrDefault(p => p != null);
@@ -134,10 +137,24 @@ namespace RIMAPI.Controllers
                 if (pawn != null && assignments.ForcedRole(pawn) == null) {
                     if (operation == "remove") applied = assignments.TryUnassignAnyRole(pawn);
                     var role = def.Roles.FirstOrDefault(r => r.defName == roleId);
-                    if (operation == "assign" && role != null && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssign(pawn, role, out var reason);
+                    if (operation == "assign" && role != null && assignments.RoleForPawn(pawn)!=role && !SpecialistNativeSafety.Protected(pawn)) applied = assignments.TryAssign(pawn, role, out var reason);
                 }
             }
             await context.SendJsonResponse(applied ? ApiResult<string>.Ok("ritual_assignment_updated") : ApiResult<string>.Fail("Ritual role or participant requirements changed"));
+        }
+        private static object Configuration(Dialog_BeginLordJob dialog)
+        {
+            if(dialog is Dialog_BeginRitual ordinary) {
+                var a=Field<RitualRoleAssignments>(ordinary,"assignments");
+                return new {participants=a.Participants.OrderBy(p=>p.thingIDNumber).Select(p=>new {pawn_id=p.thingIDNumber,role=a.RoleForPawn(p)?.id,spectator=a.SpectatorsForReading.Contains(p)}).ToList(),
+                    role=a.RoleChangeSelection?.def.defName,
+                    boarding=dialog is Dialog_BeginGravshipLaunch ? new[]{Field<bool>(dialog,"forceVisitorsToLeave"),Field<bool>(dialog,"boardColonyAnimals"),Field<bool>(dialog,"boardColonyMechs")} : null};
+            }
+            if(dialog is Dialog_BeginPsychicRitual psychic) {
+                var a=Field<PsychicRitualRoleAssignments>(psychic,"assignments");
+                return new {participants=a.AllAssignedPawns.OrderBy(p=>p.thingIDNumber).Select(p=>new {pawn_id=p.thingIDNumber,role=a.RoleForPawn(p)?.defName}).ToList()};
+            }
+            return null;
         }
         private static bool ParticipantsProtected(Dialog_BeginLordJob dialog) {
             if (dialog is Dialog_BeginRitual ordinary) return Field<RitualRoleAssignments>(ordinary, "assignments").Participants.Any(SpecialistNativeSafety.Protected);

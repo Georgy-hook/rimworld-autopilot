@@ -64,6 +64,11 @@ namespace RIMAPI.Helpers
                     TargetPawnId = target?.thingIDNumber,
                 };
 
+                if (tactic == "intercept_kidnapper" && !CombatNativeHelper.Kidnapper(target)) {
+                    result.Notes.Add("Target is no longer an actual kidnapper carrying a player-owned victim; no fighters drafted.");
+                    return ApiResult<CombatTacticResponseDto>.Ok(result);
+                }
+
                 foreach (Pawn pawn in fighters)
                 {
                     if (pawn.drafter != null)
@@ -387,7 +392,7 @@ namespace RIMAPI.Helpers
 
                 Building defense = FindDefense(map, request.DefenseBuildingId, tactic, target.Position, fighters);
                 if (tactic == "intercept_kidnapper"
-                    || (tactic == "focus_fire" && target.carryTracker?.CarriedThing is Pawn))
+                    || (tactic == "focus_fire" && CombatNativeHelper.Kidnapper(target)))
                 {
                     if (!(target.carryTracker?.CarriedThing is Pawn))
                     {

@@ -8,16 +8,26 @@ from typing import Any
 CRITICAL_SKILLS = ("Construction", "Plants", "Cooking", "Medicine", "Social", "Shooting")
 
 
+def available_workers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    return [person for person in snapshot.get("colonists") or []
+            if not person.get("dead") and not person.get("is_dead")
+            and not person.get("downed") and not person.get("is_downed")
+            and not person.get("in_mental_state") and not person.get("is_in_mental_state")
+            and float((person.get("capacities") or {}).get("moving", 1) or 0) > .15]
+
+
 def population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     people = snapshot.get("colonists") or []
-    able_workers = sum(not person.get("downed") and
-                       float((person.get("capacities") or {}).get("moving", 1) or 0) > 0.15
-                       for person in people)
+    living = [person for person in people if not person.get("dead") and not person.get("is_dead")]
+    bedbound = [person for person in living if person.get("downed") or
+                float((person.get("capacities") or {}).get("moving", 1) or 0) <= 0.15]
+    available = available_workers(snapshot)
+    able_workers = len(available)
     resources = (snapshot.get("map") or {}).get("resources") or {}
     development = snapshot.get("development") or {}
     best_skills = {
         skill: max((int(((person.get("skills") or {}).get(skill) or {}).get("level") or 0)
-                    for person in people), default=0)
+                    for person in available if not ((person.get("skills") or {}).get(skill) or {}).get("disabled")), default=0)
         for skill in CRITICAL_SKILLS
     }
     active_mods = " ".join(str(row.get("package_id") or "").lower()
@@ -53,7 +63,8 @@ def population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "population": len(people),
         "able_workers": able_workers,
-        "bedbound": len(people) - able_workers,
+        "bedbound": len(bedbound),
+        "unavailable_workers": len(people) - able_workers,
         "ready_meals": resources.get("meals"),
         "total_food": resources.get("food"),
         "silver": (development.get("item_counts") or {}).get("Silver", 0),
@@ -68,7 +79,7 @@ def trade_population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Keep labor and survival facts visible within Laya's short trade context."""
     full = population_context(snapshot)
     return {key: full[key] for key in (
-        "population", "able_workers", "bedbound", "ready_meals", "total_food",
+        "population", "able_workers", "bedbound", "unavailable_workers", "ready_meals", "total_food",
         "silver", "best_skills", "live_signals", "tradeoff")}
 
 

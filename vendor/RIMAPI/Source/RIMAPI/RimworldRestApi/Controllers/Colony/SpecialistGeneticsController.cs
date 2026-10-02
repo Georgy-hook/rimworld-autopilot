@@ -35,7 +35,8 @@ namespace RIMAPI.Controllers
         [EndpointMetadata("Read native xenogerm design, whole genepacks, actual complexity/metabolism/archite limits and assembler work state")]
         public async Task Context(HttpListenerContext context) {
             var dialog = Dialog;
-            var assemblers = Find.Maps.SelectMany(m => m.listerThings.AllThings.OfType<Building_GeneAssembler>()).Where(b => b.Faction == Faction.OfPlayer).Select(b => new {
+            int mapId=RequestParser.GetMapId(context);
+            var assemblers = Find.Maps.SelectMany(m => m.listerThings.AllThings.OfType<Building_GeneAssembler>()).Where(b => b.Faction == Faction.OfPlayer && b.Map.uniqueID==mapId).Select(b => new {
                 map_id = b.Map.uniqueID, thing_id = b.thingIDNumber, working = b.Working, powered = b.PowerOn, progress = b.ProgressPercent,
                 max_complexity = b.MaxComplexity(), can_open = Assemble(b) != null, inspect = b.GetInspectString()
             }).ToList();
@@ -50,7 +51,10 @@ namespace RIMAPI.Controllers
                 });
             }
             var blockers = dialog == null ? new List<string>() : Blockers(dialog);
-            await context.SendJsonResponse(ApiResult<object>.Ok(new { available = ModsConfig.BiotechActive, configuring = dialog != null,
+            await context.SendJsonResponse(ApiResult<object>.Ok(new { available = ModsConfig.BiotechActive, configuring = dialog != null, session_id=SpecialistWindowSessionHelper.Token(dialog),
+                map_id=dialog==null ? mapId : Field<Building_GeneAssembler>(dialog,"geneAssembler").Map.uniqueID,
+                material_state=dialog==null ? null : (object)new { enough_archites=(bool)AccessTools.Method(typeof(Dialog_CreateXenogerm),"ColonyHasEnoughArchites").Invoke(dialog,null),assembler_power=Field<Building_GeneAssembler>(dialog,"geneAssembler").PowerOn },
+                configuration=dialog==null ? null : (object)new {selected_packs=Field<List<Genepack>>(dialog,"selectedGenepacks").Select(p=>p.thingIDNumber).OrderBy(id=>id).ToList(),name=Field<string>(dialog,"xenotypeName")},
                 assemblers, packs, blockers, can_begin = dialog != null && blockers.Count == 0,
                 complexity = dialog == null ? 0 : Field<int>(dialog, "gcx"), metabolism = dialog == null ? 0 : Field<int>(dialog, "met"),
                 archites = dialog == null ? 0 : Field<int>(dialog, "arc"), max_complexity = dialog == null ? 0 : Field<int>(dialog, "maxGCX"),
@@ -62,7 +66,7 @@ namespace RIMAPI.Controllers
         public async Task Act(HttpListenerContext context) {
             if (!ModsConfig.BiotechActive || !RequestParser.GetBooleanParameter(context, "confirmed")) { await context.SendJsonResponse(ApiResult<string>.Fail("Biotech inactive or unconfirmed")); return; }
             string operation = RequestParser.GetStringParameter(context, "operation");
-            int id = RequestParser.GetIntParameter(context, "thing_id");
+            int id = operation == "open" || operation == "select" ? RequestParser.GetIntParameter(context, "thing_id") : -1;
             var dialog = Dialog;
             if (operation == "open" && dialog == null) {
                 var assembler = Find.Maps.SelectMany(m => m.listerThings.AllThings.OfType<Building_GeneAssembler>()).FirstOrDefault(b => b.thingIDNumber == id && b.Faction == Faction.OfPlayer);
@@ -70,11 +74,12 @@ namespace RIMAPI.Controllers
                 if (command != null) { command.action(); await context.SendJsonResponse(ApiResult<string>.Ok("gene_design_opened")); return; }
             }
             if (dialog == null) { await context.SendJsonResponse(ApiResult<string>.Fail("Gene design stage changed")); return; }
+            if (!SpecialistWindowSessionHelper.Matches(dialog,context)) { await context.SendJsonResponse(ApiResult<string>.Fail("Gene dialog session changed")); return; }
             if (operation == "cancel") { dialog.Close(); await context.SendJsonResponse(ApiResult<string>.Ok("gene_design_cancelled")); return; }
             if (operation == "select") {
                 var assembler = Field<Building_GeneAssembler>(dialog, "geneAssembler");
                 var pack = Field<List<Genepack>>(dialog, "libraryGenepacks").FirstOrDefault(p => p.thingIDNumber == id);
-                bool desired = RequestParser.GetBooleanParameter(context, "selected");
+                if(!bool.TryParse(RequestParser.GetStringParameter(context,"selected"),out bool desired)) { await context.SendJsonResponse(ApiResult<string>.Fail("Explicit selected boolean required"));return; }
                 if (pack == null || (desired && !assembler.GetGenepacks(true, false).Contains(pack))) { await context.SendJsonResponse(ApiResult<string>.Fail("Genepack power/access changed")); return; }
                 var selected = Field<List<Genepack>>(dialog, "selectedGenepacks");
                 if (desired && !selected.Contains(pack)) selected.Add(pack);

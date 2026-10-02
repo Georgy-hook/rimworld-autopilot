@@ -56,3 +56,50 @@ Official [Ludeon update archive](https://ludeon.com/blog/page/8/) documents mort
 ## Verification
 
 `tests.test_combat_module`: 11 scenarios cover contact zero/unknown distances, care patients including animals/target B, real carried victim plus kidnapping intent, enemy/unknown carried victims, building-only threats, all feasible native tactical families, missing-equipment refusal, exact native IDs and childcare/surgery/deathrest protection. Combined local Society/Resilience/Combat module suite: 36 tests pass. Parent owns full scenario suite and shared C# integration. No game/model launch or runtime battle verification; firing, stun, gas, shell loading and damage outcomes remain native and unobserved.
+
+
+## Reviewed acceptance and retry follow-up (2026-10-02)
+
+`rimworld_laya.command_acceptance` interprets actual response contracts, including
+explicit `applied:false` and `success:false`, rather than treating any received
+response as success. The native tactic DTO supplies `drafted_pawn_ids`,
+`positioned_pawn_ids`, `attacking_pawn_ids`, `psycast_queued`, optional psycast/
+target identity and notes. All empty acceptance fields mean refusal. A structured
+explicit applied flag takes precedence. Unknown endpoint responses remain unknown.
+
+Installed speed, pawn status/job/medical tend/bed-rest/feed and colonist work
+priority services use non-generic `ApiResult.Ok()` with `success:true` and no data
+member. These acknowledgments remain accepted. Generic wrappers are unwrapped;
+unknown data is not promoted to applied. Accepted invocation/queued work never
+proves hit, cure, rescued patient, weapon equipped or combat victory.
+
+Command batches preserve response alignment, per-command tri-state acceptance and
+partial acceptance. On a POST error the failed row carries its error and unknown
+outcome; earlier accepted work remains visible. A confirmed stale-target 404 is
+rejected and triggers fresh planning. Remaining commands are not sent after a
+failed POST. Unknown POST transport outcomes are explicitly reported because the
+server may already have executed the request.
+
+A rejected tactical record retries after five wall-clock seconds, with material
+combat signature changes permitting earlier reconsideration. Rejected preemptive
+moves no longer renew a sixty-second continuation wait. Automatic advance replaces
+the recorded current-hop response; an earlier accepted move cannot mask denial
+of a later hop. Native acknowledged Goto/AttackStatic waits remain unchanged.
+Drafting by itself is an applied status change, but cannot establish tactical
+movement/attack acceptance for the continuation hold.
+
+Native interception verifies `CombatNativeHelper.Kidnapper(target)` before any
+fighter drafting: a hostile must actually carry a player-owned pawn and have
+kidnapping job/lord intent. Ordinary focus fire against other carriers remains
+normal focus fire; its aggressive carrier-chase fallback is reserved for actual
+kidnappers. Interception still risks separating pursuers and exposing the base.
+
+Offline targeted suite (combat follow-up, combat module/scenarios, affordances,
+progression and existing preemptive helper regression) passes 132 tests. Tests
+cover empty/native refusal, non-generic success envelopes, unknown/partial/error
+outcomes, five-second retry sequences and overwritten failed-hop acknowledgment.
+The interceptor ordering check is a native source assertion, not runtime proof.
+Installed ILSpy shows Pawn_JobTracker.TryTakeOrderedJob immediately returns true
+for an equal current job, preserving existing attack warmup for repeated identical
+orders; this mechanism was verified rather than changed. No game/live API/model/
+observer/build/git operation was run in this follow-up.

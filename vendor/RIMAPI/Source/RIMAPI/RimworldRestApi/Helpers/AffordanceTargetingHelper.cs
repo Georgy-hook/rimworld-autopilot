@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
+using System.Reflection;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -9,11 +9,28 @@ using RIMAPI.Core;
 
 namespace RIMAPI.Helpers
 {
+    [HarmonyPatch]
+    public static class AffordanceTargetingGenerationHook
+    {
+        public static IEnumerable<MethodBase> TargetMethods() => typeof(Targeter).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Where(method => method.Name == nameof(Targeter.BeginTargeting) || method.Name == nameof(Targeter.StopTargeting));
+        public static void Postfix(Targeter __instance, MethodBase __originalMethod) {
+            if (__originalMethod.Name == nameof(Targeter.StopTargeting) || __instance.IsTargeting)
+                AffordanceTargetingHelper.AdvanceGeneration();
+        }
+    }
     public static class AffordanceTargetingHelper
     {
-        private static object SessionObject(Targeter t) => (object)t?.targetingSource
-            ?? (t == null ? null : Traverse.Create(t).Field("action").GetValue<Action<LocalTargetInfo>>());
-        private static int SessionId(Targeter t) => SessionObject(t) is object source ? RuntimeHelpers.GetHashCode(source) : 0;
+        private static int Generation;
+        internal static void AdvanceGeneration() { Generation = Generation == int.MaxValue ? 1 : Generation + 1; }
+        private static int SessionId(Targeter t) => Generation;
+        private static object Clinical(Pawn pawn) => pawn == null ? null : new {
+            pawn_id = pawn.thingIDNumber, downed = pawn.Downed, drafted = pawn.Drafted,
+            health = pawn.health.summaryHealth.SummaryHealthPercent, bleed_rate = pawn.health.hediffSet.BleedRateTotal,
+            stages = pawn.health.hediffSet.hediffs.Where(h => h.Visible).Select(h => new {
+                def_name = h.def.defName, stage = h.CurStageIndex, life_threatening = h.CurStage?.lifeThreatening ?? false,
+                part = h.Part?.Label }).ToList()
+        };
         private static bool Valid(Targeter t, Map map, LocalTargetInfo target)
         {
             if (t == null || !t.IsTargeting || !target.IsValid || !target.Cell.InBounds(map) || target.Cell.Fogged(map)) return false;
@@ -76,14 +93,19 @@ namespace RIMAPI.Helpers
                 downed=(target.Thing as Pawn)?.Downed ?? false,
                 health=(target.Thing as Pawn)?.health?.summaryHealth?.SummaryHealthPercent,
                 bleed_rate=(target.Thing as Pawn)?.health?.hediffSet?.BleedRateTotal,
+                clinical=Clinical(target.Thing as Pawn),
+                actual_cost=ability == null ? null : new { psyfocus=ability.FinalPsyfocusCost(target), heat=ability.def.EntropyGain, charges=ability.UsesCharges ? ability.RemainingCharges : -1 },
                 conditions=(target.Thing as Pawn)?.health?.hediffSet?.hediffs.Where(h => h.Visible)
                     .Select(h => h.def.LabelCap.ToString()).ToList(),
                 roof=map.roofGrid.RoofAt(target.Cell)?.defName, temperature=target.Cell.GetTemperature(map),
                 fire=target.Cell.ContainsStaticFire(map),
+                affected_allies=ability == null ? (int?)null : pawns.Count(p => !p.HostileTo(Faction.OfPlayer) && p.Position.DistanceTo(target.Cell) <= ability.def.EffectRadius),
                 allies_within_five=counts(target.Cell).Item1,
                 hostiles_within_twenty=counts(target.Cell).Item2
             }).ToList();
             return ApiResult<object>.Ok(new { active=true, session_id=SessionId(t), source=source?.GetType().Name,
+                effect_identity=ability?.def.defName ?? permit?.defName ?? source?.GetType().FullName,
+                caster_facts=Clinical(source?.Caster as Pawn ?? Traverse.Create(t).Field("caster").GetValue<Pawn>()),
                 effect_label=ability?.def.LabelCap.ToString() ?? permit?.LabelCap.ToString(),
                 effect_description=ability?.def.description ?? permit?.description,
                 effect_cost=ability != null ? $"focus {ability.def.PsyfocusCost}; heat {ability.def.EntropyGain}; charges {ability.RemainingCharges}" :

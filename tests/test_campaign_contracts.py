@@ -177,8 +177,8 @@ class ShipStages(unittest.TestCase):
         plan = shipbuilding.prepare(snap, memory, layout)
         self.assertEqual(len(plan["ready_layout"]["buildings"]), 2)
         memory["ship_project"] = {"origin": plan["origin"], "layout": layout}
-        beam = {"def_name": "Ship_Beam", "position": {"x": 25, "z": 55}}
-        core = {"def_name": "Ship_ComputerCore", "position": {"x": 27, "z": 55}}
+        beam = {"def_name": "Ship_Beam", "rotation": 0, "position": {"x": 25, "z": 55}}
+        core = {"def_name": "Ship_ComputerCore", "rotation": 0, "position": {"x": 27, "z": 55}}
         snap["development"]["construction_projects"] = [beam, core]
         self.assertFalse(shipbuilding.prepare(snap, memory, layout)["ready_layout"]["buildings"])
         snap["development"]["buildings"] = [beam]

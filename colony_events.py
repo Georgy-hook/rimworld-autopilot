@@ -196,7 +196,7 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
         if not has_site:
             options.pop("prepare_rescue_mission", None)
         readiness = context.get("rescue_readiness") or {}
-        if readiness and not readiness.get("ready"):
+        if readiness and not readiness.get("ready") and not readiness.get("native_preview_required"):
             options.pop("prepare_rescue_mission", None)
             options["defer_rescue"] = (
                 "Prepare travel supplies before departure: "

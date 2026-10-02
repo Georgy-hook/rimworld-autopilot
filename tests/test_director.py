@@ -1411,7 +1411,7 @@ class DirectorTests(unittest.TestCase):
     def test_starving_colony_offers_food_actions_before_waiting(self):
         snapshot = {
             "game": {"tick": 1000},
-            "map": {"resources": {"food": 0, "raw_food": 0, "meals": 0}},
+            "map": {"id": 1, "resources": {"food": 0, "raw_food": 0, "meals": 0}},
             "colonists": [{"id": 1, "hunger": 0.05, "position": {"x": 10, "z": 10}}],
             "animals": [],
             "wild_animals": [{
@@ -1632,7 +1632,7 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(director.candidate_actions(None, snapshot, state)[1]["hungry_eater_options"].keys(), {"1"})
 
     def test_research_requires_a_bench_suitable_for_the_project(self):
-        snapshot = {"game": {"tick": 1000}, "map": {"resources": {"food": 10}},
+        snapshot = {"game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 10}},
                     "colonists": [{"id": 1, "hunger": 0.8, "position": {"x": 10, "z": 10}}],
                     "animals": [], "wild_animals": [], "combat": {"colonists": [], "available_weapons": []},
                     "development": {"building_counts": {"SimpleResearchBench": 1}, "zones": [],
@@ -1786,7 +1786,7 @@ class DirectorTests(unittest.TestCase):
 
     def test_idle_starving_colony_sees_forbidden_food_but_not_wait_or_unusable_research(self):
         snapshot = {
-            "game": {"tick": 1000}, "map": {"resources": {"food": 0, "meals": 0, "raw_food": 0}},
+            "game": {"tick": 1000}, "map": {"id": 1, "resources": {"food": 0, "meals": 0, "raw_food": 0}},
             "colonists": [{"id": 1, "name": "Ada", "health": 1, "hunger": 0.08,
                            "current_job": "Wait", "position": {"x": 10, "z": 10}}],
             "animals": [], "wild_animals": [], "combat": {"colonists": [], "available_weapons": []},
@@ -3849,16 +3849,33 @@ class DirectorTests(unittest.TestCase):
                 self.posts = []
 
             def get(self, endpoint, **kwargs):
-                if endpoint.endswith('/projects') and self.posts:
-                    request=self.posts[-1][1]['body']; layout=request['blueprint']; origin=request['position']
-                    return {'projects':[{'def_name':row['def_name'],'position':{
-                        'x':origin['x']+row['rel_x'],'z':origin['z']+row['rel_z']}}
-                        for row in layout['buildings']+layout['floors']]}
-                return {}
+                if endpoint.endswith('/catalog'):
+                    return [{'def_name': name, 'available_now': True, 'cost_stuff_count': count,
+                             'cost_list': []} for name, count in [('Wall', 5), ('Door', 25), ('Bed', 45)]] + [
+                        {'def_name': 'TorchLamp', 'available_now': True, 'cost_stuff_count': 0,
+                         'cost_list': [{'thing_def': 'WoodLog', 'count': 20}]}]
+                if endpoint.endswith('/things'):
+                    return [{'def_name': name, 'stack_count': count, 'is_forbidden': False}
+                            for name, count in context['item_counts'].items()]
+                if endpoint.endswith('/buildings'):
+                    return []
+                if endpoint.endswith('/projects'):
+                    mutation = next((request for path, request in reversed(self.posts)
+                                     if path == '/api/v1/builder/blueprint'), None)
+                    if mutation is None:
+                        return {'projects': []}
+                    request = mutation['body']; layout = request['blueprint']; origin = request['position']
+                    return {'projects': [{'def_name': row['def_name'], 'rotation': row.get('rotation', 0),
+                                          'stuff_def_name': row.get('stuff_def_name'), 'position': {
+                                              'x': origin['x'] + row['rel_x'], 'z': origin['z'] + row['rel_z']}}
+                                         for row in layout['buildings'] + layout['floors']]}
+                if endpoint.endswith('/terrain'):
+                    return {}
+                raise AssertionError(endpoint)
 
             def post(self, endpoint, **kwargs):
                 self.posts.append((endpoint, kwargs))
-                return {"success": True}
+                return {'all_placeable': True} if endpoint.endswith('/preview') else {'success': True}
 
         client = Client()
         with mock.patch.object(director, "find_terrain_rect", return_value={"x": 40, "z": 20}), \
@@ -3868,7 +3885,9 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(result["applied"])
         self.assertEqual(result["project"]["material"], "BlocksGranite")
         self.assertEqual(result["project"]["entry"], "west")
-        endpoint, request = client.posts[0]
+        self.assertEqual(client.posts[0][0], "/api/v1/builder/blueprint/preview")
+        endpoint, request = next((path, request) for path, request in client.posts
+                                 if path == "/api/v1/builder/blueprint")
         self.assertEqual(endpoint, "/api/v1/builder/blueprint")
         buildings = request["body"]["blueprint"]["buildings"]
         self.assertTrue(all(item["stuff_def_name"] == "BlocksGranite"
@@ -3909,6 +3928,10 @@ class DirectorTests(unittest.TestCase):
                    "building_catalog": [], "finished_research": [], "variant_seed": 1}
         snapshot = {"game": {"tick": 100}, "map": {"id": 1}, "development": {}}
         client = mock.Mock()
+        client.get.side_effect = lambda endpoint, **kwargs: (
+            [] if endpoint.endswith('/buildings') else
+            {'projects': []} if endpoint.endswith('/projects') else
+            {} if endpoint.endswith('/terrain') else self.fail('Unexpected fresh read: ' + endpoint))
         with mock.patch.object(director, "find_terrain_rect", return_value=None):
             result = director.execute_action(client, snapshot, {"anchor": {"x": 10, "z": 10}, "issued": {}},
                 "plan_architecture", {"architecture_program": "residence",

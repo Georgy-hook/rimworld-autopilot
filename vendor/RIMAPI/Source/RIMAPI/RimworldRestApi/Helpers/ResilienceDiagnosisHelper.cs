@@ -35,7 +35,7 @@ namespace RIMAPI.Helpers
                 var beds=map.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().Where(b => b.ForPrisoners == patient.IsPrisonerOfColony
                     && b.Position.Roofed(map) && b.GetRoom()?.Temperature >= 16 && b.GetRoom()?.Temperature <= 28
                     && RestUtility.CanUseBedEver(patient,b.def) && patient.CanReserveAndReach(b,PathEndMode.OnCell,Danger.Some))
-                    .OrderByDescending(b => b == patient.CurrentBed()).ThenByDescending(b => b.GetStatValue(StatDefOf.SurgerySuccessChanceFactor)).Take(3).ToList();
+                    .OrderByDescending(b => b == patient.CurrentBed()).ThenByDescending(b => b.GetStatValue(StatDefOf.SurgerySuccessChanceFactor)).ToList();
                 foreach (Pawn doctor in map.mapPawns.FreeColonistsSpawned.Where(d => d != patient && RoutineSafe(d) && !d.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
                     && (d.workSettings?.GetPriority(WorkTypeDefOf.Doctor) ?? 0) > 0 && d.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation)
                     && (recipe.skillRequirements == null || recipe.skillRequirements.All(s => s.PawnSatisfies(d))) && d.CanReach(patient,PathEndMode.Touch,Danger.Some)

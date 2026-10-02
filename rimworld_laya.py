@@ -2061,30 +2061,60 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
     }
 
 
+_NO_BODY_COMMANDS = {"/api/v1/game/speed", "/api/v1/pawn/edit/status", "/api/v1/pawn/job",
+    "/api/v1/pawn/medical/tend", "/api/v1/pawn/medical/bed-rest", "/api/v1/pawn/medical/feed",
+    "/api/v1/colonist/work-priority", "/api/v1/colonists/work-priority"}
+
+
+def command_acceptance(command: dict[str, Any], response: Any) -> bool | None:
+    """Native acknowledgment, rejection or unknown; invocation is not completion."""
+    if isinstance(response, dict):
+        if response.get("applied") is False or response.get("success") is False:
+            return False
+        if "data" in response:
+            return command_acceptance(command, response["data"])
+        if isinstance(response.get("applied"), bool):
+            return response["applied"]
+        if command.get("endpoint") == "/api/v1/combat/tactic":
+            fields = ("drafted_pawn_ids", "positioned_pawn_ids", "attacking_pawn_ids", "psycast_queued")
+            if any(k in response for k in fields):
+                return any(bool(response.get(k)) for k in fields)
+        if command.get("endpoint") in _NO_BODY_COMMANDS and response.get("success") is True:
+            return True  # Installed non-generic ApiResult.Ok has no data member.
+    return None
+
+
+def command_result(commands, responses):
+    statuses = [command_acceptance(command, response) for command, response in zip(commands, responses)]
+    return {"applied": any(value is True for value in statuses), "responses": responses,
+            "command_acceptance": statuses, "outcome_unknown": any(value is None for value in statuses) or any(isinstance(r, dict) and r.get("outcome_unknown") for r in responses),
+            "completion": "unverified"}
+
 def apply_action(client: RimApiClient, action: dict[str, Any]) -> Any:
     if action["kind"] == "noop":
         return {"applied": False, "reason": action["description"]}
     if action["kind"] == "commands":
         responses = []
-        for command in action["commands"]:
+        for index, command in enumerate(action["commands"]):
             try:
                 responses.append(client.post(command["endpoint"], query=command.get("query"), body=command.get("body")))
             except RimApiError as error:
-                # At 3x a fighter can kill or move the target between the
-                # combat snapshot and this job. Replan from the next snapshot
-                # instead of putting the whole director into error backoff.
                 detail = str(error)
-                if (command["endpoint"] == "/api/v1/pawn/job"
-                        and (command.get("body") or {}).get("target_thing_id") is not None
-                        and "HTTP 404" in detail
-                        and "Target thing not found on the worker's map" in detail):
-                    return {"applied": bool(responses), "responses": responses,
-                            "stale_target": True, "reason": detail}
-                raise
-        return {"applied": bool(responses), "responses": responses}
+                stale = (command["endpoint"] == "/api/v1/pawn/job"
+                         and (command.get("body") or {}).get("target_thing_id") is not None
+                         and "HTTP 404" in detail and "Target thing not found on the worker's map" in detail)
+                # Keep the failed row aligned. Earlier accepted orders remain
+                # visible; a transport failure cannot prove this POST did nothing.
+                responses.append({"applied": False, "error": detail, "outcome_unknown": not stale})
+                result = command_result(action["commands"], responses)
+                result.update(failed_command_index=index, reason=detail, error=detail, failure_retry_seconds=5, stale_target=stale)
+                result["outcome_unknown"] |= not stale
+                return result
+        return command_result(action["commands"], responses)
     if action["kind"] == "work_priority":
         response = client.post("/api/v1/colonist/work-priority", body=action["body"])
-        return {"applied": True, "response": response}
+        accepted = command_acceptance({"endpoint": "/api/v1/colonist/work-priority"}, response)
+        return {"applied": accepted is True, "response": response, "outcome_unknown": accepted is None}
     raise RimApiError(f"Blocked unknown action kind: {action['kind']}")
 
 

@@ -15,6 +15,11 @@
 
 ## See Laya at work
 
+**Source branch status:** 0.0.7 is an unreleased candidate. The download link
+above points to the published stable release. Current contracts, offline audits
+and remaining runtime gates are indexed in [docs](docs/README.md). The candidate
+has not demonstrated an autonomous complete victory.
+
 | Combat | Building |
 |:--:|:--:|
 | ![Laya weighing combat moves](assets/promo/combat.gif) | ![Laya planning a building](assets/promo/building.gif) |

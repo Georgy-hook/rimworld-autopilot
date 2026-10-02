@@ -252,6 +252,8 @@ namespace RIMAPI.Models
 
     public class PawnJobRequestDto
     {
+        public int? MapId { get; set; }
+        public bool AllowUnforbidEquip { get; set; }
         public int PawnId { get; set; }
         public string JobDef { get; set; }
         public int? TargetThingId { get; set; }

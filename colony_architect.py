@@ -8,10 +8,12 @@ still exposing meaningful architectural choices to the model.
 
 from __future__ import annotations
 
+import copy
 import random
 import math
 from collections import Counter
 from typing import Any
+import colony_retry as retry
 
 
 PROGRAM_CATALOG: dict[str, dict[str, Any]] = {
@@ -776,10 +778,14 @@ def estimated_stuff_cost(layout: dict[str, Any], building_catalog: list[dict[str
     }
     for tile in layout.get("floors") or []:
         definition = str(tile.get("def_name") or "")
-        ingredients = floor_costs.get(definition)
+        native = index.get(definition)
+        ingredients = ({str(c["thing_def"]): int(c["count"]) for c in native.get("cost_list", [])}
+                       if native is not None and "cost_list" in native else floor_costs.get(definition))
         if ingredients is None and definition.startswith("Tile"):
             ingredients = {f"Blocks{definition.removeprefix('Tile')}": 4}
-        for resource, amount in (ingredients or {}).items():
+        if ingredients is None:
+            ingredients = {"unknown_floor_cost:" + definition: 1}
+        for resource, amount in ingredients.items():
             cost[resource] += amount
     return dict(cost)
 
@@ -1091,3 +1097,274 @@ def resolve_layout_materials(layout: dict[str, Any], catalog: dict[str, dict[str
             return None
         resolved_items.append({**item, "stuff_def_name": material})
     return {**layout, "buildings": resolved_items}
+
+
+# Saved plans retain intent; physical evidence decides what remains to place.
+def element_matches(expected, observed, origin):
+    pos = observed.get("position") or {}
+    if ((observed.get("def") or observed.get("def_name")) != expected.get("def_name")
+            or pos.get("x") != origin["x"] + expected["rel_x"]
+            or pos.get("z") != origin["z"] + expected["rel_z"]):
+        return False
+    if "rotation" in expected and observed.get("rotation") != expected["rotation"]:
+        return False
+    stuff = expected.get("stuff_def_name")
+    return not stuff or (observed.get("stuff_def_name") or observed.get("stuff")) == stuff
+
+
+def reconcile_projects(development, memory, map_id, tick, terrain_resolver):
+    options = {}
+    for number, project in enumerate(memory.get("architecture_projects") or []):
+        if not isinstance(project, dict):
+            continue
+        if not project.get("layout"):
+            # Old saves lack exact intent. Release empty reservations, never invent replacement furniture.
+            origin = project.get("origin") or {}
+            x, z = origin.get("x"), origin.get("z")
+            if x is not None and z is not None:
+                physical = list(development.get("buildings") or []) + list(development.get("construction_projects") or [])
+                present = any(x <= (r.get("position") or {}).get("x", -99999) < x + int(project.get("width") or 1)
+                              and z <= (r.get("position") or {}).get("z", -99999) < z + int(project.get("height") or 1)
+                              for r in physical)
+                age = tick - int(project.get("issued_tick", tick))
+                if age < 0:
+                    project["issued_tick"] = tick
+                project["reservation_active"] = present or age < 2500
+                project["repair_unavailable_reason"] = "legacy_save_missing_exact_original_layout"
+            continue
+        if project.get("map_id") != map_id:
+            project["reservation_active"] = False
+            continue
+        origin, layout = project["origin"], project["layout"]
+        buildings = development.get("buildings") or []
+        queued = development.get("construction_projects") or []
+        floor_positions = [{"x": origin["x"] + r["rel_x"], "z": origin["z"] + r["rel_z"]}
+                           for r in layout.get("floors") or []]
+        floor_defs = terrain_resolver(development.get("terrain") or {}, floor_positions) if floor_positions else {}
+        missing_buildings = [r for r in layout.get("buildings") or []
+                             if not any(element_matches(r, o, origin) for o in buildings + queued)]
+        missing_floors = [r for r in layout.get("floors") or []
+                         if floor_defs.get((origin["x"] + r["rel_x"], origin["z"] + r["rel_z"])) != r["def_name"]
+                         and not any(element_matches(r, o, origin) for o in queued)]
+        conflicts = []
+        for intended in missing_buildings:
+            x, z = origin["x"] + intended["rel_x"], origin["z"] + intended["rel_z"]
+            for observed in buildings + queued:
+                pos = observed.get("position") or {}
+                if pos.get("x") == x and pos.get("z") == z:
+                    conflicts.append({"expected": intended, "observed": observed,
+                                      "reason": "occupied_anchor_differs_in_definition_material_or_orientation"})
+        project["identity_blockers"] = conflicts
+        total = len(layout.get("buildings") or []) + len(layout.get("floors") or [])
+        missing = len(missing_buildings) + len(missing_floors)
+        present = total - missing
+        if present > int(project.get("verified_count") or 0):
+            project.pop("failure_retry", None)
+        project.update(verified_count=present, requested_count=total,
+                       complete_plan_placed=bool(total) and missing == 0,
+                       completed_building_count=sum(any(element_matches(r, o, origin) for o in buildings)
+                                                    for r in layout.get("buildings") or []))
+        last = project.get("repair_tick", project.get("issued_tick", tick))
+        age = tick - int(last)
+        if age < 0:
+            project["repair_tick"] = tick
+            age = 0
+        project["reservation_active"] = present > 0 or age < 2500
+        project.pop("observation_pending", None)
+        if missing and age >= 2500 and present and not retry.recent(project.get("failure_retry"), tick, 2500):
+            key = str(number)
+            blocker_text = "; ".join(
+                f"{b['expected']['def_name']} {b['expected'].get('stuff_def_name')} rot{b['expected'].get('rotation')}"
+                f" vs {b['observed'].get('def') or b['observed'].get('def_name')} "
+                f"{b['observed'].get('stuff_def_name')} rot{b['observed'].get('rotation')}"
+                for b in conflicts[:4])
+            options[key] = {"project": project, "layout": {**layout, "buildings": missing_buildings,
+                                                         "floors": missing_floors},
+                            "summary": f"Restore {project.get('program')} at {origin}: {missing} missing elements; "
+                                       f"{present} built or queued; {len(conflicts)} occupied identity blockers. "
+                                       f"Keep original doors, material and orientation; no demolition. {blocker_text}"}
+    return options
+
+
+def read_construction(client, map_id):
+    return {"buildings": client.get("/api/v1/map/buildings", map_id=map_id),
+            "construction_projects": client.get("/api/v1/builder/projects", map_id=map_id).get("projects", []),
+            "terrain": client.get("/api/v1/map/terrain", map_id=map_id)}
+
+
+def placement_budget(client, map_id, layout, development):
+    catalog = client.get("/api/v1/buildings/catalog")
+    index = catalog_index(catalog)
+    locked = [r["def_name"] for r in (layout.get("buildings") or []) + (layout.get("floors") or [])
+              if r["def_name"] not in index or index[r["def_name"]].get("available_now") is False]
+    stock = Counter()
+    for row in client.get("/api/v1/map/things", map_id=map_id):
+        if not row.get("is_forbidden") and not row.get("fogged") and not row.get("is_fogged"):
+            stock[str(row.get("def_name"))] += max(0, int(row.get("stack_count") or 0))
+    for project in development.get("construction_projects") or []:
+        for ingredient in project.get("materials_needed") or []:
+            stock[str(ingredient.get("def_name"))] -= max(0, int(ingredient.get("required_count") or 0))
+    costs = estimated_stuff_cost(layout, catalog)
+    return {"locked_definitions": sorted(set(locked)),
+            "shortages": {name: count - stock[name] for name, count in costs.items() if count > stock[name]},
+            "cost": costs}
+
+
+def preview_layout(client, map_id, origin, layout):
+    return client.post("/api/v1/builder/blueprint/preview", body={"map_id": map_id,
+                       "position": position(origin["x"], origin["z"]), "blueprint": layout,
+                       "clear_obstacles": False})
+
+
+def execute_repair(client, snapshot, memory, key, terrain_resolver):
+    map_id, tick = snapshot["map"]["id"], int(snapshot.get("game", {}).get("tick") or 0)
+    try:
+        saved = (memory.get("architecture_projects") or [])[int(key)]
+    except (ValueError, TypeError, IndexError):
+        saved = None
+    try:
+        fresh = read_construction(client, map_id)
+    except Exception:
+        if isinstance(saved, dict) and saved.get("map_id") == map_id:
+            _project_failure(saved, tick, {})
+        raise
+    options = reconcile_projects(fresh, memory, map_id, tick, terrain_resolver)
+    option = options.get(str(key))
+    if not option:
+        return {"applied": False, "reason": "architecture_repair_stale_or_waiting"}
+    project, layout = option["project"], option["layout"]
+    project["repair_tick"] = tick
+    if project.get("identity_blockers"):
+        return _project_failure(project, tick, {"applied": False, "reason": "architecture_repair_occupied_identity_blocker",
+                "blockers": project["identity_blockers"]})
+    try:
+        budget = placement_budget(client, map_id, layout, fresh)
+    except Exception:
+        _project_failure(project, tick, {})
+        raise
+    if budget["locked_definitions"] or budget["shortages"]:
+        return _project_failure(project, tick, {"applied": False, "reason": "architecture_repair_budget_or_research", **budget})
+    try:
+        preview = preview_layout(client, map_id, project["origin"], layout)
+    except Exception:
+        _project_failure(project, tick, {})
+        raise
+    if preview.get("all_placeable") is not True:
+        return _project_failure(project, tick, {"applied": False, "reason": "architecture_repair_native_blocked", "preview": preview})
+    error, response = None, None
+    try:
+        response = client.post("/api/v1/builder/blueprint", body={"map_id": map_id,
+                               "position": position(project["origin"]["x"], project["origin"]["z"]),
+                               "blueprint": layout, "clear_obstacles": False})
+    except Exception as caught:
+        error = str(caught)
+    # Never infer rollback from a failed HTTP response.
+    try:
+        after = read_construction(client, map_id)
+    except Exception:
+        _project_failure(project, tick, {})
+        raise
+    before = project["verified_count"]
+    reconcile_projects(after, memory, map_id, tick, terrain_resolver)
+    result = {"applied": project["verified_count"] > before, "reason": "architecture_repair_observed",
+            "complete_plan_placed": project["complete_plan_placed"], "completion": "unverified",
+            "project": project, "response": response, "transport_error": error}
+    if result["applied"]:
+        project.pop("failure_retry", None)
+        return result
+    return _project_failure(project, tick, result)
+
+
+def _project_failure(project, tick, result):
+    project["failure_retry"] = retry.failure_record(tick, 30)
+    if (project.get("variant") == "legacy_hospital" and not project.get("verified_count")
+            and result.get("reason") in {"hospital_native_layout_blocked", "hospital_partial_or_rejected_observed"}):
+        origins = project.setdefault("failed_origins", [])
+        if project.get("origin") not in origins:
+            origins.append(dict(project["origin"]))
+        project["failed_origins"] = origins[-8:]
+    return result
+
+
+def hospital_retry_blocked(memory, map_id, tick):
+    return any(isinstance(p, dict) and p.get("map_id") == map_id and p.get("variant") == "legacy_hospital"
+        and retry.recent(p.get("failure_retry"), tick, 2500) for p in memory.get("architecture_projects") or [])
+
+
+def execute_legacy_hospital(client, snapshot, memory, layout, origin, terrain_resolver, site_finder=None):
+    """Put the legacy clinic through the same exact-plan recovery contracts."""
+    map_id, tick = snapshot["map"]["id"], int(snapshot.get("game", {}).get("tick") or 0)
+    desired = dict(origin)
+    projects = memory.setdefault("architecture_projects", [])
+    project = next((p for p in projects if isinstance(p, dict) and p.get("map_id") == map_id
+        and p.get("variant") == "legacy_hospital" and p.get("layout") and p.get("origin")), None)
+    if project is None and any(isinstance(p, dict) and p.get("program") == "hospital"
+        and p.get("map_id", map_id) == map_id and p.get("reservation_active", True) for p in projects):
+        return {"applied": False, "reason": "hospital_project_already_active"}
+    fresh = read_construction(client, map_id)
+    if project is None and any(b.get("medical") and not b.get("for_prisoners")
+        and (b.get("def") or b.get("def_name")) in {"Bed", "HospitalBed", "SleepingSpot"}
+        for b in fresh.get("buildings") or []):
+        return {"applied": False, "reason": "hospital_existing_medical_bed"}
+    if project is None:
+        project = {"map_id": map_id, "program": "hospital", "variant": "legacy_hospital",
+            "layout": copy.deepcopy(layout), "origin": dict(origin), "width": layout["width"],
+            "height": layout["height"], "issued_tick": tick, "reservation_active": True}
+        projects.append(project)
+    reconcile_projects(fresh, memory, map_id, tick, terrain_resolver)
+    if retry.recent(project.get("failure_retry"), tick, 2500):
+        return {"applied": False, "reason": "hospital_failure_retry_pending", "project": project}
+    if project.get("complete_plan_placed"):
+        return {"applied": False, "reason": "hospital_exact_plan_already_present",
+                "complete_plan_placed": True, "completion": "unverified", "project": project}
+    if not project.get("verified_count") and site_finder is not None:
+        project["reservation_active"] = False
+        try:
+            site = site_finder(fresh, project["layout"], desired)
+        except Exception:
+            _project_failure(project, tick, {})
+            raise
+        if site is None:
+            return _project_failure(project, tick, {"applied": False, "reason": "hospital_no_clear_site", "project": project})
+        project["origin"] = dict(site)
+        reconcile_projects(fresh, memory, map_id, tick, terrain_resolver)
+    if project.get("identity_blockers"):
+        return _project_failure(project, tick, {"applied": False, "reason": "hospital_occupied_identity_blocker", "project": project})
+    original, origin = project["layout"], project["origin"]
+    observed = (fresh.get("buildings") or []) + (fresh.get("construction_projects") or [])
+    missing = {**original, "buildings": [r for r in original.get("buildings") or []
+        if not any(element_matches(r, o, origin) for o in observed)]}
+    try:
+        budget = placement_budget(client, map_id, missing, fresh)
+    except Exception:
+        _project_failure(project, tick, {})
+        raise
+    if budget["locked_definitions"] or budget["shortages"]:
+        return _project_failure(project, tick, {"applied": False, "reason": "hospital_fresh_budget_or_research", **budget, "project": project})
+    try:
+        checked = preview_layout(client, map_id, origin, missing)
+    except Exception:
+        _project_failure(project, tick, {})
+        raise
+    if checked.get("all_placeable") is not True:
+        return _project_failure(project, tick, {"applied": False, "reason": "hospital_native_layout_blocked", "preview": checked, "project": project})
+    project.update(repair_tick=tick, reservation_active=True, observation_pending=True)
+    response, error = None, None
+    try:
+        response = client.post("/api/v1/builder/blueprint", body={"map_id": map_id,
+            "position": position(origin["x"], origin["z"]), "blueprint": missing, "clear_obstacles": False})
+    except Exception as caught:
+        error = str(caught)
+    try:
+        after = read_construction(client, map_id)
+        reconcile_projects(after, memory, map_id, tick, terrain_resolver)
+    except Exception as caught:
+        return _project_failure(project, tick, {"applied": False, "reason": "hospital_placement_observation_pending", "outcome_unknown": True,
+            "project": project, "response": response, "transport_error": error, "observation_error": str(caught)})
+    result = {"applied": project["complete_plan_placed"], "complete_plan_placed": project["complete_plan_placed"],
+        "completion": "unverified", "reason": "hospital_exact_plan_verified" if project["complete_plan_placed"]
+        else "hospital_partial_or_rejected_observed", "project": project, "response": response, "transport_error": error}
+    if project["verified_count"]:
+        project.pop("failure_retry", None)
+        return result
+    return _project_failure(project, tick, result)

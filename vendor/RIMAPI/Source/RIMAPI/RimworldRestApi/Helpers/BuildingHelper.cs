@@ -22,6 +22,7 @@ namespace RIMAPI.Helpers
                     Z = building.Position.z,
                 },
                 Rotation = building.Rotation.AsInt,
+                StuffDefName = building.Stuff?.defName,
                 Size = new PositionDto { X = building.def.size.x, Y = 0, Z = building.def.size.z },
                 RequiresPower = building.TryGetComp<CompPowerTrader>() != null
                     && building.TryGetComp<CompPowerPlant>() == null,

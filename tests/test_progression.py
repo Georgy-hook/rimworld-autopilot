@@ -264,7 +264,7 @@ class ProgressionTests(unittest.TestCase):
         result = p.execute(client, {"map": {"id": 1}}, {}, "progression_ending", selected)
         self.assertTrue(result["applied"])
         self.assertFalse(result["victory_verified"])
-        self.assertEqual(client.calls[0], ("/api/v1/colony/endings/journey", {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": 15, "pawn_ids": "3,4", "confirmed": True}))
+        self.assertEqual(client.calls[0], ("/api/v1/colony/endings/journey", {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": 15, "pawn_ids": "3,4", "home_pawn_ids": "", "manifest": "", "confirmed": True}))
         client.arrived = True
         after = p.collect(client, {"map": {"id": 2}})
         self.assertEqual(p.ending_options(after), {})
@@ -348,6 +348,97 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual(facts["journey_needs"]["blockers"], ["diet-allowed survival meals missing"])
         self.assertEqual(p.summary(snapshot)["journey_blockers"], 1)
         self.assertFalse(p.execute(Client(), {"map": {"id": 1}}, {}, "progression_ending", {"kind": "journey", "object_id": 70})["applied"])
+
+    def test_journey_freshness_keeps_reserve_drift_but_binds_manifest_and_roster(self):
+        plan = {"kind": "journey", "map_id": 1, "object_id": 70, "pawn_ids": [3],
+                "home_pawn_ids": [4], "manifest": [{"def_name": "MealSurvivalPack", "count": 50}],
+                "home_food_nutrition": 100, "food_margin_days": 2, "medicine_count": 4}
+        self.assertTrue(p._ending_unchanged(plan, {**plan, "home_food_nutrition": 99.1}))
+        for changed in ({"home_pawn_ids": [5]}, {"medicine_count": 3},
+                        {"manifest": [{"def_name": "MealSurvivalPack", "count": 49}]}, {"food_margin_days": -1}):
+            self.assertFalse(p._ending_unchanged(plan, {**plan, **changed}))
+
+    def test_boarding_ordinary_job_progress_is_allowed_but_care_is_not(self):
+        row = {"map_id": 1, "root_id": 2, "pawn_id": 3, "worker_id": 3, "casket_id": 4,
+               "job": "EnterCryptosleepCasket", "current_job": "Goto"}
+        selected = next(iter(p.boarding_options({"native_milestones": [{"boarding_options": [row]}]}).values()))
+        class Client:
+            job = "Wait"
+            calls = 0
+            def get(self, endpoint, **params):
+                return [{"boarding_options": [{**row, "current_job": self.job}]}] if endpoint.endswith("progression") else {}
+            def post(self, *args, **kwargs):
+                self.calls += 1
+                return "boarding_job_started"
+        client = Client()
+        self.assertTrue(p.execute(client, {}, {}, "progression_boardship", selected)["applied"])
+        client.job = "TendPatient"
+        self.assertFalse(p.execute(client, {}, {}, "progression_boardship", selected)["applied"])
+        self.assertEqual(client.calls, 1)
+
+    def test_empty_landing_waits_without_model_and_recovers(self):
+        import colony_sessions as sessions
+        from unittest.mock import patch
+        context = {"odyssey": {"landing": True, "landings": [], "landing_blocker": "No viable native cell"}}
+        snapshot = {"development": {"progression": context}}
+        selected, raw = p.choose(None, {}, "progression_ending", snapshot)
+        self.assertTrue(selected["blocked"])
+        class Client:
+            def get(self, *args, **kwargs): return []
+        state = {}
+        with patch.object(sessions.colony_modules, "modules", return_value=[p]), \
+             patch.object(p, "peek_pending", return_value=True), patch.object(p, "collect", return_value=context), \
+             patch.object(p, "prepare"), patch.object(p, "choose", side_effect=AssertionError("No model")):
+            first = sessions.run_pending(Client(), None, {}, state, world_only=True)
+            second = sessions.run_pending(Client(), None, {}, state, world_only=True)
+        self.assertEqual(first["mode"], "native-continuation-wait")
+        self.assertEqual(first["result"]["reason"], "No viable native cell")
+        self.assertTrue(second["quiet"])
+        context["odyssey"].update(landing_session="L1", landings=[{"operation": "view_landing_map", "map_id": 7}])
+        option = next(iter(p.ending_options(context).values()))
+        self.assertEqual(option["session"], "L1")
+        with patch.object(sessions.colony_modules, "modules", return_value=[p]), \
+             patch.object(p, "peek_pending", return_value=True), patch.object(p, "collect", return_value=context), \
+             patch.object(p, "prepare"), patch.object(p, "choose", return_value=(option, {})), \
+             patch.object(sessions.colony_modules, "execute", return_value={"applied": True}):
+            recovered = sessions.run_pending(Client(), None, {}, state, world_only=True)
+        self.assertEqual(recovered["mode"], "native-continuation")
+        self.assertNotIn("blocked_native_continuation", state)
+
+    def test_native_formation_uses_persisted_lord_callback_and_invalidates_cancellation(self):
+        source = Path("vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Controllers/Colony/EndingJourneyController.cs").read_text()
+        self.assertIn('Scribe_References.Look(ref FormingLord, "formingLord")', source)
+        self.assertIn('map.lordManager.lords.Contains(route.FormingLord)', source)
+        self.assertIn('Routes.FirstOrDefault(r => r.FormingLord == formingLord)', source)
+        self.assertIn('CaravanCreated(__state, __result)', source)
+        self.assertIn('job.downedPawns.Any()', source)
+        self.assertIn('Saved journey has no native formation identity', source)
+        self.assertNotIn('Find.WorldObjects.Caravans', source.split('public class EndingJourneyPlan')[0])
+        self.assertIn('homeIds = RequestParser.GetStringParameter(context, "home_pawn_ids", required: false) ?? ""', source)
+
+    def test_landing_recovery_posts_identity_and_fresh_session_rejects(self):
+        row = {"operation": "view_landing_map", "map_id": 7, "rotation": 0}
+        class Client:
+            session = "L1"
+            calls = []
+            def get(self, endpoint, **params):
+                return {"landing": True, "landing_session": self.session, "landings": [row]} if endpoint.endswith("/odyssey") else {}
+            def post(self, endpoint, **kwargs):
+                self.calls.append(kwargs["query"])
+                return "gravship_landing_map_selected"
+        client = Client()
+        selected = next(iter(p.ending_options(p.collect(client, {})).values()))
+        self.assertTrue(p.execute(client, {}, {}, "progression_ending", selected)["applied"])
+        self.assertEqual(client.calls[0], {"operation": "view_landing_map", "map_id": 7, "rotation": 0, "session": "L1", "confirmed": True})
+        client.session = "L2"
+        self.assertFalse(p.execute(client, {}, {}, "progression_ending", selected)["applied"])
+        self.assertEqual(len(client.calls), 1)
+        source = Path("vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Controllers/Colony/EndingOdysseyController.cs").read_text()
+        self.assertIn('Current.Game.CurrentMap = designator.map', source)
+        self.assertIn('GetStringParameter(context, "session") != Session(marker)', source)
+        self.assertIn('LandingSearchCursor + 256', source)
+        self.assertIn('LandingSearchCells.RemoveAll(cell => !designator.CanDesignateCell(cell).Accepted)', source)
+        self.assertIn('TotalSeconds >= 30', source)
 
     def test_hidden_prerequisite_frontier_and_cycle(self):
         tree = [project("ShipBasics", can_start_now=False, hidden_prerequisites=["Microelectronics"]),

@@ -23,10 +23,10 @@ namespace RIMAPI.Helpers
                 && map.mapPawns.AllPawnsSpawned.Any(p=>p.Faction==Faction.OfPlayer && p.genes?.GetFirstGeneOfType<Gene_Hemogen>()?.ValuePercent < .5f)
                 && map.listerThings.AllThings.Where(t=>t.def==ThingDefOf.HemogenPack && !t.IsForbidden(patient)).Sum(t=>t.stackCount)<5;
             if(recipe.Worker is Recipe_AdministerIngestible || recipe.Worker is Recipe_AdministerUsableItem)
-                return recipe.ingredients.Any(i=>i.filter.AllowedThingDefs.Any(d => (d.defName=="Penoxycyline" && patient.DevelopmentalStage.Adult() && patient.Downed)
+                return recipe.ingredients.Any(i=>i.filter.AllowedThingDefs.Any(d => (d.defName=="Penoxycyline" && patient.DevelopmentalStage.Adult() && patient.Downed && !visible.Any(h=>new[]{"PenoxycylineHigh","Malaria","Plague","SleepingSickness"}.Contains(h.def.defName)))
                     || (d.defName=="HemogenPack" && (visible.Any(h=>h.def==HediffDefOf.BloodLoss) || patient.genes?.GetFirstGeneOfType<Gene_Hemogen>()?.ValuePercent < .5f))
-                    || (d.IsDrug && visible.Any(h=>(h is Hediff_Addiction && DrugStatsUtility.GetNeed(d)!=null && h.def.chemicalNeed==DrugStatsUtility.GetNeed(d))
-                        || (h is Hediff_ChemicalDependency c && c.chemical==DrugStatsUtility.GetChemical(d))))));
+                    || (d.IsDrug && visible.Any(h=>(h is Hediff_Addiction && DrugStatsUtility.GetNeed(d)!=null && h.def.chemicalNeed==DrugStatsUtility.GetNeed(d) && patient.needs.TryGetNeed(DrugStatsUtility.GetNeed(d)) is Need_Chemical need && need.CurCategory!=DrugDesireCategory.Satisfied)
+                        || (h is Hediff_ChemicalDependency c && c.chemical==DrugStatsUtility.GetChemical(d) && c.LinkedGene?.Active==true && c.ShouldSatify)))));
             return false;
         }
         private static bool Materials(Pawn doctor,Pawn patient,RecipeDef recipe) => recipe.ingredients.All(i=>patient.Map.listerThings.AllThings
@@ -39,7 +39,7 @@ namespace RIMAPI.Helpers
             result.MedicalRecipes=catalog.Select(r=>(object)new{def_name=r.defName,label=r.label,description=r.description,anesthetize=r.anesthetize,violation=r.isViolation,
                 success_factor=r.surgerySuccessChanceFactor,ingredients=r.ingredients.Select(i=>i.Summary).ToList(),skills=r.skillRequirements?.Select(s=>s.skill.defName+"="+s.minLevel).ToList()}).ToList();
             foreach(Pawn patient in map.mapPawns.AllPawnsSpawned.Where(p=>p.RaceProps.Humanlike && !p.Dead && !p.Drafted && !p.InMentalState
-                && (p.IsColonistPlayerControlled || p.IsPrisonerOfColony) && p.CurJobDef != JobDefOf.DoBill && p.CurJobDef != JobDefOf.TendPatient))
+                && (p.IsColonistPlayerControlled || p.IsPrisonerOfColony) && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef != JobDefOf.Ingest))
             foreach(RecipeDef recipe in patient.def.AllRecipes.Where(r=>Treatment(r) && r.AvailableNow))
             foreach(BodyPartRecord part in recipe.Worker.GetPartsToApplyOn(patient,recipe))
             {
@@ -53,10 +53,11 @@ namespace RIMAPI.Helpers
                     && (recipe.skillRequirements==null || recipe.skillRequirements.All(s=>s.PawnSatisfies(d))) && ResilienceAutomationHelper.RoutineRouteSafe(d,patient) && Materials(d,patient,recipe)))
                 foreach(var bed in beds.Where(b=>ResilienceAutomationHelper.RoutineRouteSafe(doctor,b)))
                 {
+                    string dose=string.Join(",",recipe.ingredients.SelectMany(i=>i.filter.AllowedThingDefs).Where(d=>d.IsDrug).Distinct().Select(d=>d.defName+" need="+(patient.needs.TryGetNeed(DrugStatsUtility.GetNeed(d)) as Need_Chemical)?.CurCategory+" dependency_due="+patient.health.hediffSet.hediffs.OfType<Hediff_ChemicalDependency>().Any(h=>h.chemical==DrugStatsUtility.GetChemical(d) && h.LinkedGene?.Active==true && h.ShouldSatify)));
                     string condition=string.Join(",",patient.health.hediffSet.hediffs.Where(h=>h.Visible && (part==null || h.Part==part)).OrderByDescending(h=>h.IsCurrentlyLifeThreatening).Take(2).Select(h=>h.def.defName+"="+h.Severity.ToString("0.00")));
                     result.NativeOptions.Add(new SocietyNativeOptionDto{Kind="medical_recipe",PawnId=patient.thingIDNumber,WorkerId=doctor.thingIDNumber,TargetId=bed.thingIDNumber,
                         Value=recipe.defName+":"+(part?.Index ?? -1),Label=$"{patient.LabelShort}: {recipe.label} {part?.Label}; {doctor.LabelShort} in {bed.LabelShort}",
-                        Effects=new Dictionary<string,string>{{"benefit",$"{condition}; {recipe.label} part={part?.Label}"},
+                        Effects=new Dictionary<string,string>{{"benefit",$"{condition}; {recipe.label} part={part?.Label}; {dose}"},
                             {"risk",$"anesthesia={recipe.anesthetize} violation={recipe.isViolation}; failure or irreversible part loss"},
                             {"cost",$"{string.Join(",",recipe.ingredients.Select(i=>i.Summary))}; surgeon={doctor.skills?.GetSkill(SkillDefOf.Medicine)?.Level} clean={bed.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness):0.00}"},
                             {"inaction","Condition persists; normal tend/medicine may still suffice"},{"uncertainty","Native surgery can fail; observe completed bill and health"}}});

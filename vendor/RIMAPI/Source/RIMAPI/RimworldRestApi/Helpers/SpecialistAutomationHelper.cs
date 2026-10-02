@@ -96,7 +96,7 @@ namespace RIMAPI.Helpers
                             Target = gene.Max > 0 ? gene.targetValue / gene.Max : 0 });
                     foreach (var need in p.needs.AllNeeds.Where(n => n.def.onlyIfCausedByGene))
                         row.Needs.Add(new SocietyNeedDto { DefName = need.def.defName, Level = need.CurLevelPercentage, Description = need.def.description });
-                    row.Conditions.AddRange(p.health.hediffSet.hediffs.Select(h => h.def.defName));
+                    row.Conditions.AddRange(p.health.hediffSet.hediffs.Where(h => h.Visible).Select(h => h.def.defName));
                     if (row.ActiveGenes.Count > 0 || row.Resources.Count > 0 || row.Needs.Count > 0) result.GenePawns.Add(row);
                 }
             }

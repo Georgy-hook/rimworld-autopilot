@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from laya_decisions import ask_laya_choice
+from colony_retry import failure_record, recent as retry_recent
 
 DESCRIPTIONS = {
     "society_medical_care": "Choose a patient's permitted medicine ceiling. Treatment still requires a doctor, access and supplies; compare illness and immunity with medicine scarcity.",
@@ -41,6 +42,36 @@ def collect(client: Any, snapshot: dict) -> dict:
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 
+def _delay(action):
+    return 600 if action in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'} else 2500 if action in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'} else 15000
+
+
+def _subject(action, row):
+    return action + ':' + str(row['pawn_id']) + (':' + str(row.get('letter_id')) if action in {'society_growth', 'society_growth_prepare'} else '')
+
+
+def _option(row):
+    return repr(sorted(_payload(row).items()))
+
+
+def _clinical(row):
+    p = row.get('person') or {}
+    genes = p.get('genes') or {}
+    environment = p.get('development') or {}
+    temp = environment.get('temperature')
+    exposed = isinstance(temp, (int, float)) and (temp < float(environment.get('comfortable_min', -1000)) - 10 or temp > float(environment.get('comfortable_max', 1000)) + 10)
+    return repr((p.get('downed'), p.get('medical_attention'), exposed, bool(environment.get('tox_gas')),
+                 sorted((str(n.get('def_name')), int(float(n.get('level') or 0) * 4), float(n.get('level') or 0) <= .1, float(n.get('level') or 0) <= .01) for n in p.get('needs') or []),
+                 sorted((str(h.get('def_name')), bool(h.get('life_threatening')), int(float(h.get('severity') or 0) * 4), h.get('immunity') is not None and float(h.get('severity') or 0) - float(h['immunity']) >= .2) for h in p.get('conditions') or []),
+                 int(float((genes.get('hemogen') or {}).get('level') or 0) * 4),
+                 (p.get('development') or {}).get('lesson_pending'),
+                 tuple(p.get('timetable') or []), p.get('medical_care'), p.get('prisoner_mode')))
+
+
+def _recent(record, tick, delay):
+    return retry_recent(record, tick, delay)
+
+
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault("development", {}).setdefault("society", {})
     plans = {action: {} for action in ACTIONS}
@@ -70,7 +101,25 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             key = ':'.join(str(option.get(k, '')) for k in ('pawn_id', 'worker_id', 'target_id', 'letter_id', 'value'))
             plans[action][key] = {**option, 'native': True, 'person': people.get(option.get('pawn_id'), {})}
     tick = int(snapshot.get("game", {}).get("tick") or 0)
-    eligible = [a for a, rows in plans.items() if rows and (tick < int((map_state.get("issued") or {}).get("society:" + a, -1000000)) or tick - int((map_state.get("issued") or {}).get("society:" + a, -1000000)) >= (600 if a in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'} else 2500 if a in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'} else 15000))]
+    memory = map_state.get('society_memory') or {}
+    for bucket in ('issued', 'deferred', 'failed'):
+        records = memory.get(bucket) or {}
+        for key, record in list(records.items()):
+            if not _recent(record, tick, 60 if bucket == 'failed' else _delay(key.split(':', 1)[0])):
+                del records[key]
+        if not records:
+            memory.pop(bucket, None)
+    if not memory:
+        map_state.pop('society_memory', None)
+    for action, rows in plans.items():
+        for key, row in list(rows.items()):
+            subject = _subject(action, row)
+            deferred = (memory.get('deferred') or {}).get(subject, {})
+            if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
+                    or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == _clinical(row))
+                    or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
+                del rows[key]
+    eligible = [a for a, rows in plans.items() if rows]
     context['eligible_actions'] = eligible
     return eligible
 
@@ -208,8 +257,11 @@ def pending_action(context):
 
 
 def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    memory = map_state.setdefault('society_memory', {})
     if selected.get("defer"):
-        map_state.setdefault("issued", {})["society:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+        for row in (snapshot.get('development', {}).get('society', {}).get('options', {}).get(action) or {}).values():
+            memory.setdefault('deferred', {})[_subject(action, row)] = {'tick': tick, 'state': _clinical(row)}
         return {"applied": False, "reason": "laya_deferred"}
     live = collect(client, snapshot)
     fresh = {"map": snapshot["map"], "development": {"society": live}}
@@ -217,6 +269,7 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     rows = live.get("options", {}).get(action, {})
     row = next((r for r in rows.values() if _payload(r) == {k: selected[k] for k in _payload(r) if k in selected}), None)
     if row is None:
+        memory.setdefault('failed', {})[repr(sorted({k: selected[k] for k in (*NATIVE_FIELDS, 'hour') if k in selected}.items()))] = failure_record(tick, seconds=15)
         return {"applied": False, "reason": "selection_no_longer_feasible"}
     payload = _payload(row)
     if action == "society_growth":
@@ -229,10 +282,17 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
             offered_traits.add(-1)
         offered_skills = {p["def_name"] for p in (moment or {}).get("passions") or [] if p.get("current_passion") != "Major"}
         if not moment or not moment.get("ready") or type(trait) is not int or trait not in offered_traits or not isinstance(skills, list) or any(not isinstance(k, str) for k in skills) or len(set(skills)) != len(skills) or len(skills) != int(moment.get("passion_gains") or 0) or not set(skills).issubset(offered_skills):
+            memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
             return {"applied": False, "reason": "growth_offer_changed_or_invalid"}
         payload.update(trait_index=trait, skill_defs=skills)
     endpoint = "/api/v1/society/order" if row.get("native") else "/api/v1/society/policy"
-    result = client.post(endpoint, body={"map_id": snapshot["map"]["id"], **payload})
-    if isinstance(result, dict) and result.get("applied"):
-        map_state.setdefault("issued", {})["society:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+    try:
+        result = client.post(endpoint, body={"map_id": snapshot["map"]["id"], **payload})
+    except Exception:
+        memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
+        raise
+    if isinstance(result, dict) and result.get("applied") is True:
+        memory.setdefault('issued', {})[_subject(action, row)] = {'tick': tick}
+    else:
+        memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
     return result if isinstance(result, dict) else {"applied": False, "reason": "invalid_response"}

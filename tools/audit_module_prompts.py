@@ -21,8 +21,10 @@ def main():
     import colony_modules
     import colony_sessions
     import colony_strategy
+    import colony_expeditions
     from laya_decisions import ask_laya_choice
     from tests.test_affordances import option
+    from tests.test_expedition_contracts import plan as expedition_plan, Client as ExpeditionClient
     from tests.test_production import ProductionTests, RecipeProductionTests, LogisticsProductionTests
     from tests.test_society import snapshot as society_snapshot
     from tests.test_specialists import snapshot as specialist_snapshot
@@ -121,6 +123,14 @@ def main():
     ask_laya_choice(agent, {"decision_facts": {"endgame": "archonexus"}, "large_history": "x" * 30000},
         "legacy_large_context", "Choose the next native step", {"study": "Study the current archostructure", "wait": "Wait"})
     completed.append("legacy_oversized_context")
+    colony_expeditions.prepare(ExpeditionClient({"plans": [expedition_plan()]}), agent,
+        {"mode": "trade", "map_id": 0}, ask_laya_choice)
+    expedition_effects = agent.calls[-1]["visible_state"]["effects"]["plan_1"]
+    for field, fragment in (("benefit", "Outbound 2.00d return 3.00d"), ("risk", "Food 8.00d margin 3.00d"),
+                            ("cost", "Mass 44.0/100.0kg"), ("inaction", "Home 2def med8"),
+                            ("uncertainty", "ETA excludes formation/combat")):
+        assert fragment in expedition_effects[field], ("lost expedition fact", field, expedition_effects)
+    completed.append("expedition_roster_long_names_real_tokenizer")
     result = {"checkpoint": str(args.checkpoint), "scenarios": completed, "model_weights_loaded": False,
               "max_len": agent.cfg["max_len"], "head_max_len": agent.cfg["head_max_len"],
               "full_state_retained": True, "calls": agent.calls}

@@ -26,7 +26,7 @@
     <OutputPath>bin\Debug\</OutputPath>
   </PropertyGroup>
 
-  <!-- Embed git hash into AssemblyInformationalVersion as "1.9.0+<hash>" -->
+  <!-- Embed the source git hash into AssemblyInformationalVersion. -->
   <Target Name="SetSourceRevisionId" BeforeTargets="AddSourceRevisionToInformationalVersion">
     <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true"
           WorkingDirectory="$(MSBuildProjectDirectory)">

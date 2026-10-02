@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using HarmonyLib;
 using RIMAPI.Core;
 using RIMAPI.Helpers;
 using RIMAPI.Http;
 using RimWorld;
 using RimWorld.Planet;
 using Verse;
+using Verse.AI.Group;
 
 namespace RIMAPI.Controllers
 {
@@ -16,9 +18,18 @@ namespace RIMAPI.Controllers
     {
         public List<int> PawnIds = new List<int>();
         public int ObjectId;
+        public int OriginMapId = -1;
+        public Lord FormingLord;
+        public string FormationId;
+        public string Status = "forming", Reason;
         public void ExposeData() {
             Scribe_Collections.Look(ref PawnIds, "pawnIds", LookMode.Value);
             Scribe_Values.Look(ref ObjectId, "objectId");
+            Scribe_Values.Look(ref OriginMapId, "originMapId", -1);
+            Scribe_References.Look(ref FormingLord, "formingLord");
+            Scribe_Values.Look(ref FormationId, "formationId");
+            Scribe_Values.Look(ref Status, "status", "forming");
+            Scribe_Values.Look(ref Reason, "reason");
         }
     }
     // Persist the forming caravan's destination until the native caravan exists.
@@ -26,9 +37,11 @@ namespace RIMAPI.Controllers
     public class EndingJourneyState : GameComponent
     {
         public List<EndingJourneyRoute> Routes = new List<EndingJourneyRoute>();
+        public EndingJourneyRoute LastResult;
         public EndingJourneyState(Game game) { }
         public override void ExposeData() {
             Scribe_Collections.Look(ref Routes, "layaEndingJourneys", LookMode.Deep);
+            Scribe_Deep.Look(ref LastResult, "layaEndingJourneyResult");
             if (Scribe.mode == LoadSaveMode.PostLoadInit && Routes == null) Routes = new List<EndingJourneyRoute>();
         }
         public override void GameComponentTick() {
@@ -36,14 +49,50 @@ namespace RIMAPI.Controllers
             for (int i = Routes.Count - 1; i >= 0; i--) {
                 var route = Routes[i];
                 var target = Find.WorldObjects.AllWorldObjects.OfType<MapParent>().FirstOrDefault(o => o.ID == route.ObjectId);
-                if (target == null) { Routes.RemoveAt(i); continue; }
-                var caravan = Find.WorldObjects.Caravans.FirstOrDefault(c => c.IsPlayerControlled && route.PawnIds.All(id => c.PawnsListForReading.Any(p => p.thingIDNumber == id)));
-                if (caravan == null) continue;
-                var arrival = EndingJourneyController.Arrival(target);
-                if (arrival != null && arrival.StillValid(caravan, target.Tile) && Find.WorldReachability.CanReach(caravan, target.Tile))
-                    caravan.pather.StartPath(target.Tile, arrival, true);
-                Routes.RemoveAt(i);
+                var map = Find.Maps.FirstOrDefault(m => m.uniqueID == route.OriginMapId);
+                if (route.FormingLord == null || route.OriginMapId < 0) { Finish(route, "invalidated", "Saved journey has no native formation identity; new decision required"); continue; }
+                if (target == null) { InvalidateFormation(route, map, "Ending destination disappeared"); continue; }
+                if (map == null || !map.lordManager.lords.Contains(route.FormingLord)) { Finish(route, "cancelled", "Native caravan formation ended without the observed caravan creation callback"); continue; }
+                if (!(route.FormingLord.LordJob is LordJob_FormAndSendCaravan job) ||
+                    !route.PawnIds.OrderBy(id => id).SequenceEqual(route.FormingLord.ownedPawns.Select(p => p.thingIDNumber).OrderBy(id => id)) || job.downedPawns.Any())
+                    InvalidateFormation(route, map, "Native forming roster changed; new traveler decision required");
             }
+        }
+        private void InvalidateFormation(EndingJourneyRoute route, Map map, string reason) {
+            if (map != null && route.FormingLord != null && map.lordManager.lords.Contains(route.FormingLord) && route.FormingLord.LordJob is LordJob_FormAndSendCaravan)
+                CaravanFormingUtility.StopFormingCaravan(route.FormingLord);
+            Finish(route, "invalidated", reason);
+        }
+        private void Finish(EndingJourneyRoute route, string status, string reason) {
+            route.Status = status; route.Reason = reason; route.FormingLord = null; LastResult = route; Routes.Remove(route);
+        }
+        public void CaravanCreated(Lord formingLord, Caravan caravan) {
+            var route = Routes.FirstOrDefault(r => r.FormingLord == formingLord);
+            if (route == null) return;
+            if (caravan == null || !caravan.IsPlayerControlled || !route.PawnIds.OrderBy(id => id).SequenceEqual(caravan.PawnsListForReading.Select(p => p.thingIDNumber).OrderBy(id => id))) {
+                Finish(route, "invalidated", "Created caravan differs from selected native formation"); return;
+            }
+            var target = Find.WorldObjects.AllWorldObjects.OfType<MapParent>().FirstOrDefault(o => o.ID == route.ObjectId);
+            var arrival = target == null ? null : EndingJourneyController.Arrival(target);
+            if (arrival == null || !arrival.StillValid(caravan, target.Tile) || !Find.WorldReachability.CanReach(caravan, target.Tile)) {
+                Finish(route, "invalidated", "Native ending arrival no longer feasible"); return;
+            }
+            caravan.pather.StartPath(target.Tile, arrival, true);
+            Finish(route, "travel_requested", "Native caravan created from the exact selected formation; arrival still unobserved");
+        }
+    }
+    [HarmonyPatch(typeof(CaravanExitMapUtility), nameof(CaravanExitMapUtility.ExitMapAndCreateCaravan),
+        new[] { typeof(IEnumerable<Pawn>), typeof(Faction), typeof(PlanetTile), typeof(PlanetTile), typeof(PlanetTile), typeof(bool) })]
+    public static class EndingJourneyCreatedHook
+    {
+        // Capture the actual lord before native ExitMap removes it from the pawns.
+        public static void Prefix(IEnumerable<Pawn> pawns, out Lord __state) {
+            var lords = pawns.Select(p => p.GetLord()).Where(l => l?.LordJob is LordJob_FormAndSendCaravan).Distinct().ToList();
+            __state = lords.Count == 1 ? lords[0] : null;
+        }
+        public static void Postfix(Caravan __result, Lord __state) {
+            if (__state != null) Current.Game?.GetComponent<EndingJourneyState>()?.CaravanCreated(__state, __result);
+            if (__state != null) Current.Game?.GetComponent<ExpeditionRouteState>()?.CaravanCreated(__state, __result);
         }
     }
     public class EndingJourneyPlan
@@ -51,12 +100,15 @@ namespace RIMAPI.Controllers
         public int MapId, ObjectId, SupplyDays;
         public string Team, Route, Label;
         public List<int> PawnIds;
+        public List<int> HomePawnIds;
+        public List<EndingJourneyManifestItem> Manifest;
         public List<string> Travelers, ColonistsAtHome;
         public float FoodNutrition, HomeFoodNutrition, Mass, Capacity, ApproximateDistanceTiles, DailyNutrition, NativeApproxFoodDays;
         public int MedicineCount;
         public float? TravelDays, FoodMarginDays;
         public string TravelEstimateReason;
     }
+    public class EndingJourneyManifestItem { public string DefName; public int Count; }
     public class EndingJourneyController
     {
         private class JourneyEstimate { public float? Days; public string Reason; }
@@ -115,6 +167,9 @@ namespace RIMAPI.Controllers
             }
             return result;
         }
+        private static List<EndingJourneyManifestItem> Manifest(List<TransferableOneWay> supplies) => supplies.GroupBy(t => t.AnyThing.def.defName)
+            .OrderBy(g => g.Key).Select(g => new EndingJourneyManifestItem { DefName = g.Key, Count = g.Sum(t => t.CountToTransfer) }).ToList();
+        private static string ManifestSignature(List<EndingJourneyManifestItem> manifest) => string.Join(",", manifest.OrderBy(i => i.DefName).Select(i => i.DefName + ":" + i.Count));
         private static List<EndingJourneyPlan> Plans(int mapId, Dictionary<string, JourneyEstimate> estimates = null) {
             if (estimates == null) estimates = new Dictionary<string, JourneyEstimate>();
             var result = new List<EndingJourneyPlan>(); var map = MapHelper.GetMapByID(mapId);
@@ -144,6 +199,7 @@ namespace RIMAPI.Controllers
                             Route = target.GetComponent<EscapeShipComp>() != null ? "ship_journey" : "archonexus",
                             Label = "Travel to " + target.Label + " (" + team + ", " + days + " nominal food days)",
                             PawnIds = pawns.Select(p => p.thingIDNumber).ToList(), Travelers = pawns.Select(p => p.LabelShortCap.ToString()).ToList(),
+                            HomePawnIds = home.Select(p => p.thingIDNumber).OrderBy(id => id).ToList(), Manifest = Manifest(supplies),
                             ColonistsAtHome = home.Select(p => p.LabelShortCap.ToString()).ToList(), FoodNutrition = food, HomeFoodNutrition = totalNutrition - food,
                             MedicineCount = meds, Mass = mass, Capacity = capacity, DailyNutrition = DailyNutrition(pawns), NativeApproxFoodDays = nativeDays,
                             TravelDays = estimate.Days, FoodMarginDays = estimate.Days.HasValue ? nativeDays - estimate.Days.Value : (float?)null, TravelEstimateReason = estimate.Reason,
@@ -195,6 +251,8 @@ namespace RIMAPI.Controllers
                     mass, capacity, home_colonists = home.Select(p => p.LabelShortCap.ToString()).ToList() });
             }
             await context.SendJsonResponse(ApiResult<object>.Ok(new { journeys = Plans(mapId, estimates), readiness,
+                pending_routes = Current.Game.GetComponent<EndingJourneyState>().Routes.Select(r => new { object_id = r.ObjectId, origin_map_id = r.OriginMapId, pawn_ids = r.PawnIds, formation_id = r.FormationId, status = r.Status }).ToList(),
+                last_journey_result = Current.Game.GetComponent<EndingJourneyState>().LastResult is EndingJourneyRoute last ? new { object_id = last.ObjectId, origin_map_id = last.OriginMapId, pawn_ids = last.PawnIds, formation_id = last.FormationId, status = last.Status, reason = last.Reason } : null,
                 support_research_targets = needsRations ? recipes.Where(r => r.researchPrerequisite != null).Select(r => r.researchPrerequisite.defName).Distinct().ToList() : new List<string>(),
                 ration_production = recipes.Select(r => new { name = r.defName, label = r.label, research = r.researchPrerequisite?.defName,
                     available_now = r.AvailableNow, skill_requirements = r.skillRequirements?.Select(s => new { skill = s.skill.defName, minimum = s.minLevel }).ToList(),
@@ -205,8 +263,9 @@ namespace RIMAPI.Controllers
         [EndpointMetadata("Start one freshly feasible native ending caravan; persist its ordinary visit arrival until caravan formation completes")]
         public async Task Start(HttpListenerContext context) {
             int mapId = RequestParser.GetIntParameter(context, "map_id"), objectId = RequestParser.GetIntParameter(context, "object_id"), days = RequestParser.GetIntParameter(context, "supply_days");
-            string team = RequestParser.GetStringParameter(context, "team"), ids = RequestParser.GetStringParameter(context, "pawn_ids");
-            var plan = Plans(mapId).FirstOrDefault(p => p.ObjectId == objectId && p.Team == team && p.SupplyDays == days && string.Join(",", p.PawnIds) == ids);
+            string team = RequestParser.GetStringParameter(context, "team"), ids = RequestParser.GetStringParameter(context, "pawn_ids"),
+                homeIds = RequestParser.GetStringParameter(context, "home_pawn_ids", required: false) ?? "", manifest = RequestParser.GetStringParameter(context, "manifest");
+            var plan = Plans(mapId).FirstOrDefault(p => p.ObjectId == objectId && p.Team == team && p.SupplyDays == days && string.Join(",", p.PawnIds) == ids && string.Join(",", p.HomePawnIds) == homeIds && ManifestSignature(p.Manifest) == manifest);
             if (!RequestParser.GetBooleanParameter(context, "confirmed") || plan == null) { await context.SendJsonResponse(ApiResult<string>.Fail("Journey requirements or travelers changed")); return; }
             var map = MapHelper.GetMapByID(mapId); var target = Targets().First(t => t.ID == objectId);
             var pawns = map.mapPawns.FreeColonistsSpawned.Where(p => plan.PawnIds.Contains(p.thingIDNumber)).ToList();
@@ -216,7 +275,12 @@ namespace RIMAPI.Controllers
             if (!RCellFinder.TryFindRandomSpotJustOutsideColony(exitSpot, map, out IntVec3 meeting)) meeting = center;
             float food; int meds; var supplies = Supplies(CaravanFormingUtility.AllReachableColonyItems(map), pawns, days, out food, out meds);
             CaravanFormingUtility.StartFormingCaravan(pawns, new List<Pawn>(), Faction.OfPlayer, supplies, meeting, exitSpot, exitTile, target.Tile);
-            Current.Game.GetComponent<EndingJourneyState>().Routes.Add(new EndingJourneyRoute { PawnIds = plan.PawnIds, ObjectId = objectId });
+            var lord = pawns[0].GetLord();
+            if (!(lord?.LordJob is LordJob_FormAndSendCaravan) || pawns.Any(p => p.GetLord() != lord)) {
+                await context.SendJsonResponse(ApiResult<string>.Fail("Native caravan formation was not created")); return;
+            }
+            Current.Game.GetComponent<EndingJourneyState>().Routes.Add(new EndingJourneyRoute { PawnIds = plan.PawnIds, ObjectId = objectId,
+                OriginMapId = mapId, FormingLord = lord, FormationId = lord.GetUniqueLoadID() });
             await context.SendJsonResponse(ApiResult<string>.Ok("ending_caravan_forming"));
         }
     }

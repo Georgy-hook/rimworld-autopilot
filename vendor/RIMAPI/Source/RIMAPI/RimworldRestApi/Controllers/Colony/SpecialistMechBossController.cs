@@ -24,8 +24,8 @@ namespace RIMAPI.Controllers
         [Get("/api/v1/specialists/mech-bosses")]
         [EndpointMetadata("Read native mechanitor boss summon requirements and current eligible summon jobs; escalation is never automatic")]
         public async Task Context(HttpListenerContext context) {
-            var options = new List<object>();
-            if (ModsConfig.BiotechActive) foreach (var pawn in PawnsFinder.AllMaps_FreeColonistsSpawned.Where(p => p.mechanitor != null && !SpecialistNativeSafety.Protected(p) && !p.Drafted)) {
+            var options = new List<object>(); int mapId=RequestParser.GetMapId(context);
+            if (ModsConfig.BiotechActive) foreach (var pawn in PawnsFinder.AllMaps_FreeColonistsSpawned.Where(p => p.Map.uniqueID==mapId && p.mechanitor != null && !SpecialistNativeSafety.Protected(p) && !p.Drafted)) {
                 var command = Command(pawn);
                 if (!Enabled(command)) continue;
                 foreach (var option in Options(command).Where(o => !o.Disabled && o.action != null))

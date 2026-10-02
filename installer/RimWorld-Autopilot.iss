@@ -1,5 +1,5 @@
 #define AppName "RimWorld Autopilot"
-#define AppVersion "0.0.6"
+; AppVersion is supplied by Build-GUI.ps1 from the repository VERSION file.
 #define AppExeName "RimWorld-Autopilot.exe"
 
 [Setup]

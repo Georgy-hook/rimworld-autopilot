@@ -128,7 +128,7 @@ namespace RIMAPI.Helpers
                             pawn=pawnFacts[p.thingIDNumber], target_pawn=a.def.targetRequired ? null : pawnFacts[p.thingIDNumber],
                             hostile=a.def.hostile, target_hostile=t.HostileTo(p),
                             cost=new { psyfocus=a.def.PsyfocusCost, heat=a.def.EntropyGain,
-                                cooldown=a.def.cooldownTicksRange.ToString(), charges=a.UsesCharges },
+                                cooldown=a.def.cooldownTicksRange.ToString(), charges=a.UsesCharges ? a.RemainingCharges : -1 },
                             affected_allies=a.def.targetRequired ? -1 : map.mapPawns.AllPawnsSpawned.Count(q => !q.HostileTo(p)
                                 && q.Position.DistanceTo(t.Position) <= a.def.EffectRadius),
                             risk="Use the native effect description: side effects, ideology, friendly area effects and charges matter. A valid target is not proof this helps.",
@@ -154,6 +154,10 @@ namespace RIMAPI.Helpers
                     options.Add(new { key=$"scanner:{scanner.thingIDNumber}:{command.defaultLabel}",kind="scanner",
                         pawn_id=0,target_id=scanner.thingIDNumber,label=command.defaultLabel,target=scanner.LabelCap.ToString(),
                         target_def=scanner.def.defName, description=command.defaultDesc, inspect=scanner.GetInspectString(),
+                        scanner_facts=new { state=scanner.State.ToString(), occupant_id=scanner.Occupant?.thingIDNumber,
+                            selected_pawn_id=scanner.SelectedPawn?.thingIDNumber,
+                            ingredients=scanner.def.building.subcoreScannerFixedIngredients.Select(i => new {
+                                def_name=i.FixedIngredient.defName, required=i.GetBaseCount(), remaining=scanner.GetRequiredCountOf(i.FixedIngredient) }).ToList() },
                         cost=$"Scan ticks {scanner.def.building.subcoreScannerTicks}; {string.Join("; ",scanner.def.building.subcoreScannerFixedIngredients.Select(i => i.Summary))}",
                         risk=scanner.DestroyOccupantBrain ? "LETHAL: destroys occupant brain. Cancelling an occupied ripscan also kills; native confirmation remains mandatory."
                             : "Occupies a selected person; brain scan consumes time and ingredients and has native health consequences." });

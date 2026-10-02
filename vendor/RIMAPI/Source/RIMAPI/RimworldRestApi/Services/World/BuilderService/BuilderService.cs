@@ -36,6 +36,7 @@ namespace RIMAPI.Services
                         return new ConstructionProjectDto
                         {
                             ThingId = t.thingIDNumber,
+                            Rotation = t.Rotation.AsInt,
                             DefName = target?.defName,
                             Label = target?.label ?? t.LabelCap,
                             Kind = t is Frame ? "frame" : "blueprint",

@@ -83,7 +83,7 @@ namespace RIMAPI.Helpers
                             && c.GetEdifice(map) == null && c.Roofed(map) == indoors && map.fertilityGrid.FertilityAt(c) >= 0.5f
                             && !c.GetThingList(map).Any(t => t is Blueprint || t is Frame))) continue;
                         if (evaluatedPlots++ >= 8) break;
-                        var newSite = Site(map, indoors ? "new_indoor_ground" : "new_ground", "new_ground", cells, new Zone_Growing(map.zoneManager), defs, null, null, null, true);
+                        var newSite = Site(map, indoors ? "new_indoor_ground" : "new_ground", "new_ground", cells, null, defs, null, null, null, true);
                         newSite.PointA = Pos(origin); newSite.PointB = Pos(origin + new IntVec3(span, 0, span));
                         if (!newSite.Options.Any(o => o.SafeSowingNow)) continue;
                         result.Growers.Add(newSite);
@@ -198,19 +198,23 @@ namespace RIMAPI.Helpers
                 if (worker == null || worker.Faction != Faction.OfPlayer || worker.Map != map || worker.Downed
                     || worker.Drafted || worker.InMentalState || worker.WorkTypeIsDisabled(WorkTypeDefOf.PlantCutting))
                     result.Reason = "no_available_plant_cutter";
-                else if (worker.CurJobDef == JobDefOf.TendPatient || worker.CurJobDef == JobDefOf.Rescue || worker.CurJobDef == JobDefOf.FeedPatient || worker.CurJobDef == JobDefOf.DoBill)
+                else if (CombatNativeHelper.HasCareJob(worker) || worker.CurJobDef == JobDefOf.Ingest)
                     result.Reason = "worker_providing_patient_care";
                 else
                 {
-                    foreach (int id in request.PlantIds.Distinct().Take(200))
+                    var requestedIds = new HashSet<int>(request.PlantIds);
+                    foreach (var plant in map.listerThings.AllThings.OfType<Plant>().Where(p => requestedIds.Contains(p.thingIDNumber)))
                     {
-                        var plant = MapHelper.GetThingOnMapById(request.MapId, id) as Plant;
-                        if (plant == null || !plant.Blighted || !worker.CanReach(plant, PathEndMode.Touch, Danger.Some)) continue;
-                        if (map.designationManager.DesignationOn(plant, DesignationDefOf.CutPlant) == null)
+                        if (!plant.Blighted || !worker.CanReach(plant, PathEndMode.Touch, Danger.Some)) continue;
+                        bool changed = map.designationManager.DesignationOn(plant, DesignationDefOf.CutPlant) == null;
+                        if (changed)
                             map.designationManager.AddDesignation(new Designation(plant, DesignationDefOf.CutPlant));
-                        if (plant.Position.GetZone(map) is Zone_Growing growingZone) growingZone.allowSow = false;
+                        if (plant.Position.GetZone(map) is Zone_Growing growingZone && growingZone.allowSow)
+                        { growingZone.allowSow = false; changed = true; }
+                        if (!changed) continue;
                         result.AffectedCount++;
                         if (!result.TargetId.HasValue) result.TargetId = plant.thingIDNumber;
+                        if (result.AffectedCount >= 200) break;
                     }
                     if (result.TargetId.HasValue)
                     {

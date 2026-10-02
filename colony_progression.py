@@ -47,6 +47,44 @@ def pending_action(context):
     return None
 
 
+def pending_blocker(context):
+    if pending_action(context) is None or ending_options(context):
+        return None
+    odyssey = context.get("odyssey") or {}
+    return (odyssey.get("landing_blocker") or odyssey.get("destination_blocker")
+            or "Native continuation has no currently feasible choices; await fresh native readiness")
+
+
+def _protected_job(name):
+    return name in {"TendPatient", "Rescue", "FeedPatient", "DoBill", "EnterCryptosleepCasket", "CarryToCryptosleepCasket"}
+
+
+def _ending_unchanged(selected, row):
+    """Bind real identities/costs while allowing normal observation drift."""
+    kind = row.get("kind")
+    if kind == "job" and _protected_job(row.get("current_job")):
+        return False
+    for key, value in row.items():
+        if key == "expires_in_ticks":
+            continue
+        if kind == "job" and key in {"current_job", "inspect"}:
+            continue  # Native eligibility and protected-worker guards are regenerated.
+        if kind == "journey":
+            if key in {"label", "travelers", "home_food_nutrition", "mass", "capacity", "approximate_distance_tiles", "travel_estimate_reason"}:
+                continue
+            if key == "colonists_at_home" and "home_pawn_ids" in row:
+                continue  # Stable roster IDs replace displayed names.
+        previous = selected.get(key)
+        if kind == "journey" and key in {"travel_days", "food_margin_days", "native_approx_food_days"} and isinstance(value, (int, float)) and isinstance(previous, (int, float)):
+            if abs(value - previous) <= .25:
+                continue
+        if kind == "journey" and key == "daily_nutrition" and isinstance(value, (int, float)) and isinstance(previous, (int, float)) and abs(value - previous) <= .02:
+            continue
+        if previous != value:
+            return False
+    return True
+
+
 def _record_cooldown(snapshot, map_state, action, *, deferred=False):
     map_state.setdefault("progression_cooldowns", {})[f"progression:{action}"] = {
         "tick": int((snapshot.get("game") or {}).get("tick") or 0),
@@ -203,7 +241,7 @@ def ending_options(context):
     odyssey = context.get("odyssey") or {}
     if odyssey.get("picking_destination") or odyssey.get("landing"):
         rows = odyssey.get("destinations") or [] if odyssey.get("picking_destination") else odyssey.get("landings") or []
-        return {f"odyssey_{index}": {**row, "kind": "odyssey", "session": odyssey.get("destination_session")} for index, row in enumerate(rows)}
+        return {f"odyssey_{index}": {**row, "kind": "odyssey", "session": (odyssey.get("destination_session") if odyssey.get("picking_destination") else odyssey.get("landing_session"))} for index, row in enumerate(rows)}
     continuation = context.get("ending_continuation") or {}
     if continuation.get("choosing_tile"):
         return {f"settle_{r['tile_id']}": {**r, "kind": "continuation", "operation": "tile", "label": f"Settle tile {r['tile_id']}"} for r in continuation.get("tiles") or []}
@@ -353,6 +391,8 @@ def comparison(action, context):
 def choose(agent, state, action, snapshot):
     context = snapshot.get('development', {}).get('progression', {})
     candidates, choices, effects, facts = comparison(action, context)
+    if action == "progression_ending" and not candidates:
+        return {"blocked": True, "reason": pending_blocker(context) or "No live ending choices"}, {"reason": "no_live_ending_choices"}
     first = None
     if action == "progression_ending":
         def group(row):
@@ -424,6 +464,8 @@ def choose(agent, state, action, snapshot):
 def execute(client, snapshot, map_state, action, selected):
     if action not in ACTIONS:
         return {"applied": False, "reason": "deferred or unsupported action"}
+    if selected.get("blocked"):
+        return {"applied": False, "blocked": True, "reason": selected.get("reason") or "Native choices unavailable"}
     if selected.get("defer"):
         _record_cooldown(snapshot, map_state, action, deferred=True)
         return {"applied": False, "reason": "deliberately deferred; reconsider after 15000 ticks", "deferred": True}
@@ -433,19 +475,8 @@ def execute(client, snapshot, map_state, action, selected):
     if action == "progression_ending":
         # Quest expiry counts down during deliberation. Native eligibility is freshly
         # regenerated, so elapsed ticks alone must not invalidate the chosen offer.
-        # Compare every other native field; ignore only director-added metadata.
-        def unchanged(row):
-            for key, value in row.items():
-                if key == "expires_in_ticks":
-                    continue
-                previous = selected.get(key)
-                if row.get("kind") == "journey" and key in ("travel_days", "food_margin_days", "native_approx_food_days") and isinstance(value, (int, float)) and isinstance(previous, (int, float)):
-                    if abs(value - previous) <= .25:
-                        continue  # Native rest/time estimate advances while the model thinks.
-                if previous != value:
-                    return False
-            return True
-        candidate = next((r for r in ending_options(fresh).values() if unchanged(r)), None)
+        # Bind semantic identity, cost and readiness; tolerate ordinary observation drift.
+        candidate = next((r for r in ending_options(fresh).values() if _ending_unchanged(selected, r)), None)
         if candidate is None:
             return {"applied": False, "reason": "ending requirements, option or pawn job changed; new decision required"}
         try:
@@ -458,8 +489,10 @@ def execute(client, snapshot, map_state, action, selected):
             query = {**{k: candidate[k] for k in fields}, "confirmed": True}
             if candidate["kind"] == "journey":
                 query["pawn_ids"] = ",".join(str(n) for n in candidate["pawn_ids"])
+                query["home_pawn_ids"] = ",".join(str(n) for n in sorted(candidate.get("home_pawn_ids") or []))
+                query["manifest"] = ",".join(f"{r['def_name']}:{r['count']}" for r in sorted(candidate.get("manifest") or [], key=lambda r: r["def_name"]))
             response = client.post("/api/v1/colony/endings/" + candidate["kind"], query=query)
-            applied = response in ("ending_caravan_forming", "ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "world_target_chosen", "world_target_cancelled")
+            applied = response in ("ending_caravan_forming", "ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "gravship_landing_map_selected", "world_target_chosen", "world_target_cancelled")
             if applied and candidate["kind"] not in ("selection", "continuation", "odyssey", "world-targeting"):
                 _record_cooldown(snapshot, map_state, action)
             return {"applied": applied, "reason": str(response), "victory_verified": False, "native_choices_required": True}
@@ -468,8 +501,8 @@ def execute(client, snapshot, map_state, action, selected):
     if action == "progression_boardship":
         ids = ("map_id", "root_id", "pawn_id", "worker_id", "casket_id")
         candidate = next((r for r in boarding_options(fresh).values() if all(r.get(k) == selected.get(k) for k in ids)), None)
-        readiness = ("pawn_downed", "reactor_running", "remaining_mobile_combat_colonists", "remaining_armed_mobile_combat_colonists", "remaining_mobile_doctors", "pawn_weapon", "psychic_bond_warning", "current_job", "colonists_at_home", "passengers")
-        if candidate is None or any(candidate.get(k) != selected.get(k) for k in readiness):
+        readiness = ("pawn_downed", "reactor_running", "remaining_mobile_combat_colonists", "remaining_armed_mobile_combat_colonists", "remaining_mobile_doctors", "pawn_weapon", "psychic_bond_warning", "colonists_at_home", "passengers")
+        if candidate is None or _protected_job(candidate.get("current_job")) or any(candidate.get(k) != selected.get(k) for k in readiness):
             return {"applied": False, "reason": "boarding, pawn job or home readiness changed; new decision required"}
         try:
             response = client.post("/api/v1/colony/progression/board", query={**{k: candidate[k] for k in ids}, "confirmed": True})

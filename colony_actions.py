@@ -1,6 +1,7 @@
 """Legacy action vocabulary; execution and observations live in domain modules."""
 
 ACTION_DESCRIPTIONS = {
+    "repair_architecture": "Restore missing parts of one observed partial building at its original site. Keep its selected material, orientation and doors; compare remaining cost and labor against urgent work. Occupied conflicts require a new decision, and no demolition is included.",
     "plan_architecture": "Choose a needed building program first, then let Laya select one procedurally generated, resource- and technology-aware layout. Housing alone provides 24 varied designs without storing 24 rigid blueprints.",
     "build_catalog_building": "Choose any currently unlocked and affordable building from RimWorld's live catalog, including DLC and modded definitions. Laya selects its category, exact building and compatible material; the game checks the site before an order is placed.",
     "build_research_bench": "Build the first affordable research bench so the colony can start research. Choose a compatible material from current stock; the game validates the site before placing its blueprint.",

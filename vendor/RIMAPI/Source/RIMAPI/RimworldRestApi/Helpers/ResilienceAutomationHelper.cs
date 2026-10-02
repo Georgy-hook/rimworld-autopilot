@@ -73,6 +73,7 @@ namespace RIMAPI.Helpers
             && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef?.defName != "Clean" && p.CurJobDef != JobDefOf.Ingest;
         private static bool Available(Pawn p) => Idle(p) && !NeedsCare(p);
         public static bool RoutineRouteSafe(Pawn worker, Thing target) => Safe(worker,target);
+        public static bool RescueRouteSafe(Pawn worker, Thing target) => Safe(worker,target,true);
         // The native tend workgiver accepts Deadly; automation explicitly requires Some.
         // Nearby live hostiles additionally reject civilian routes, including passive hive guards.
         private static bool Safe(Pawn worker, Thing target, bool rescueExposure = false)
@@ -131,6 +132,20 @@ namespace RIMAPI.Helpers
         private static bool Preventible(Pawn p, Thing drug) => Available(p) && p.RaceProps.Humanlike && p.DevelopmentalStage.Adult()
             && drug.def.defName == "Penoxycyline" && drug.stackCount > 0 && drug.def.IsDrug && Safe(p, drug) && p.CanReserve(drug)
             && !p.health.hediffSet.hediffs.Any(h => h.def.defName == "PenoxycylineHigh" || h.def.defName == "Malaria" || h.def.defName == "Plague" || h.def.defName == "SleepingSickness");
+        private static bool ThermalCorrectionNeeded(ThingWithComps device)
+        {
+            if (device.Faction != Faction.OfPlayer || !(device.TryGetComp<CompTempControl>() is CompTempControl control)) return false;
+            Room room=device.GetRoom();
+            if (room == null || room.PsychologicallyOutdoors || (control.TargetTemperature >= 18f && control.TargetTemperature <= 26f)) return false;
+            // A negative cooler target is evidence of an intentional freezer, including mixed-use rooms.
+            if (room.ContainedAndAdjacentThings.OfType<ThingWithComps>().Any(t => t.GetRoom()==room && t.def.defName=="Cooler"
+                && t.TryGetComp<CompTempControl>() is CompTempControl cooler && cooler.TargetTemperature < 0f)) return false;
+            bool humanCare=device.Map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && p.RaceProps.Humanlike
+                && (p.IsColonistPlayerControlled || p.IsPrisonerOfColony) && p.GetRoom()==room && (p.InBed() || NeedsCare(p))
+                && room.ContainedAndAdjacentThings.OfType<Building_Bed>().Any(b => b.GetRoom()==room && RestUtility.CanUseBedEver(p,b.def)));
+            return humanCare && ((device.def.defName=="Heater" && room.Temperature < 10f)
+                || (device.def.defName=="Cooler" && room.Temperature > 32f));
+        }
         public static ApiResult<ResilienceContextDto> Context(int mapId)
         {
             Map map = MapHelper.GetMapByID(mapId);
@@ -158,7 +173,7 @@ namespace RIMAPI.Helpers
                     traits=p.story?.traits?.allTraits.Select(t => t.def.defName).ToList(),
                     conditions = p.health.hediffSet.hediffs.Where(h => h.Visible).Select(h => Condition(p,h)).ToList() });
             var rooms = patients.Select(p => p.GetRoom()).Concat(map.listerThings.AllThings.Where(t => t.def.defName == "ElectricStove" || t.def.defName == "FueledStove" || t.def.defName == "HospitalBed" || t.def.defName == "Bed").Select(t => t.GetRoom())).Where(r => r != null).Distinct().ToList();
-            var careRooms=patients.Where(NeedsCare).Select(p => p.GetRoom()).Concat(map.listerThings.AllThings.Where(t => t.def.defName == "HospitalBed").Select(t => t.GetRoom()))
+            var careRooms=patients.Where(NeedsCare).Select(p => p.GetRoom()).Concat(map.listerThings.AllThings.Where(t => t.def.defName == "HospitalBed" || t.def.defName == "ElectricStove" || t.def.defName == "FueledStove").Select(t => t.GetRoom()))
                 .Where(r => r != null && !r.PsychologicallyOutdoors).Distinct().ToList();
             result.Environment = new { biome=map.Biome.defName, disease_mtb_days=map.Biome.diseaseMtbDays,
                 biome_diseases=DefDatabase<IncidentDef>.AllDefsListForReading.Where(d => map.Biome.CommonalityOfDisease(d) > 0).Select(d => new {def_name=d.defName,commonality=map.Biome.CommonalityOfDisease(d),description=d.description}).ToList(),
@@ -172,12 +187,10 @@ namespace RIMAPI.Helpers
                     target=t.TryGetComp<CompTempControl>().TargetTemperature, power_on=t.TryGetComp<CompPowerTrader>()?.PowerOn, room_id=t.GetRoom()?.ID,
                     temperature=t.Position.GetTemperature(map)}).ToList(),
                 warning = "Thick mountain roof is unremovable and permits infestations. Cleaning does not prevent incident disease; penoxycyline prevents only new malaria/plague/sleeping sickness. Active smoke/toxic/thermal hazards require safe shelter and architecture." };
-            foreach (ThingWithComps device in map.listerThings.AllThings.OfType<ThingWithComps>().Where(t => t.Faction == Faction.OfPlayer && rooms.Contains(t.GetRoom())
-                && (t.def.defName == "Heater" || t.def.defName == "Cooler") && t.TryGetComp<CompTempControl>() != null
-                && (t.Position.GetTemperature(map) < 10f || t.Position.GetTemperature(map) > 32f)))
+            foreach (ThingWithComps device in map.listerThings.AllThings.OfType<ThingWithComps>().Where(ThermalCorrectionNeeded))
                 foreach (int targetTemp in new[] {18,21,26})
                     if (Math.Abs(device.TryGetComp<CompTempControl>().TargetTemperature-targetTemp) > .1f)
-                        result.Options.Add(new ResilienceOptionDto {Kind="temperature",WorkerId=0,TargetId=device.thingIDNumber,Giver=targetTemp.ToString(),Target=device.LabelShort,CurrentTemperature=device.Position.GetTemperature(map),PowerOn=device.TryGetComp<CompPowerTrader>()?.PowerOn});
+                        result.Options.Add(new ResilienceOptionDto {Kind="temperature",WorkerId=0,TargetId=device.thingIDNumber,Giver=targetTemp.ToString(),Target=device.LabelShort,CurrentTemperature=device.GetRoom().Temperature,CurrentTargetTemperature=device.TryGetComp<CompTempControl>().TargetTemperature,PowerOn=device.TryGetComp<CompPowerTrader>()?.PowerOn});
             foreach (Pawn worker in patients.Where(Idle))
             {
                 foreach (var pair in Givers)
@@ -216,7 +229,7 @@ namespace RIMAPI.Helpers
             }
             if (request.Kind == "temperature" && target is ThingWithComps device && device.Faction == Faction.OfPlayer
                 && (device.def.defName == "Heater" || device.def.defName == "Cooler") && device.TryGetComp<CompTempControl>() is CompTempControl thermostat
-                && new[] {"18","21","26"}.Contains(request.Giver) && (device.Position.GetTemperature(device.Map) < 10f || device.Position.GetTemperature(device.Map) > 32f))
+                && new[] {"18","21","26"}.Contains(request.Giver) && ThermalCorrectionNeeded(device) && Math.Abs(thermostat.TargetTemperature-int.Parse(request.Giver)) > .1f)
             { thermostat.TargetTemperature=int.Parse(request.Giver); result.Applied=true; result.Reason="thermostat_set; power_and_heat_transfer_required";
                 return ApiResult<CapabilityOrderResultDto>.Ok(result); }
             if (worker == null || target == null || worker.Dead || !worker.Spawned || target.Destroyed)

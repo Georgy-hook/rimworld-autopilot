@@ -8,12 +8,15 @@ from pathlib import Path
 
 
 RUNTIME_FILES = (
+    "VERSION",
+    "app_version.py",
     "RimWorld-Autopilot.exe",
     "colony_architect.py",
     "colony_actions.py",
     "colony_capabilities.py",
     "colony_modules.py",
     "colony_reasoning.py",
+    "colony_retry.py",
     "colony_outcomes.py",
     "colony_production.py",
     "colony_society.py",
@@ -28,6 +31,7 @@ RUNTIME_FILES = (
     "colony_director.py",
     "colony_events.py",
     "colony_growth.py",
+    "colony_expeditions.py",
     "colony_professions.py",
     "colony_strategy.py",
     "laya_decisions.py",

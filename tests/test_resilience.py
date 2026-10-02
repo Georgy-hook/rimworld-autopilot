@@ -21,11 +21,98 @@ class ResilienceTests(unittest.TestCase):
 
     def test_prepares_live_options_and_cooldown(self):
         self.assertEqual(resilience.prepare(self.snapshot, {}), ['resilience_rescue'])
-        self.assertEqual(resilience.prepare(self.snapshot, {'issued': {'resilience:resilience_rescue': 9800}}), [])
+        self.assertEqual(resilience.prepare(self.snapshot, {'resilience_memory': {'issued': {'resilience_rescue:2': {'tick': 9800}}}}), [])
 
     def test_loading_older_save_does_not_disable_emergency_rescue(self):
-        self.assertEqual(resilience.prepare(self.snapshot, {'issued': {'resilience:resilience_rescue': 900000}}), ['resilience_rescue'])
+        self.assertEqual(resilience.prepare(self.snapshot, {'resilience_memory': {'issued': {'resilience_rescue:2': {'tick': 900000}}}}), ['resilience_rescue'])
         self.assertEqual(resilience.prepare(self.snapshot, {'issued': None}), ['resilience_rescue'])
+
+    def test_cooldown_is_patient_scoped_not_doctor_scoped(self):
+        state = {}
+        resilience.execute(Client([self.row]), self.snapshot, state, 'resilience_rescue', self.row)
+        self.snapshot['game']['tick'] += 1
+        self.snapshot['development']['resilience']['options'] = [dict(self.row, worker_id=5), dict(self.row, target_id=99)]
+        self.assertEqual(resilience.prepare(self.snapshot, state), ['resilience_rescue'])
+        self.assertEqual([r['target_id'] for r in self.snapshot['development']['resilience']['plans']['resilience_rescue'].values()], [99])
+
+    def test_defer_does_not_hide_new_or_discretely_worse_patient(self):
+        state = {}
+        context = self.snapshot['development']['resilience']
+        context['patients'] = [{'pawn_id': 2, 'downed': False, 'food': .5, 'conditions': []}]
+        resilience.prepare(self.snapshot, state)
+        resilience.execute(Client([]), self.snapshot, state, 'resilience_rescue', {'defer': True})
+        context['patients'][0]['food'] = .49
+        self.assertEqual(resilience.prepare(self.snapshot, state), [])
+        context['patients'][0]['downed'] = True
+        self.assertEqual(resilience.prepare(self.snapshot, state), ['resilience_rescue'])
+        context['options'].append(dict(self.row, target_id=99))
+        self.assertIn('resilience_rescue', resilience.prepare(self.snapshot, state))
+
+    @patch('colony_retry.time.time')
+    def test_failure_suppresses_only_exact_option_and_expires(self, clock):
+        clock.return_value = 100
+        state = {}
+        resilience.execute(Client([]), self.snapshot, state, 'resilience_rescue', self.row)
+        self.snapshot['development']['resilience']['options'].append(dict(self.row, worker_id=5))
+        resilience.prepare(self.snapshot, state)
+        self.assertEqual([r['worker_id'] for r in self.snapshot['development']['resilience']['plans']['resilience_rescue'].values()], [5])
+        clock.return_value = 116
+        self.snapshot['game']['tick'] += 60
+        resilience.prepare(self.snapshot, state)
+        self.assertEqual(len(self.snapshot['development']['resilience']['plans']['resilience_rescue']), 2)
+
+    @patch('colony_retry.time.time')
+    def test_transport_exception_preserves_specific_retry_suppression(self, clock):
+        clock.return_value = 100
+        state = {}
+        client = Client([self.row])
+        with patch.object(client, 'post', side_effect=RuntimeError('offline transport failure')):
+            with self.assertRaises(RuntimeError):
+                resilience.execute(client, self.snapshot, state, 'resilience_rescue', self.row)
+        self.assertEqual(resilience.prepare(self.snapshot, state), [])
+        clock.return_value = 116
+        self.snapshot['game']['tick'] += 60
+        self.assertEqual(resilience.prepare(self.snapshot, state), ['resilience_rescue'])
+
+    def test_feed_choice_preserves_native_hunger(self):
+        row = dict(self.row, kind='feed', giver='DoctorFeedHumanlikes')
+        self.snapshot['development']['resilience'] = {'options': [row], 'patients': [{'pawn_id': 2, 'food': .01, 'in_bed': True, 'downed': True}]}
+        resilience.prepare(self.snapshot, {})
+        with patch.object(resilience, 'ask_laya_choice', return_value=('defer', {})) as choice:
+            resilience.choose(None, {}, 'resilience_feed', self.snapshot)
+        self.assertIn('food=0.01', choice.call_args.args[1]['option_effects']['2']['benefit'])
+
+    def test_native_clean_kitchen_and_doctor_bed_feasibility_source(self):
+        from pathlib import Path
+        helpers = Path(__file__).resolve().parents[1] / 'vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Helpers'
+        source = (helpers / 'ResilienceAutomationHelper.cs').read_text()
+        care = source[source.index('var careRooms='):source.index('result.Environment =')]
+        self.assertIn('ElectricStove', care)
+        self.assertIn('FueledStove', care)
+        diagnosis = (helpers / 'ResilienceDiagnosisHelper.cs').read_text()
+        self.assertNotIn('.Take(3)', diagnosis)
+        self.assertIn('beds.Where(b => doctor.CanReach', diagnosis)
+
+    def test_memory_json_roundtrip_rollback_and_expired_history_pruning(self):
+        import json
+        state = {}
+        resilience.prepare(self.snapshot, state)
+        resilience.execute(Client([]), self.snapshot, state, 'resilience_rescue', {'defer': True})
+        state = json.loads(json.dumps(state))
+        self.assertEqual(resilience.prepare(self.snapshot, state), [])
+        self.snapshot['game']['tick'] -= 1
+        self.assertEqual(resilience.prepare(self.snapshot, state), ['resilience_rescue'])
+        self.assertNotIn('resilience_memory', state)
+        state = {'resilience_memory': {
+            'issued': {'resilience_clean:' + str(i): {'tick': 0} for i in range(10000)},
+            'deferred': {'resilience_inspect:7': {'tick': 9900, 'state': 'old'}, 'resilience_feed:8': {'tick': 0}},
+            'failed': {'clean:1:' + str(i): {'tick': 0} for i in range(10000)}}}
+        resilience.prepare(self.snapshot, state)
+        self.assertEqual(set(state['resilience_memory']), {'deferred'})
+        self.assertEqual(set(state['resilience_memory']['deferred']), {'resilience_inspect:7'})
+        self.snapshot['game']['tick'] = 69900
+        resilience.prepare(self.snapshot, state)
+        self.assertNotIn('resilience_memory', state)
 
     def test_worker_became_unavailable_does_not_order(self):
         client = Client([])
@@ -43,7 +130,7 @@ class ResilienceTests(unittest.TestCase):
         result = resilience.execute(client, self.snapshot, state, 'resilience_rescue', self.row)
         self.assertTrue(result['applied'])
         self.assertIn('completion_unobserved', result['reason'])
-        self.assertEqual(state['issued']['resilience:resilience_rescue'], 10000)
+        self.assertEqual(state['resilience_memory']['issued']['resilience_rescue:2']['tick'], 10000)
 
     def test_model_can_defer_with_tradeoffs(self):
         resilience.prepare(self.snapshot, {})
@@ -101,6 +188,35 @@ class ResilienceTests(unittest.TestCase):
             for row in visible['effects'].values():
                 self.assertEqual(set(row), {'benefit', 'risk', 'cost', 'inaction', 'uncertainty'})
 
+    def test_thermostat_preserves_existing_target_power_and_room_evidence(self):
+        row = {'kind': 'temperature', 'worker_id': 0, 'target_id': 30, 'giver': '21',
+               'current_temperature': -5, 'current_target_temperature': 5, 'power_on': False}
+        self.snapshot['development']['resilience']['options'] = [row]
+        resilience.prepare(self.snapshot, {})
+        with patch.object(resilience, 'ask_laya_choice', return_value=('defer', {})) as choice:
+            resilience.choose(None, {}, 'resilience_temperature', self.snapshot)
+        risk = choice.call_args.args[1]['option_effects']['30']['risk']
+        self.assertIn('Room=-5C', risk)
+        self.assertIn('existing_target=5C', risk)
+        self.assertIn('power=False', risk)
+
+    def test_native_thermostat_admission_prevents_rotation_and_freezer_reset(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1] / 'vendor/RIMAPI/Source/RIMAPI/RimworldRestApi'
+        source = (root / 'Helpers/ResilienceAutomationHelper.cs').read_text()
+        guard = source[source.index('private static bool ThermalCorrectionNeeded'):source.index('public static ApiResult<ResilienceContextDto> Context')]
+        self.assertIn('control.TargetTemperature >= 18f && control.TargetTemperature <= 26f', guard)
+        self.assertIn('cooler.TargetTemperature < 0f', guard)
+        self.assertIn('p.RaceProps.Humanlike', guard)
+        self.assertIn('(p.InBed() || NeedsCare(p))', guard)
+        self.assertIn('RestUtility.CanUseBedEver(p,b.def)', guard)
+        self.assertIn('device.def.defName=="Heater" && room.Temperature < 10f', guard)
+        self.assertIn('device.def.defName=="Cooler" && room.Temperature > 32f', guard)
+        self.assertNotIn('PowerOn', guard)  # An unpowered device can be corrected once, then its safe target blocks rotation.
+        self.assertIn('.Where(ThermalCorrectionNeeded)', source)
+        self.assertIn('&& ThermalCorrectionNeeded(device)', source)
+        self.assertIn('CurrentTargetTemperature', (root / 'Models/ResilienceDtos.cs').read_text())
+
     def test_roof_guard_and_thermostat_do_not_require_a_fake_worker(self):
         rows = [{'kind': 'roof_guard', 'worker_id': 0, 'target_id': 20, 'giver': 'Mine'}, {'kind': 'temperature', 'worker_id': 0, 'target_id': 30, 'giver': '21'}]
         self.snapshot['development']['resilience']['options'] = rows
@@ -129,7 +245,7 @@ class ResilienceTests(unittest.TestCase):
         self.assertIn('anesthesia60000', effects['cost'])
         self.assertIn('doctor can lie', effects['risk'])
         self.assertIn('matching sample analysis', effects['uncertainty'])
-        self.assertEqual(resilience.prepare(self.snapshot, {'issued': {'resilience:resilience_inspect': 9000}}), [])
+        self.assertEqual(resilience.prepare(self.snapshot, {'resilience_memory': {'issued': {'resilience_inspect:2': {'tick': 9000}}}}), [])
 
 
 if __name__ == '__main__':

@@ -49,16 +49,39 @@ namespace RIMAPI.Helpers
                 && c.Roofed(map) && c != table.InteractionCell).ToArray();
         }
 
-        public static List<Choice> Options(Map map)
+        // Physical capacity deliberately ignores worker routes and reservations.
+        // Native cell rules retain stack compatibility, shelf slot limits, fire
+        // and construction blockers. GET never changes a live storage filter.
+        private static bool CellCapacity(Map map, IEnumerable<IntVec3> cells, Thing thing)
+            => cells.Any(c => c.InBounds(map) && StoreUtility.IsGoodStoreCell(c, map, thing, null, null));
+
+        private static bool HasCapacity(Map map, Thing thing)
+        {
+            return map.haulDestinationManager.AllHaulDestinationsListInPriorityOrder.Any(destination =>
+                destination.HaulDestinationEnabled
+                && (!(destination is Thing owner) || owner.Faction == Faction.OfPlayer)
+                && destination.Accepts(thing)
+                && (destination is ISlotGroupParent slots
+                    ? CellCapacity(map, slots.GetSlotGroup().CellsList, thing)
+                    : destination is Thing container && container.TryGetInnerInteractableThingOwner() != null
+                      && container.TryGetInnerInteractableThingOwner().CanAcceptAnyOf(thing)
+                      && (!(container is IHaulEnroute enroute) || enroute.GetSpaceRemainingWithEnroute(thing.def) > 0)));
+        }
+
+        private static bool NeedsStorage(Thing thing)
+        {
+            SlotGroup group = thing.Position.GetSlotGroup(thing.Map);
+            return group == null || !group.parent.Accepts(thing);
+        }
+
+        public static List<Choice> Options(Map map, List<object> blocked = null)
         {
             var options = new List<Choice>();
             Thing[] materials = map.listerThings.AllThings.Where(Material).ToArray();
-            ThingDef[] defs = materials.Select(t => t.def).Distinct().ToArray();
             Pawn[] hostiles = map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToArray();
-            foreach (Thing thing in materials.Where(t => t.IsForbidden(Faction.OfPlayer)).GroupBy(t => t.def)
+            foreach (Thing thing in materials.Where(t => t.IsForbidden(Faction.OfPlayer) && !hostiles.Any(p => p.Position.DistanceTo(t.Position) < 30)).GroupBy(t => t.def)
                 .Select(g => g.OrderBy(t => t.Position.Roofed(map)).ThenBy(t => t.HitPoints / (float)Math.Max(1, t.MaxHitPoints)).First()))
             {
-                if (hostiles.Any(p => p.Position.DistanceTo(thing.Position) < 30)) continue;
                 options.Add(new Choice
                 {
                     key = "allow:" + thing.thingIDNumber, kind = "allow", target_id = thing.thingIDNumber,
@@ -68,21 +91,35 @@ namespace RIMAPI.Helpers
             }
             Building_Storage[] storages = map.listerBuildings.allBuildingsColonist.OfType<Building_Storage>().ToArray();
             Zone_Stockpile[] zones = map.zoneManager.AllZones.OfType<Zone_Stockpile>().ToArray();
-            ThingDef[] unstoredDefs = defs.Where(d => !storages.Any(b => b.GetStoreSettings().AllowedToAccept(d))
-                && !zones.Any(z => z.settings.AllowedToAccept(d))).ToArray();
-            foreach (Building_Storage storage in storages.GroupBy(b => b.GetStoreSettings()).Select(g => g.First()))
+            var capacityCache = new Dictionary<Thing, bool>();
+            Func<Thing, bool> hasCapacity = t => {
+                if (!capacityCache.TryGetValue(t, out bool found))
+                    capacityCache[t] = found = HasCapacity(map, t);
+                return found;
+            };
+            var needingStorage = materials.Where(NeedsStorage).GroupBy(t => t.def)
+                .ToDictionary(g => g.Key, g => g.ToArray());
+            ThingDef[] unstoredDefs = needingStorage.Where(g => !g.Value.Any(hasCapacity))
+                .Select(g => g.Key).ToArray();
+            foreach (var linked in storages.GroupBy(b => b.GetStoreSettings()))
             {
-                foreach (ThingDef def in unstoredDefs.Where(d => !storage.GetStoreSettings().AllowedToAccept(d) && (storage.GetParentStoreSettings()?.AllowedToAccept(d) ?? true)))
+                foreach (ThingDef def in unstoredDefs)
+                {
+                    Building_Storage storage = linked.FirstOrDefault(b => !b.GetStoreSettings().AllowedToAccept(def)
+                        && (b.GetParentStoreSettings()?.AllowedToAccept(def) ?? true)
+                        && needingStorage[def].Any(t => CellCapacity(map, b.GetSlotGroup().CellsList, t)));
+                    if (storage == null) continue;
                     options.Add(new Choice
                     {
                         key = $"shelf:{storage.thingIDNumber}:{def.defName}", kind = "shelf", target_id = storage.thingIDNumber,
                         value = def.defName, label = storage.LabelShortCap + ": allow " + def.LabelCap,
-                        cost = "Storage capacity and hauling labor", risk = "Linked shelves sharing settings affected=" + storages.Count(b => b.GetStoreSettings() == storage.GetStoreSettings()) + "; other allowances compete for capacity"
+                        cost = "Storage capacity and hauling labor", risk = "Linked shelves sharing settings affected=" + linked.Count() + "; other allowances compete for capacity; existing quality/special filters remain"
                     });
+                }
             }
-            foreach (Zone_Stockpile zone in map.zoneManager.AllZones.OfType<Zone_Stockpile>())
+            foreach (Zone_Stockpile zone in zones)
             {
-                foreach (ThingDef def in unstoredDefs.Where(d => !zone.settings.AllowedToAccept(d)))
+                foreach (ThingDef def in unstoredDefs.Where(d => !zone.settings.AllowedToAccept(d) && needingStorage[d].Any(t => CellCapacity(map, zone.Cells, t))))
                     options.Add(new Choice
                     {
                         key = $"stockpile:{zone.ID}:{def.defName}", kind = "stockpile", target_id = zone.ID,
@@ -94,7 +131,7 @@ namespace RIMAPI.Helpers
             {
                 IntVec3[] cells = StorageCells(table);
                 if (cells.Length < 3 || hostiles.Any(p => p.GetRoom() == table.GetRoom())) continue;
-                foreach (ThingDef def in unstoredDefs)
+                foreach (ThingDef def in unstoredDefs.Where(d => needingStorage[d].Any(t => CellCapacity(map, cells, t))))
                     options.Add(new Choice
                     {
                         key = $"zone:{table.thingIDNumber}:{def.defName}:{string.Join(";", cells.Select(c => c.x + "," + c.z))}",
@@ -107,20 +144,28 @@ namespace RIMAPI.Helpers
             var scanner = giver?.Worker as WorkGiver_HaulGeneral;
             if (scanner == null) return options;
             Pawn[] haulers = map.mapPawns.FreeColonistsSpawned.Where(p => Worker(p, giver.workType) && !scanner.ShouldSkip(p, false)).ToArray();
-            // One exposed/damaged representative per def keeps job generation proportional to material types, not all stacks.
-            foreach (Thing thing in materials.Where(t => !t.IsForbidden(Faction.OfPlayer))
-                .GroupBy(t => t.def).Select(g => g.OrderBy(t => t.Position.Roofed(map)).ThenBy(t => t.HitPoints / (float)Math.Max(1, t.MaxHitPoints)).First()))
+            // Bound output to one feasible stack per def/worker. Do not choose
+            // a representative until all native eligibility checks pass.
+            foreach (var group in materials.Where(t => !t.IsForbidden(Faction.OfPlayer))
+                .GroupBy(t => t.def))
             {
-                if (hostiles.Any(p => p.Position.DistanceTo(thing.Position) < 30)) continue;
+                Thing[] candidates = group.Where(t => !hostiles.Any(p => p.Position.DistanceTo(t.Position) < 30))
+                    .OrderBy(t => t.Position.Roofed(map))
+                    .ThenBy(t => t.HitPoints / (float)Math.Max(1, t.MaxHitPoints)).ToArray();
+                bool haulAvailable = false;
                 foreach (Pawn pawn in haulers)
                 {
-                    if (!pawn.CanReserveAndReach(thing, PathEndMode.ClosestTouch, Danger.Some)) continue;
-                    if (!HaulAIUtility.PawnCanAutomaticallyHaulFast(pawn, thing, false)) continue;
-                    if (!StoreUtility.TryFindBestBetterStorageFor(thing, pawn, map,
-                        StoreUtility.CurrentStoragePriorityOf(thing, false), pawn.Faction,
-                        out IntVec3 foundCell, out IHaulDestination destination)) continue;
-                    if (!(destination is ISlotGroupParent) && !(destination is Thing container
-                        && container.TryGetInnerInteractableThingOwner() != null)) continue;
+                    Thing thing = candidates.FirstOrDefault(t => {
+                        if (!pawn.CanReserveAndReach(t, PathEndMode.ClosestTouch, Danger.Some)
+                            || !HaulAIUtility.PawnCanAutomaticallyHaulFast(pawn, t, false)) return false;
+                        if (!StoreUtility.TryFindBestBetterStorageFor(t, pawn, map,
+                            StoreUtility.CurrentStoragePriorityOf(t, false), pawn.Faction,
+                            out IntVec3 foundCell, out IHaulDestination destination)) return false;
+                        return destination is ISlotGroupParent || (destination is Thing container
+                            && container.TryGetInnerInteractableThingOwner() != null);
+                    });
+                    if (thing == null) continue;
+                    haulAvailable = true;
                     options.Add(new Choice
                     {
                         key = $"haul:{thing.thingIDNumber}:{pawn.thingIDNumber}", kind = "haul", target_id = thing.thingIDNumber,
@@ -128,6 +173,10 @@ namespace RIMAPI.Helpers
                         cost = "Hauling labor; destination chosen by loaded vanilla storage rules", risk = "Current non-care task may be interrupted; path/priority can change before pickup"
                     });
                 }
+                if (!haulAvailable && needingStorage.TryGetValue(group.Key, out Thing[] waiting)
+                    && waiting.Any(hasCapacity))
+                    blocked?.Add(new { def_name = group.Key.defName, reason = haulers.Length == 0
+                        ? "storage_capacity_exists_no_eligible_hauler" : "storage_capacity_exists_route_reservation_or_priority_blocked" });
             }
             return options;
         }
@@ -136,7 +185,9 @@ namespace RIMAPI.Helpers
         {
             Map map = MapHelper.GetMapByID(id);
             if (map == null) return ApiResult<object>.Fail("Map missing");
-            return ApiResult<object>.Ok(new { available = true, options = Options(map) });
+            var blocked = new List<object>();
+            var options = Options(map, blocked);
+            return ApiResult<object>.Ok(new { available = true, options, blocked });
         }
 
         public static ApiResult<object> Policy(ProductionRecipePolicyDto request)

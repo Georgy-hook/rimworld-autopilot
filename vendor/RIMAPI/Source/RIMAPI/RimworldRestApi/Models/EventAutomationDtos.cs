@@ -87,15 +87,7 @@ namespace RIMAPI.Models
         public int? AccepterPawnId { get; set; }
     }
 
-    public class RescueMissionRequestDto
-    {
-        public int MapId { get; set; }
-        public int QuestId { get; set; }
-        public int? SiteId { get; set; }
-        public int MinimumHomeDefenders { get; set; } = 2;
-        public int MinimumFoodAtHome { get; set; } = 30;
-        public int MinimumMedicineAtHome { get; set; } = 8;
-    }
+    public class RescueMissionRequestDto : ExpeditionRequestDto { }
 
     public class RescueSiteRequestDto
     {

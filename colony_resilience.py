@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from laya_decisions import ask_laya_choice
+from colony_retry import failure_record, recent as retry_recent
 
 DESCRIPTIONS = {
     'resilience_tend': 'Schedule normal treatment with a feasible doctor and medicine selected by the game. Compare patient immunity/severity, treatment expiry and scarce medicine.',
@@ -43,17 +44,67 @@ def summary(snapshot: dict) -> dict:
             'unsafe_roof_removals': {'count': sum(row.get('kind') == 'roof_guard' for row in context.get('options') or [])},
             'environment': context.get('environment') or {}}
 
+def _delay(action: str) -> int:
+    return 60000 if action == 'resilience_inspect' else 600 if action in ('resilience_tend', 'resilience_rescue', 'resilience_feed') else 2500
+
+
+def _subject(row: dict) -> str:
+    return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
+
+
+def _option(row: dict) -> str:
+    return ':'.join(str(row.get(k, '')) for k in ('kind', 'worker_id', 'target_id', 'giver'))
+
+
+def _state(row: dict, context: dict) -> tuple:
+    patient = next((p for p in context.get('patients') or [] if str(p.get('pawn_id')) == _subject(row)), {})
+    food = patient.get('food')
+    conditions = patient.get('conditions') or []
+    temp, low, high = (patient.get(k) for k in ('temperature', 'comfortable_min', 'comfortable_max'))
+    thermal = isinstance(temp, (int, float)) and ((isinstance(low, (int, float)) and temp < low - 10) or (isinstance(high, (int, float)) and temp > high + 10))
+    return (bool(patient.get('downed')), bool(patient.get('life_threatening')),
+            float(patient.get('bleeding_total') or 0) > 0, thermal,
+            any(float(v or 0) > 0 for v in (patient.get('gases') or {}).values()),
+            2 if isinstance(food, (int, float)) and food < .1 else 1 if isinstance(food, (int, float)) and food < .3 else 0,
+            list(sorted((str(h.get('def_name')), bool(h.get('life_threatening')), bool(h.get('tendable_now')),
+                          h.get('immunity') is not None and float(h.get('severity') or 0) - float(h['immunity']) >= .2,
+                          2 if float(h.get('severity') or 0) >= .75 else 1 if float(h.get('severity') or 0) >= .5 else 0)
+                         for h in conditions if h.get('visible', True))))
+
+
+def _recent(record: dict, tick: int, delay: int) -> bool:
+    return retry_recent(record, tick, delay)
+
+
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault('development', {}).setdefault('resilience', {})
+    memory = map_state.get('resilience_memory') or {}
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    for bucket in ('issued', 'deferred', 'failed'):
+        rows = memory.get(bucket) or {}
+        for key, record in list(rows.items()):
+            horizon = 60 if bucket == 'failed' else _delay(key.split(':', 1)[0])
+            if not _recent(record, tick, horizon):
+                del rows[key]
+        if not rows:
+            memory.pop(bucket, None)
+    if not memory:
+        map_state.pop('resilience_memory', None)
     options = {a: {} for a in ACTIONS}
     for row in context.get('options') or []:
         action = 'resilience_' + str(row.get('kind'))
-        if action in options:
-            key = ':'.join(str(row.get(k, '')) for k in ('worker_id', 'target_id', 'giver'))
-            options[action][key] = row
+        if action not in options:
+            continue
+        subject = action + ':' + _subject(row)
+        deferred = (memory.get('deferred') or {}).get(subject, {})
+        if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
+                or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == repr(_state(row, context)))
+                or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
+            continue
+        key = ':'.join(str(row.get(k, '')) for k in ('worker_id', 'target_id', 'giver'))
+        options[action][key] = row
     context['plans'] = options
-    tick = int(snapshot.get('game', {}).get('tick') or 0)
-    return [a for a, rows in options.items() if rows and (tick < int((map_state.get('issued') or {}).get('resilience:' + a, -1000000)) or tick - int((map_state.get('issued') or {}).get('resilience:' + a, -1000000)) >= (60000 if a == 'resilience_inspect' else 600 if a in ('resilience_tend', 'resilience_rescue', 'resilience_feed') else 2500))]
+    return [a for a, rows in options.items() if rows]
 
 def assess(action: str, snapshot: dict) -> dict:
     return {'benefit': DESCRIPTIONS[action], 'cost': 'Worker time, medicine or food; other work waits.',
@@ -74,13 +125,15 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), h.get('immunity') is not None and h['immunity'] < 1, bool(h.get('tendable_now'))), reverse=True)
         h = conditions[0] if conditions else {}
         clinical = f"{h.get('def_name', row.get('target', row['target_id']))} s={h.get('severity')} i={h.get('immunity')}"
+        if row['kind'] == 'feed':
+            clinical = f"{patient.get('name', row['target_id'])} food={patient.get('food')} in_bed={patient.get('in_bed')} down={patient.get('downed')}; dependent feeding"
         exposure = f"T={patient.get('temperature')} roof={patient.get('roof')} gas={patient.get('gases')}"
         if row['kind'] == 'roof_guard':
             clinical = f"Roof support {row['target_id']} removal={row.get('giver')}"
             exposure = 'Collapse risk after planned support removals'
         elif row['kind'] == 'temperature':
             clinical = f"Device {row['target_id']} target={row.get('giver')}C"
-            exposure = f"Room={row.get('current_temperature')}C power={row.get('power_on')}; insulation required"
+            exposure = f"Room={row.get('current_temperature')}C existing_target={row.get('current_target_temperature')}C power={row.get('power_on')}; insulation required"
         elif row['kind'] == 'clean':
             clinical = f"Filth {row['target_id']} cleanliness={row.get('room_cleanliness')}"
             exposure = 'Dirty room infection/food poison; not incident disease'
@@ -121,14 +174,27 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     return ({'defer': True} if key == 'defer' else {k: plans[key][k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in plans[key]}), raw
 
 def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    memory = map_state.setdefault('resilience_memory', {})
     if selected.get('defer'):
-        map_state.setdefault('issued', {})['resilience:' + action] = int(snapshot.get('game', {}).get('tick') or 0)
+        context = snapshot.get('development', {}).get('resilience', {})
+        for row in (context.get('plans', {}).get(action) or {}).values():
+            memory.setdefault('deferred', {})[action + ':' + _subject(row)] = {'tick': tick, 'state': repr(_state(row, context))}
         return {'applied': False, 'reason': 'laya_deferred'}
-    fresh = collect(client, snapshot)
     payload = {k: selected[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in selected}
-    if 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or []):
-        return {'applied': False, 'reason': 'selection_no_longer_feasible'}
-    result = client.post('/api/v1/resilience/order', body={'map_id': snapshot['map']['id'], **payload})
-    if isinstance(result, dict) and result.get('applied'):
-        map_state.setdefault('issued', {})['resilience:' + action] = int(snapshot.get('game', {}).get('tick') or 0)
+    def failed() -> None:
+        memory.setdefault('failed', {})[_option(payload)] = failure_record(tick, seconds=15)
+    try:
+        fresh = collect(client, snapshot)
+        if 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or []):
+            failed()
+            return {'applied': False, 'reason': 'selection_no_longer_feasible'}
+        result = client.post('/api/v1/resilience/order', body={'map_id': snapshot['map']['id'], **payload})
+    except Exception:
+        failed()
+        raise
+    if isinstance(result, dict) and result.get('applied') is True:
+        memory.setdefault('issued', {})[action + ':' + _subject(payload)] = {'tick': tick}
+    else:
+        failed()
     return result if isinstance(result, dict) else {'applied': False, 'reason': 'invalid_response'}

@@ -14,6 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from install_payload import copy_install_payload
+from app_version import APP_VERSION
 from .services import BASE_DIR, RESOURCE_DIR
 from .theme import COLORS, FONTS, FancyButton, ShadowCard, configure_styles, render_photo
 
@@ -92,7 +93,7 @@ class SetupWindow(tk.Tk):
             self.withdraw()
         self.language = "ru"
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
-        self.title(f"{PRODUCT_NAME} 0.0.6 — Setup")
+        self.title(f"{PRODUCT_NAME} {APP_VERSION} — Setup")
         self.geometry("980x700")
         self.resizable(False, False)
         self.configure(bg=COLORS["window"])

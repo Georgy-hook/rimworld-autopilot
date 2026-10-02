@@ -22,6 +22,12 @@ namespace RIMAPI.Controllers
     }
     public class EndingOdysseyController
     {
+        // Cache search progress, never native validity: every emitted footprint is
+        // revalidated. Bounded work matters while a paused landing is polled.
+        private static string LandingSearchKey;
+        private static int LandingSearchCursor;
+        private static DateTime LandingSearchExhaustedAt;
+        private static readonly List<IntVec3> LandingSearchCells = new List<IntVec3>();
         private static T Field<T>(object target, string name) => (T)AccessTools.Field(target.GetType(), name).GetValue(target);
         private static bool Picking => ModsConfig.OdysseyActive && Find.TilePicker.Active && Field<string>(Find.TilePicker, "title") == "ChooseWhereToLand".Translate().ToString() &&
             Field<bool>(Find.TilePicker, "showNextButton");
@@ -75,24 +81,55 @@ namespace RIMAPI.Controllers
             }
             var landings = new List<object>();
             var controller = Find.GravshipController;
+            string landingSession = null, landingBlocker = null; int? landingMapId = null;
             if (controller.LandingAreaConfirmationInProgress) {
                 var designator = controller.MoveDesignator();
                 var marker = designator.marker;
+                landingSession = Session(marker); landingMapId = designator.map.uniqueID;
+                if (Find.CurrentMap != designator.map) landings.Add(new { operation = "view_landing_map", map_id = designator.map.uniqueID, rotation = marker.GravshipRotation.AsInt, label = "Show required gravship landing map" });
                 if (Find.CurrentMap == designator.map) {
-                    for (int x = 8; x < designator.map.Size.x && landings.Count < 24; x += 12)
-                        for (int z = 8; z < designator.map.Size.z && landings.Count < 24; z += 12) {
+                    int coarseChecks = 0;
+                    for (int x = 8; x < designator.map.Size.x && landings.Count < 24 && coarseChecks < 256; x += 12)
+                        for (int z = 8; z < designator.map.Size.z && landings.Count < 24 && coarseChecks < 256; z += 12) {
+                            coarseChecks++;
                             var cell = new IntVec3(x, 0, z);
                             if (designator.CanDesignateCell(cell).Accepted) landings.Add(new { operation = "place", x, z,
                                 rotation = marker.GravshipRotation.AsInt, map_id = designator.map.uniqueID, label = "Place gravship " + cell,
                                 warning = "Landing footprint can destroy vegetation and displace obstacles; choose doors/thruster access and defense." });
                         }
+                    if (landings.Count == 0) {
+                        string searchKey = landingSession + ":" + designator.map.uniqueID + ":" + marker.GravshipRotation.AsInt;
+                        int totalCells = designator.map.Size.x * designator.map.Size.z;
+                        if (LandingSearchKey != searchKey || LandingSearchCursor >= totalCells &&
+                            (DateTime.UtcNow - LandingSearchExhaustedAt).TotalSeconds >= 30) {
+                            LandingSearchKey = searchKey; LandingSearchCursor = 0; LandingSearchExhaustedAt = default(DateTime); LandingSearchCells.Clear();
+                        }
+                        LandingSearchCells.RemoveAll(cell => !designator.CanDesignateCell(cell).Accepted);
+                        if (LandingSearchCells.Count == 0) {
+                            int stop = Math.Min(totalCells, LandingSearchCursor + 256);
+                            while (LandingSearchCursor < stop && LandingSearchCells.Count < 24) {
+                                int index = LandingSearchCursor++;
+                                var cell = new IntVec3(index / designator.map.Size.z, 0, index % designator.map.Size.z);
+                                if (designator.CanDesignateCell(cell).Accepted) LandingSearchCells.Add(cell);
+                            }
+                            if (LandingSearchCursor >= totalCells && LandingSearchExhaustedAt == default(DateTime)) LandingSearchExhaustedAt = DateTime.UtcNow;
+                        }
+                        foreach (var cell in LandingSearchCells)
+                            landings.Add(new { operation = "place", x = cell.x, z = cell.z, rotation = marker.GravshipRotation.AsInt,
+                                map_id = designator.map.uniqueID, label = "Place gravship " + cell });
+                        if (landings.Count == 0) landingBlocker = LandingSearchCursor < totalCells
+                            ? "Searching native landing footprints; bounded search continues on next observation"
+                            : "Native footprint search exhausted; retry in at most 30 seconds or after session/map/rotation change";
+                    }
                     if (marker.Spawned && Find.DesignatorManager.SelectedDesignator != designator)
                         landings.Add(new { operation = "land", label = "Confirm the currently placed gravship landing", map_id = marker.Map.uniqueID,
                             x = marker.Position.x, z = marker.Position.z, rotation = marker.GravshipRotation.AsInt });
                 }
             }
+            if (controller.LandingAreaConfirmationInProgress && landings.Count == 0 && landingBlocker == null) landingBlocker = "Native landing has no currently viable footprint or confirmable marker; await native map readiness";
             await context.SendJsonResponse(ApiResult<object>.Ok(new { available = true, launches, destinations, landings,
                 picking_destination = Picking, destination_session = Picking ? Session(Field<Func<PlanetTile, bool>>(Find.TilePicker, "validator")) : null,
+                landing_session = landingSession, landing_map_id = landingMapId, landing_blocker = landingBlocker,
                 landing = controller.LandingAreaConfirmationInProgress, cutscene = WorldComponent_GravshipController.CutsceneInProgress,
                 warning = "Launching transports only boarded people and the connected substructure. Fuel is consumed by the native callback. Space requires native sealed/oxygen/temperature preparedness; gravship travel does not complete the mechhive ending." }));
         }
@@ -128,6 +165,11 @@ namespace RIMAPI.Controllers
             var controller = Find.GravshipController;
             if (controller.LandingAreaConfirmationInProgress) {
                 var designator = controller.MoveDesignator(); var marker = designator.marker;
+                if (RequestParser.GetStringParameter(context, "session") != Session(marker)) { await context.SendJsonResponse(ApiResult<string>.Fail("Landing session changed")); return; }
+                if (operation == "view_landing_map" && RequestParser.GetIntParameter(context, "map_id") == designator.map.uniqueID) {
+                    Current.Game.CurrentMap = designator.map;
+                    await context.SendJsonResponse(ApiResult<string>.Ok("gravship_landing_map_selected")); return;
+                }
                 int x = RequestParser.GetIntParameter(context, "x"), z = RequestParser.GetIntParameter(context, "z");
                 if (RequestParser.GetIntParameter(context, "map_id") != designator.map.uniqueID || RequestParser.GetIntParameter(context, "rotation") != marker.GravshipRotation.AsInt) { await context.SendJsonResponse(ApiResult<string>.Fail("Landing map or rotation changed")); return; }
                 if (operation == "place" && Find.CurrentMap == designator.map && designator.CanDesignateCell(new IntVec3(x, 0, z)).Accepted) {

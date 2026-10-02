@@ -24,6 +24,7 @@ namespace RIMAPI.Models
     {
         public int Id { get; set; }
         public string Def { get; set; }
+        public string StuffDefName { get; set; }
         public string Label { get; set; }
         public PositionDto Position { get; set; }
         public int Rotation { get; set; }

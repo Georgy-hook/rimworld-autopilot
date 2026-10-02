@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$version = (Get-Content -LiteralPath (Join-Path $projectDir "VERSION") -Raw).Trim()
 $venvPython = Join-Path $projectDir ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $venvPython)) {
@@ -43,5 +44,5 @@ $config = [ordered]@{
 }
 $config | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $projectDir "rimworld-autopilot.json") -Encoding UTF8
 
-Write-Host "Installed RimWorld Autopilot 0.0.6."
+Write-Host "Installed RimWorld Autopilot $version."
 Write-Host "Enable Harmony and RIMAPI - RimWorld Autopilot in RimWorld, restart the game, load a copied save, then run Start-Autonomous.ps1."

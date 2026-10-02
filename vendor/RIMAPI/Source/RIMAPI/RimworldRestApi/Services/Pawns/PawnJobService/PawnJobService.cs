@@ -72,6 +72,30 @@ namespace RIMAPI.Services
                         request.TargetPosition.X, 0, request.TargetPosition.Z);
                 }
 
+                Thing equipTarget = null;
+                bool equipWasForbidden = false;
+                if (jobDef == JobDefOf.Equip)
+                {
+                    equipTarget = target.Thing;
+                    if (!pawn.Spawned || pawn.Map == null || pawn.Faction != Faction.OfPlayer || !pawn.IsColonistPlayerControlled
+                        || pawn.Dead || pawn.Downed || pawn.InMentalState || (request.MapId.HasValue && pawn.Map.uniqueID != request.MapId.Value))
+                        return ApiResult.Fail("equip_pawn_unavailable_or_map_changed");
+                    if (CombatNativeHelper.HasCareJob(pawn) || pawn.CurJobDef == JobDefOf.Ingest)
+                        return ApiResult.Fail("equip_protected_activity");
+                    if (pawn.equipment == null || !pawn.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
+                        return ApiResult.Fail("equip_pawn_incapable_of_manipulation");
+                    if (equipTarget == null || equipTarget.Map != pawn.Map || !equipTarget.Spawned
+                        || equipTarget.TryGetComp<CompEquippable>() == null
+                        || !EquipmentUtility.CanEquip(equipTarget, pawn, out string equipReason))
+                        return ApiResult.Fail("equip_target_no_longer_compatible");
+                    if (pawn.CurJobDef == JobDefOf.Equip && pawn.CurJob.targetA.Thing == equipTarget)
+                        return ApiResult.Fail("equip_already_in_progress");
+                    if (!pawn.CanReserveAndReach(equipTarget, PathEndMode.Touch, Danger.Some))
+                        return ApiResult.Fail("equip_target_unreachable_or_reserved");
+                    equipWasForbidden = equipTarget.IsForbidden(pawn);
+                    if (equipWasForbidden && !request.AllowUnforbidEquip)
+                        return ApiResult.Fail("equip_target_forbidden");
+                }
                 Job job;
                 if (request.TargetThingIdB.HasValue)
                 {
@@ -86,7 +110,16 @@ namespace RIMAPI.Services
                 {
                     job = JobMaker.MakeJob(jobDef, target);
                 }
-                bool success = pawn.jobs.TryTakeOrderedJob(job);
+                bool success = false;
+                try
+                {
+                    if (equipWasForbidden) equipTarget.SetForbidden(false, false);
+                    success = pawn.jobs.TryTakeOrderedJob(job);
+                }
+                finally
+                {
+                    if (!success && equipWasForbidden) equipTarget.SetForbidden(true, false);
+                }
                 if (!success)
                 {
                     return ApiResult.Fail($"Pawn {request.PawnId} could not accept job {request.JobDef}");

@@ -23,8 +23,9 @@ The installed English checkpoint has a 512-token question window, with up to
 snapshot was therefore not a meaningful bound: the game state could be
 silently cut before Laya saw the important evidence. `model_decision_context`
 now puts current needs, risks, course and recent outcomes in a compact state;
-`fit_model_context` checks the *actual tokenizer* and refuses a context that
-still cannot fit. Exact animal, worker, research and building details are
+`fit_model_context` checks the *actual tokenizer* and explicitly compacts
+oversized context before encoding; an input that still cannot fit is rejected.
+The comparison log records the actual visible state. Exact animal, worker, research and building details are
 presented only after Laya selects the corresponding operation.
 
 The official model card also says the English base checkpoint is weak on

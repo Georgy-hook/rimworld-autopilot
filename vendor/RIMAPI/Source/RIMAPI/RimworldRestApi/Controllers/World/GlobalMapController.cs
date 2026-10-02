@@ -83,6 +83,13 @@ namespace RIMAPI.Controllers
             );
         }
 
+        [Post("/api/v1/world/caravan/preview")]
+        [EndpointMetadata("Read-only expedition roster, ration, capacity and route preview; creates no jobs, lords or routes")]
+        public async Task PreviewExpedition(HttpListenerContext context) {
+            var body = await context.Request.ReadBodyAsync<ExpeditionRequestDto>();
+            await context.SendJsonResponse(ExpeditionPlanHelper.Preview(body));
+        }
+
         [Post("/api/v1/world/caravan/trade/start")]
         public async Task StartTradeCaravan(HttpListenerContext context)
         {

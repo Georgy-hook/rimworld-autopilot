@@ -75,7 +75,7 @@ PROFESSION_DIRECTIONS: dict[str, dict[str, Any]] = {
     },
     "security_hunting": {
         "label": "security, hunting and layered defense",
-        "skills": {"Shooting": 0.9, "Melee": 0.75, "Construction": 0.55, "Medical": 0.3},
+        "skills": {"Shooting": 0.9, "Melee": 0.75, "Construction": 0.55, "Medicine": 0.3},
         "works": ["Hunting", "Construction", "Doctor"],
         "buildings": ["defense", "hospital", "workshop"],
     },

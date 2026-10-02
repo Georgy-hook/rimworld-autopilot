@@ -20,7 +20,7 @@ namespace RIMAPI.Helpers
                     Reason = report.Reason, Learned = animal.training.HasLearned(td), Wanted = animal.training.GetWanted(td) };
             }).ToList();
         }
-        private static bool ProvidingCare(Pawn p) => p.CurJobDef == JobDefOf.TendPatient || p.CurJobDef == JobDefOf.Rescue || p.CurJobDef == JobDefOf.FeedPatient || p.CurJobDef == JobDefOf.DoBill;
+        private static bool ProvidingCare(Pawn p) => CombatNativeHelper.HasCareJob(p) || p.CurJobDef == JobDefOf.Ingest;
         public static ApiResult<CapabilityOrderResultDto> Configure(AnimalTrainingRequestDto request)
         {
             var result = new CapabilityOrderResultDto { TargetId = request.AnimalId };
@@ -34,10 +34,13 @@ namespace RIMAPI.Helpers
                 {
                     var master = PawnHelper.FindPawnById(request.MasterPawnId.Value);
                     if (master == null || master.Faction != Faction.OfPlayer || master.Map != map || master.Dead
-                        || master.Downed || master.InMentalState || master.WorkTypeIsDisabled(WorkTypeDefOf.Handling)
+                        || master.Downed || master.InMentalState || ProvidingCare(master) || master.WorkTypeIsDisabled(WorkTypeDefOf.Handling)
                         || (master.skills?.GetSkill(SkillDefOf.Animals)?.Level ?? 0) < TrainableUtility.MinimumHandlingSkill(animal)
                         || animal.training?.HasLearned(TrainableDefOf.Obedience) != true)
                     { result.Reason = "master_unavailable_or_obedience_not_learned"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
+                    if (animal.playerSettings.Master == master && (!request.FollowDrafted.HasValue
+                        || animal.playerSettings.followDrafted == request.FollowDrafted.Value))
+                    { result.Reason = "master_policy_already_set"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                     animal.playerSettings.Master = master;
                     if (request.FollowDrafted.HasValue) animal.playerSettings.followDrafted = request.FollowDrafted.Value;
                     result.Applied = true; result.Reason = "master_and_follow_policy_set";
@@ -48,6 +51,8 @@ namespace RIMAPI.Helpers
                     if (td == null) return ApiResult<CapabilityOrderResultDto>.Fail("Trainable def not found.");
                     if (animal.training?.CanAssignToTrain(td).Accepted != true)
                     { result.Reason = "species_or_age_cannot_learn_this_training"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
+                    if (animal.training.GetWanted(td) == request.Wanted)
+                    { result.Reason = "training_plan_already_set"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                     animal.training.SetWantedRecursive(td, request.Wanted);
                     result.Applied = true; result.Reason = "training_plan_set; learning_requires_handler_food_and_time";
                     var handler = request.HandlerPawnId.HasValue ? PawnHelper.FindPawnById(request.HandlerPawnId.Value) : null;

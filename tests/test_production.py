@@ -168,4 +168,236 @@ class LogisticsProductionTests(unittest.TestCase):
         client=Client({});result=p.execute(client,self.snapshot(),{},'production_material_logistics',{'production_policy':'defer'})
         self.assertFalse(result['applied']);self.assertEqual(client.calls,[])
 
+class IndependentProductionTests(unittest.TestCase):
+    def snapshot(self):
+        s = ProductionTests().snapshot()
+        s["development"]["production"]["buildings"].append({"id": 9, "def_name": "Heater", "switch_on": True})
+        p.prepare(s, {})
+        return s
+
+    def client(self, s, fail=None, response=None):
+        context = copy.deepcopy(s["development"]["production"])
+        class IndependentClient(Client):
+            def get(self, path, **kwargs):
+                self.calls.append(("GET", path))
+                if fail == path:
+                    raise RuntimeError("endpoint disconnected")
+                return copy.deepcopy(context) if path.endswith('/context') else {"available": True, "options": []}
+            def post(self, path, **kwargs):
+                self.calls.append(("POST", path))
+                if fail == "POST":
+                    raise RuntimeError("response lost")
+                return response if response is not None else {"applied": True, "reason": "accepted"}
+        return IndependentClient(context)
+
+    def test_failed_recipes_preserve_utilities_feed_and_error(self):
+        s = self.snapshot(); c = self.client(s, p.ENDPOINTS['recipes'])
+        observed = p.collect(c, s)
+        self.assertTrue(observed['available'])
+        self.assertFalse(observed['endpoint_status']['recipes']['available'])
+        self.assertIn('endpoint disconnected', observed['recipe_context']['reason'])
+        s['development']['production'] = observed
+        actions = p.prepare(s, {})
+        self.assertIn('production_utilities', actions)
+        self.assertIn('production_feed_batch', actions)
+        self.assertNotIn('production_recipe_batch', actions)
+        self.assertEqual(p.summary(s)['production_endpoint_failures'], 1)
+
+    def test_context_failure_preserves_recipe_endpoint(self):
+        s = self.snapshot()
+        class RecipeOnly(Client):
+            def get(self, path, **kwargs):
+                if path.endswith('/context'): return {'available': False, 'reason': 'native blocked'}
+                return {'options': [RecipeProductionTests().plan()]} if path.endswith('/recipes') else {'options': []}
+        observed = p.collect(RecipeOnly({}), s)
+        self.assertFalse(observed['endpoint_status']['context']['available'])
+        self.assertIn('native blocked', observed['endpoint_status']['context']['error'])
+        s['development']['production'] = observed
+        self.assertEqual(p.prepare(s, {}), ['production_recipe_batch'])
+
+    def test_invalid_endpoint_is_not_empty_success(self):
+        s = self.snapshot()
+        class InvalidRecipes(Client):
+            def get(self, path, **kwargs):
+                return {} if path.endswith('/recipes') else ({'buildings': []} if path.endswith('/context') else {'options': []})
+        observed = p.collect(InvalidRecipes({}), s)
+        self.assertFalse(observed['endpoint_status']['recipes']['available'])
+        self.assertIn('invalid_response', observed['recipe_context']['reason'])
+
+    def test_utilities_and_feed_read_only_context(self):
+        for action, key in [('production_utilities', '2:switch_off'), ('production_feed_batch', '3')]:
+            s = self.snapshot(); c = self.client(s, p.ENDPOINTS['recipes'])
+            self.assertTrue(p.execute(c, s, {}, action, {'production_policy': key})['applied'])
+            self.assertEqual(c.calls, [('GET', p.ENDPOINTS['context']), ('POST', '/api/v1/production/policy')])
+
+    def test_recipe_and_logistics_read_only_own_endpoint(self):
+        for action, fixture, endpoint, post in [
+            ('production_recipe_batch', RecipeProductionTests(), 'recipes', '/api/v1/production/recipe-bill'),
+            ('production_material_logistics', LogisticsProductionTests(), 'logistics', '/api/v1/production/logistics')]:
+            s = fixture.snapshot(); plan = fixture.plan()
+            class OnlyEndpoint(Client):
+                def get(self, path, **kwargs):
+                    self.calls.append(('GET', path))
+                    if path != p.ENDPOINTS[endpoint]: raise AssertionError('unrelated read')
+                    return {'options': [copy.deepcopy(plan)]}
+                def post(self, path, **kwargs):
+                    self.calls.append(('POST', path)); return {'applied': True}
+            c = OnlyEndpoint({})
+            self.assertTrue(p.execute(c, s, {}, action, {'production_policy': plan['key']})['applied'])
+            self.assertEqual(c.calls, [('GET', p.ENDPOINTS[endpoint]), ('POST', post)])
+
+    @patch('colony_retry.time.time')
+    def test_stale_option_backoff_preserves_alternative_and_expires(self, clock):
+        clock.return_value = 100
+        s = self.snapshot(); c = self.client(s)
+        c.context['buildings'][0]['switch_on'] = False
+        # Use a live changed context without altering the observed projection.
+        class Changed(Client):
+            def get(self, *args, **kwargs):return copy.deepcopy(c.context)
+        state = {}; result = p.execute(Changed({}), s, state, 'production_utilities', {'production_policy': '2:switch_off'})
+        self.assertEqual(result['reason'], 'policy_no_longer_available')
+        self.assertIn('production_utilities', p.prepare(s, state))
+        plans = s['development']['production']['options']
+        self.assertNotIn('2:switch_off', plans); self.assertIn('9:switch_off', plans)
+        clock.return_value = 131
+        s['game']['tick'] += p.BACKOFF_TICKS
+        p.prepare(s, state)
+        self.assertIn('2:switch_off', s['development']['production']['options'])
+
+    def test_stale_recipe_and_logistics_filter_only_selected_option(self):
+        for action, fixture, endpoint in [('production_recipe_batch', RecipeProductionTests(), 'recipes'),
+                                          ('production_material_logistics', LogisticsProductionTests(), 'logistics')]:
+            s = fixture.snapshot(); second = copy.deepcopy(fixture.plan()); second['key'] += ':alternate'
+            context = s['development']['production'][('recipe_context' if endpoint == 'recipes' else 'logistics_context')]
+            context['options'].append(second)
+            class Changed(Client):
+                def get(self, *args, **kwargs):return {'options': [copy.deepcopy(second)]}
+            state = {}; p.execute(Changed({}), s, state, action, {'production_policy': fixture.plan()['key']})
+            self.assertIn(action, p.prepare(s, state))
+            plans = p.recipe_options(s['development']['production']) if endpoint == 'recipes' else p.logistics_options(s['development']['production'])
+            self.assertEqual(list(plans), [second['key']])
+
+    def test_read_and_post_failures_backoff_one_option_and_report_uncertainty(self):
+        for fail, reason in [(p.ENDPOINTS['context'], 'production_observation_failed'), ('POST', 'production_transport_failed')]:
+            s = self.snapshot(); state = {}; c = self.client(s, fail)
+            result = p.execute(c, s, state, 'production_utilities', {'production_policy': '2:switch_off'})
+            self.assertFalse(result['applied']); self.assertEqual(result['reason'], reason)
+            self.assertIn('endpoint disconnected' if fail != 'POST' else 'response lost', result['error'])
+            self.assertEqual(result.get('outcome_unknown', False), fail == 'POST')
+            self.assertIn('production_utilities', p.prepare(s, state))
+            self.assertNotIn('2:switch_off', s['development']['production']['options'])
+            self.assertIn('9:switch_off', s['development']['production']['options'])
+
+    def test_native_rejection_reason_retained_without_category_starvation(self):
+        s = self.snapshot(); state = {}; c = self.client(s, response={'applied': False, 'reason': 'missing_switch_or_pending_flick'})
+        result = p.execute(c, s, state, 'production_utilities', {'production_policy': '2:switch_off'})
+        self.assertEqual(result['reason'], 'missing_switch_or_pending_flick')
+        self.assertIn('production_utilities', p.prepare(s, state))
+        self.assertNotIn('production:production_utilities', state.get('issued', {}))
+
+    @patch('colony_retry.time.time')
+    def test_failure_history_survives_json_and_expires_after_short_horizon(self, clock):
+        clock.return_value = 100
+        import json
+        s = self.snapshot(); state = {}
+        p.execute(self.client(s, 'POST'), s, state, 'production_utilities', {'production_policy': '2:switch_off'})
+        restored = json.loads(json.dumps(state))
+        s['game']['tick'] += 249
+        p.prepare(s, restored)
+        self.assertNotIn('2:switch_off', s['development']['production']['options'])
+        clock.return_value = 131
+        s['game']['tick'] += 1
+        p.prepare(s, restored)
+        self.assertIn('2:switch_off', s['development']['production']['options'])
+        self.assertEqual(restored['production_option_backoff']['production_utilities'], {})
+
+    def test_failure_history_from_future_is_pruned_after_tick_rollback(self):
+        import json
+        s = self.snapshot(); state = {}
+        p.execute(self.client(s, 'POST'), s, state, 'production_utilities', {'production_policy': '2:switch_off'})
+        restored = json.loads(json.dumps(state)); s['game']['tick'] -= 100
+        p.prepare(s, restored)
+        self.assertIn('2:switch_off', s['development']['production']['options'])
+        self.assertEqual(restored['production_option_backoff']['production_utilities'], {})
+
+    def test_storage_blockage_signals_distinguish_work_and_route(self):
+        s = self.snapshot(); s['development']['production']['logistics_context'] = {'blocked': [
+            {'def_name': 'Steel', 'reason': 'storage_capacity_exists_no_eligible_hauler'},
+            {'def_name': 'WoodLog', 'reason': 'storage_capacity_exists_route_reservation_or_priority_blocked'}]}
+        signals = p.summary(s)
+        self.assertEqual(signals['production_storage_no_hauler'], 1)
+        self.assertEqual(signals['production_storage_route_blocked'], 1)
+
+class UtilityDwellTests(unittest.TestCase):
+    def snapshot(self):
+        s = IndependentProductionTests().snapshot()
+        for building in s['development']['production']['buildings']:
+            building['temperature'] = 20
+        p.prepare(s, {})
+        return s
+
+    def accept(self, s, state, key='2:switch_off'):
+        c = IndependentProductionTests().client(s)
+        self.assertTrue(p.execute(c, s, state, 'production_utilities', {'production_policy': key})['applied'])
+
+    def test_success_lamp_does_not_hide_new_urgent_heater(self):
+        s = self.snapshot(); state = {}; self.accept(s, state)
+        s['development']['production']['buildings'].append({'id': 12, 'def_name': 'Heater', 'switch_on': False, 'temperature': -20})
+        s['game']['tick'] += 1
+        self.assertIn('production_utilities', p.prepare(s, state))
+        self.assertIn('12:switch_on', s['development']['production']['options'])
+        self.assertNotIn('2:switch_off', s['development']['production']['options'])
+
+    def test_inverse_same_building_family_dwell_refuel_independent(self):
+        s = self.snapshot(); state = {}; self.accept(s, state)
+        b = s['development']['production']['buildings'][0]
+        b.update(switch_on=False, can_set_auto_refuel=True, auto_refuel=False)
+        p.prepare(s, state)
+        self.assertNotIn('2:switch_on', s['development']['production']['options'])
+        self.assertIn('2:enable_refuel', s['development']['production']['options'])
+
+    def test_thermal_band_change_reopens_without_float_drift(self):
+        s = self.snapshot(); state = {}; self.accept(s, state)
+        b = s['development']['production']['buildings'][0]; b['switch_on'] = False
+        b['temperature'] = 20.001; p.prepare(s, state)
+        self.assertNotIn('2:switch_on', s['development']['production']['options'])
+        b['temperature'] = 9.9; p.prepare(s, state)
+        self.assertIn('2:switch_on', s['development']['production']['options'])
+        self.assertEqual(state['production_utility_dwell'], {})
+        self.accept(s, state, '2:switch_on')
+        b['temperature'] = 33; p.prepare(s, state)
+        self.assertIn('2:switch_on', s['development']['production']['options'])
+
+    def test_defer_tracks_only_actually_shown_families(self):
+        s = self.snapshot(); state = {}
+        b = s['development']['production']['buildings'][0]
+        b.update(can_set_auto_refuel=True, auto_refuel=False)
+        p.prepare(s, state)
+        with patch.object(p, 'ask_laya_choice', return_value=('defer', {})):
+            selected, _ = p.choose(None, {}, 'production_utilities', s)
+        self.assertIn('2:switch_off', selected['shown_utility_options'])
+        self.assertNotIn('2:enable_refuel', selected['shown_utility_options'])
+        p.execute(Client({}), s, state, 'production_utilities', selected)
+        s['development']['production']['buildings'].append({'id': 12, 'def_name': 'Heater', 'switch_on': False, 'temperature': -20})
+        p.prepare(s, state)
+        plans = s['development']['production']['options']
+        self.assertIn('12:switch_on', plans); self.assertIn('2:enable_refuel', plans)
+        self.assertNotIn('2:switch_off', plans)
+        s['game']['tick'] += 250; p.prepare(s, state)
+        self.assertIn('2:switch_off', s['development']['production']['options'])
+
+    def test_success_dwell_json_rollback_and_expiry(self):
+        import json
+        for change in (-1, 15000):
+            s = self.snapshot(); state = {}; self.accept(s, state)
+            restored = json.loads(json.dumps(state))
+            s['game']['tick'] += change; p.prepare(s, restored)
+            self.assertIn('2:switch_off', s['development']['production']['options'])
+            self.assertEqual(restored['production_utility_dwell'], {})
+
+    def test_old_global_utility_lock_is_retired(self):
+        s = self.snapshot(); state = {'issued': {'production:production_utilities': 20000}}
+        self.assertIn('production_utilities', p.prepare(s, state))
+        self.assertNotIn('production:production_utilities', state['issued'])
+
 if __name__=='__main__':unittest.main()

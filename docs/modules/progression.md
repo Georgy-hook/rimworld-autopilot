@@ -84,3 +84,38 @@ Credits source attribution is scoped around the native ship countdown, Archonexu
 
 Additional inspected assembly classes: `Screen_ArchonexusSettlementCinematics`, `MoveColonyUtility`, `TilePicker`, `Dialog_ConfigureIdeo`, `CompPilotConsole`, `Dialog_BeginGravshipLaunch`, `Building_GravEngine`, `GravshipUtility`, `WorldComponent_GravshipController`, `Designator_MoveGravship`, `CompCerebrexCore` and `WorldTargeter`. Python progression/specialist regressions pass together (38 tests). All ending controllers have passed the parent shared build; no game/Laya runtime launch or actual campaign victory was attempted.
 Settlement alternatives use native neighbor BFS bounded to 2048 inspected tiles until twelve valid nearby choices, plus twenty-four geographically spread candidates. GET no longer validates or sorts the entire world. Explicit POST tile IDs still pass current settlement and TilePicker validators.
+
+
+### Formation identity and blocked landing continuation (2026-10-02)
+
+Journey GET now binds each feasible plan to `home_pawn_ids` and a `manifest`
+(list of `def_name`, `count`). POST sends those identities as sorted comma-separated
+IDs and `DefName:count` pairs. Empty home IDs represent migration. Fresh native
+plan eligibility still checks supply reserves, care, carrying capacity and route.
+Informational reserve consumption and ordinary jobs no longer invalidate an
+otherwise identical decision. Roster, manifest, medicine and meaningful travel
+estimate changes require a new decision.
+
+Pending journey intent persists the actual native forming lord, origin map and
+formation ID. Only the native caravan-creation callback for that lord may start
+its ending route. Cancelled formation, missing destination, changed roster or
+legacy records without a lord are invalidated explicitly; no timeout is used.
+GET exposes `pending_routes` and `last_journey_result` (`status`, `reason`).
+`travel_requested` means path requested, never observed arrival or victory.
+
+Odyssey GET exposes `landing_map_id`, `landing_session`, `landing_blocker`.
+A wrong visible map offers explicit `view_landing_map`; POST revalidates map and
+session, selects the native landing map and returns
+`gravship_landing_map_selected`. Placement and landing also require that session.
+A coarse grid without valid cells falls back to at most 256 native cell checks
+per GET. Search progress is scoped to marker/map/rotation; returned cells are
+revalidated. Exhausted searches restart within 30 seconds. If none exist, sessions record blocked native
+continuation and wait for fresh readiness without model calls or cancellation.
+The repeated unchanged blocked result is quiet; an available option resumes normal
+choice. This is an offline source/contract change; native runtime remains unproven.
+
+
+Ordinary trade/raid/rescue trips now use the shared
+[expedition preview and formation contract](expeditions.md), independently of
+campaign ending state. They share the exact native creation callback dispatch;
+ordinary invalidated intents do not cancel vanilla formation.

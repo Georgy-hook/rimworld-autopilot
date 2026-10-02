@@ -6,6 +6,7 @@ game work; knowing a definition does not imply owning or unlocking it.
 from __future__ import annotations
 
 from typing import Any
+import colony_retry as retry
 import colony_combat as combat
 from laya_decisions import ask_laya_choice
 
@@ -28,7 +29,44 @@ LABELS = {
     "research_greenhouse": "исследования для теплицы", "harvest_at_risk_crops": "спасение урожая",
 }
 ACTIONS = set(DESCRIPTIONS)
-CARE_JOBS = {"TendPatient", "Rescue", "FeedPatient", "DoBill"}
+CARE_JOBS = {"TendPatient", "Rescue", "FeedPatient", "DoBill", "Deathrest", "Breastfeed",
+             "BottleFeedBaby", "BreastfeedCarryToMom", "BringBabyToSafety", "BringBabyToSafetyUnforced",
+             "CarryToMomAfterBirth", "BabySuckle", "BabyPlay", "PlayStatic", "PlayWalking", "PlayToys",
+             "Lessongiving", "Lessonreceiving", "PrisonerInterrogateIdentity", "Ingest"}
+
+
+def _prune(snapshot: dict[str, Any], memory: dict[str, Any]) -> None:
+    tick, map_id = int(snapshot.get("game", {}).get("tick") or 0), int(snapshot["map"]["id"])
+    for name in ("capability_history", "capability_auxiliary"):
+        rows = memory.get(name)
+        rows = rows if isinstance(rows, dict) else {}
+        memory[name] = dict(list({k: v for k, v in rows.items() if isinstance(k, str) and isinstance(v, dict)
+            and type(v.get("tick")) is int and type(v.get("duration")) is int
+            and 0 < v["duration"] <= 15000 and type(v.get("map_id")) is int and v["map_id"] == map_id
+            and retry.recent(v, tick, v["duration"])}.items())[-512:])
+
+
+def _scope(action: str, key: str) -> str:
+    # An implant operation shares patient dwell; choosing a different limb must
+    # not immediately queue another operation on the same recovering patient.
+    return action + ":" + (key.split("|")[0] if action == "plan_colonist_augmentation" else key)
+
+
+def _selection_key(action: str, selected: dict[str, Any]) -> str:
+    field = {"create_growing_zone": "crop_site", "configure_crop": "crop_site",
+             "plan_colonist_augmentation": "augmentation_operation", "improve_weapon_loadout": "weapon_pawn",
+             "assign_animal_training": "training_animal", "assign_animal_master": "training_animal",
+             "research_greenhouse": "greenhouse_research"}.get(action)
+    return str(selected.get(field, "")) if field else ""
+
+
+def _remember(snapshot: dict[str, Any], memory: dict[str, Any], key: str, duration: int, failure: bool = False) -> None:
+    memory.setdefault("capability_history", {})[key] = {"tick": int(snapshot["game"].get("tick") or 0),
+        "map_id": int(snapshot["map"]["id"]), "duration": duration}
+    if failure:
+        memory["capability_history"][key].update(retry.failure_record(int(snapshot["game"].get("tick") or 0), 30))
+    while len(memory["capability_history"]) > 512:
+        del memory["capability_history"][next(iter(memory["capability_history"]))]
 
 
 def workers(snapshot: dict[str, Any], work: str, minimum: int = 0) -> list[dict[str, Any]]:
@@ -181,6 +219,7 @@ def safe_weapons(snapshot: dict[str, Any], pawn: dict[str, Any]) -> dict[str, di
 
 
 def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
+    _prune(snapshot, map_state)
     dev = snapshot["development"]
     actions = []
     plans = {}
@@ -191,7 +230,7 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     if old_sites:
         plans["configure_crop"] = old_sites
         actions.append("configure_crop")
-    blight = [p for p in dev.get("plants") or [] if p.get("blighted")
+    blight = [p for p in dev.get("plants") or [] if p.get("blighted") and not p.get("is_designated_for_cut")
               and not combat.errand_exposed(snapshot, p.get("position"))]
     if blight and workers(snapshot, "PlantCutting"):
         plans["clear_plant_blight"] = {"plants": blight, "workers": workers(snapshot, "PlantCutting")}
@@ -253,21 +292,40 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
         current = pawn.get("weapon_info") or {}
         # Knowledge is complete; suppress repeated no-op exchanges for an equivalent gun.
         if weapons and (not pawn.get("weapon_def") or any(w.get("def_name") != pawn.get("weapon_def") or
-                weapon_score(pawn, w) > weapon_score(pawn, current) * 1.15 for w in weapons.values())):
+                weapon_score(pawn, w) > weapon_score(pawn, current) * 1.15 or
+                any(w.get(k) != current.get(k) for k in ("quality", "hit_points_percent", "damage", "armor_penetration", "melee_dps"))
+                for w in weapons.values())):
             weapon_plans[str(pawn["id"])] = {"pawn": pawn, "weapons": weapons}
     if weapon_plans:
         plans["improve_weapon_loadout"] = weapon_plans
         actions.append("improve_weapon_loadout")
     dev["crop_purpose_context"] = map_state.get("pending_income_crop") or map_state.get("income_strategy") or "colony survival"
+    history = map_state["capability_history"]
+    for action in list(plans):
+        if action in {"clear_plant_blight", "harvest_at_risk_crops"}:
+            plans[action]["plants"] = [p for p in plans[action]["plants"]
+                if _scope(action, str(p["thing_id"])) not in history]
+            if not plans[action]["plants"]:
+                del plans[action]
+        else:
+            plans[action] = {k: v for k, v in plans[action].items()
+                if _scope(action, k) not in history and action + ":failed:" + k not in history}
+            if not plans[action]:
+                del plans[action]
+    repairs = set()
+    for key, pending in map_state["capability_auxiliary"].items():
+        action = pending.get("action")
+        if action in ACTIONS and action not in repairs and key + ":aux_failed" not in history and isinstance(pending.get("steps"), list):
+            plans[action] = {"__auxiliary__": key}
+            repairs.add(action)
     dev["capability_plans"] = plans
-    tick = int(snapshot.get("game", {}).get("tick") or 0)
-    issued = map_state.get("issued") or {}
-    return [a for a in actions if tick - int(issued.get("capability:" + a, -1000000)) >=
-            (2500 if a == "clear_plant_blight" else 15000)]
+    return list(plans)
 
 
 def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     plans = snapshot["development"].get("capability_plans", {}).get(action) or {}
+    if "__auxiliary__" in plans:
+        return {"auxiliary_retry": plans["__auxiliary__"]}, {"answers": {}, "steps": []}
     details, raw = {}, {"answers": {}, "steps": []}
 
     def pick(question: str, instruction: str, criteria: dict[str, str]) -> str:
@@ -277,6 +335,7 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
         if selected not in criteria:
             raise ValueError(f"Infeasible {question}: {selected}")
         details[question] = selected
+        details.setdefault("shown_subjects", {})[question] = [k for k in criteria if k != "defer"]
         raw["answers"].update(result.get("answers", {}))
         raw["steps"].append(result)
         return selected
@@ -362,7 +421,7 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
     return details, raw
 
 
-def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], action: str, selected: dict[str, Any]) -> dict[str, Any]:
+def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], action: str, selected: dict[str, Any]) -> dict[str, Any]:
     plans = snapshot["development"].get("capability_plans", {}).get(action) or {}
     map_id = int(snapshot["map"]["id"])
     response: Any = None
@@ -423,14 +482,12 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
     elif action == "research_greenhouse":
         target = str(selected.get("greenhouse_research") or "")
         if target == "defer":
-            map_state.setdefault("issued", {})["capability:" + action] = int(snapshot["game"].get("tick") or 0)
             return {"applied": False, "reason": "laya_kept_current_research"}
         if target not in plans:
             return {"applied": False, "reason": "No available greenhouse prerequisite selected"}
         response = client.post("/api/v1/research/target", query={"name": target, "force": False})
     elif action == "plan_colonist_augmentation":
         if selected.get("augmentation_defer"):
-            map_state.setdefault("issued", {})["capability:" + action] = int(snapshot["game"].get("tick") or 0)
             return {"applied": False, "reason": "laya_deferred_elective_surgery", "selection": selected}
         operation = plans.get(str(selected.get("augmentation_operation")))
         doctor, bed = int(selected.get("augmentation_doctor") or 0), int(selected.get("augmentation_bed") or 0)
@@ -457,17 +514,77 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "Handling", "priority": 1})
     elif action == "improve_weapon_loadout":
         if selected.get("weapon_defer"):
-            map_state.setdefault("issued", {})["capability:" + action] = int(snapshot["game"].get("tick") or 0)
             return {"applied": False, "reason": "laya_kept_current_loadouts", "selection": selected}
         plan = plans.get(str(selected.get("weapon_pawn")))
         weapon = plan and plan["weapons"].get(str(selected.get("weapon_item")))
         if not weapon:
             return {"applied": False, "reason": "No compatible weapon selected"}
-        if weapon.get("is_forbidden"):
-            order("/api/v1/things/set-forbidden", {"map_id": map_id, "thing_ids": [weapon["id"]], "forbidden": False})
-        response = order("/api/v1/pawn/job", {"pawn_id": plan["pawn"]["id"], "job_def": "Equip", "target_thing_id": weapon["id"]})
+        response = order("/api/v1/pawn/job", {"pawn_id": plan["pawn"]["id"], "job_def": "Equip", "target_thing_id": weapon["id"],
+            "map_id": map_id, "allow_unforbid_equip": bool(weapon.get("is_forbidden"))})
     if response is None:
         return {"applied": False, "reason": "No capability order prepared"}
     applied = accepted(response)
-    map_state.setdefault("issued", {})["capability:" + action] = int(snapshot["game"].get("tick") or 0)
     return {"applied": applied, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response, "selection": selected}
+
+
+def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], action: str, selected: dict[str, Any]) -> dict[str, Any]:
+    """Remember accepted primary effects and repair only missing permissions."""
+    _prune(snapshot, map_state)
+    auxiliary_paths = {"/api/v1/colonist/work-priority", "/api/v1/map/zone/growing/sowing"}
+    missing, steps = [], []
+
+    def auxiliary(path: str, kwargs: dict[str, Any]) -> None:
+        try:
+            value = client.post(path, **kwargs)
+            ok = isinstance(value, dict) and (value.get("applied") is True if "applied" in value else value.get("success") is True)
+            steps.append({"path": path, "applied": ok, "response": value})
+            if not ok:
+                missing.append({"path": path, "kwargs": kwargs})
+        except Exception as exc:
+            steps.append({"path": path, "applied": False, "outcome_unknown": True, "reason": str(exc)})
+            missing.append({"path": path, "kwargs": kwargs})
+
+    pending_key = str(selected.get("auxiliary_retry") or action + "|" + _selection_key(action, selected))
+    pending = map_state["capability_auxiliary"].get(pending_key)
+    if selected.get("auxiliary_retry"):
+        if not pending:
+            return {"applied": False, "reason": "auxiliary_expired"}
+        for step in (pending.get("steps") or [])[:3]:
+            if isinstance(step, dict) and step.get("path") in auxiliary_paths and isinstance(step.get("kwargs"), dict):
+                auxiliary(step["path"], step["kwargs"])
+        result = {"applied": not missing and bool(steps), "reason": "auxiliary_repaired" if not missing else "auxiliary_pending"}
+    else:
+        class Orders:
+            def post(self, path: str, **kwargs: Any) -> Any:
+                if path in auxiliary_paths:
+                    auxiliary(path, kwargs)
+                    return steps[-1]
+                return client.post(path, **kwargs)
+        try:
+            result = _execute_primary(Orders(), snapshot, map_state, action, selected)
+        except Exception as exc:
+            result = {"applied": False, "reason": str(exc), "outcome_unknown": True}
+        key = _selection_key(action, selected)
+        if str(result.get("reason") or "").startswith("laya_"):
+            question = {"plan_colonist_augmentation": "augmentation_patient", "improve_weapon_loadout": "weapon_pawn",
+                        "research_greenhouse": "greenhouse_research"}.get(action)
+            shown = selected.get("shown_subjects", {}).get(question, [])
+            for target in shown[:256]:
+                _remember(snapshot, map_state, _scope(action, target), 250)
+        elif action in {"clear_plant_blight", "harvest_at_risk_crops"}:
+            for plant in snapshot["development"].get("capability_plans", {}).get(action, {}).get("plants", [])[:200]:
+                _remember(snapshot, map_state, _scope(action, str(plant["thing_id"])), 250, not result.get("applied"))
+        else:
+            _remember(snapshot, map_state, _scope(action, key) if result.get("applied") else action + ":failed:" + key,
+                      15000 if result.get("applied") else 250, not result.get("applied"))
+    if missing:
+        map_state["capability_auxiliary"][pending_key] = {"tick": pending["tick"] if pending else int(snapshot["game"].get("tick") or 0),
+            "map_id": int(snapshot["map"]["id"]), "duration": 15000, "action": action, "steps": missing[:3]}
+        _remember(snapshot, map_state, pending_key + ":aux_failed", 250, True)
+    else:
+        map_state["capability_auxiliary"].pop(pending_key, None)
+    if steps:
+        result.update(auxiliary_steps=steps, partial=bool(missing))
+        if any(s.get("outcome_unknown") for s in steps):
+            result["outcome_unknown"] = True
+    return result

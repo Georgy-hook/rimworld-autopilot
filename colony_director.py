@@ -17,6 +17,8 @@ import colony_architect as architect
 import colony_professions as professions
 import colony_events as events
 import colony_growth as growth
+import colony_expeditions as expeditions
+from colony_retry import failure_record, recent as retry_recent
 import colony_strategy as strategy
 import colony_capabilities as capabilities
 import colony_modules
@@ -1057,6 +1059,8 @@ def architecture_occupied_cells(development: dict[str, Any], map_state: dict[str
         if pos.get("x") is not None and pos.get("z") is not None:
             occupied.add((int(pos["x"]), int(pos["z"])))
     for project in map_state.get("architecture_projects") or []:
+        if project.get("reservation_active") is False:
+            continue
         pos = project.get("origin") or {}
         if "x" not in pos or "z" not in pos:
             continue
@@ -2519,7 +2523,7 @@ def requires_builder_now(action: str) -> bool:
     if action.startswith(("build_", "finish_", "floor_", "install_")):
         return True
     return action in {
-        "plan_architecture", "improve_room_lighting", "upgrade_workbench",
+        "plan_architecture", "repair_architecture", "improve_room_lighting", "upgrade_workbench",
         "commission_sculptures", "process_mechanoids", "start_stonecutting",
     }
 
@@ -2842,6 +2846,21 @@ def focus_misaligned_research_choice(snapshot: dict[str, Any], actions: list[str
             for pawn in people):
         return actions
     return ["advance_doctrine_research"]
+
+
+def project_expedition_readiness(snapshot: dict[str, Any], map_state: dict[str, Any]) -> None:
+    snapshot.setdefault("development", {}).pop("last_expedition_attempt", None)
+    attempt = map_state.get("expedition_readiness") or {}
+    if isinstance(attempt, dict) and type(attempt.get("observed_tick")) is int and 0 <= int(snapshot["game"].get("tick") or 0) - attempt["observed_tick"] < 60000:
+        readiness = attempt.get("readiness") or {}
+        readiness = readiness if isinstance(readiness, dict) else {}
+        snapshot["development"]["last_expedition_attempt"] = {
+            "reason": str(attempt.get("reason") or "")[:100],
+            "ticks_ago": int(snapshot["game"].get("tick") or 0) - attempt["observed_tick"],
+            **{key: readiness[key] for key in ("required_nutrition", "acceptable_stock_nutrition", "required_food_days", "home_defenders") if key in readiness},
+            "meaning": "past preview; refresh before dispatch"}
+    else:
+        map_state.pop("expedition_readiness", None)
 
 
 def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -3180,6 +3199,7 @@ def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
         "risks": risks,
         "recent": (dev.get("recent_decisions") or [])[-2:],
         "outcome_feedback": dev.get("outcome_feedback") or {},
+        "last_expedition_attempt": dev.get("last_expedition_attempt") or {},
         "player_weights": (dev.get("user_preferences") or {}).get("priorities") or {},
         "guidance": str((dev.get("user_preferences") or {}).get("personal_note") or "")[:160],
         "animals": {"count": len(animals),
@@ -4525,6 +4545,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["dark_room_options"] = dark_room_options
         one_time.append("improve_room_lighting")
 
+    repairs = architect.reconcile_projects(dev, map_state, snapshot["map"]["id"], tick, terrain_defs_at_cells)
+    if repairs and can_work("Construction"):
+        dev["architecture_repair_options"] = {key: row["summary"] for key, row in repairs.items()}
+        one_time.append("repair_architecture")
+
     architecture_material = chosen_material if chosen_material in material_options else next(iter(material_options), "")
     architecture_context = {
         "building_counts": counts,
@@ -4770,8 +4795,13 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         )
         and str(b.get("def") or "") in {"Bed", "HospitalBed", "SleepingSpot"}
     ]
-    has_generated_hospital = any(row.get("program") == "hospital" for row in map_state.get("architecture_projects", []))
-    if not has_generated_hospital and int(item_counts.get("WoodLog") or 0) >= 180 and "hospital_blueprint" not in map_state.setdefault("issued", {}):
+    has_generated_hospital = any(row.get("program") == "hospital" and row.get("reservation_active", True) for row in map_state.get("architecture_projects", []))
+    existing_medical_bed = any(b.get("medical") and not b.get("for_prisoners")
+        and str(b.get("def") or b.get("def_name") or "") in {"Bed", "HospitalBed", "SleepingSpot"}
+        for b in dev.get("buildings") or [])
+    if (not has_generated_hospital and not hospital_beds and not existing_medical_bed and int(item_counts.get("WoodLog") or 0) >= 180
+            and not architect.hospital_retry_blocked(map_state, map_id, tick)
+            and not issued_recently(map_state, "hospital_blueprint", tick, retry_ticks=2500)):
         one_time.append("build_hospital")
     elif hospital_beds and not all(bool(b.get("medical")) for b in hospital_beds) and not issued_recently(map_state, "hospital_beds", tick, retry_ticks=15000):
         one_time.append("configure_hospital_beds")
@@ -5597,7 +5627,7 @@ def defer_discretionary_work_until_shelter(
             "build_cemetery", "build_crematorium", "build_freezer", "build_power",
             "build_hitech_lab", "build_fabrication", "build_hospital", "build_research_bench",
             "build_weapon_shelves", "build_prison", "build_animal_barn", "build_animal_pen",
-            "plan_architecture", "commission_sculptures", "install_sculpture",
+            "plan_architecture", "repair_architecture", "commission_sculptures", "install_sculpture",
             "start_stonecutting", "start_taming", "tame_wild_human", "choose_colony_doctrine",
             "develop_colonist_skill", "build_temple", "build_pathways",
             "build_catalog_building", "floor_critical_room", "upgrade_workbench",
@@ -5689,7 +5719,7 @@ def build_decision_state(snapshot: dict[str, Any]) -> dict[str, Any]:
         for skill_name in (colonist.get("skills") or {})
     })
     for skill_name in all_skill_names:
-        ranked = sorted(snapshot.get("colonists", []), key=lambda c: int((c.get("skills", {}).get(skill_name) or {}).get("level") or 0), reverse=True)
+        ranked = sorted((c for c in growth.available_workers(snapshot) if not ((c.get("skills") or {}).get(skill_name) or {}).get("disabled")), key=lambda c: int((c.get("skills", {}).get(skill_name) or {}).get("level") or 0), reverse=True)
         if ranked:
             skill = (ranked[0].get("skills", {}).get(skill_name) or {})
             capabilities[skill_name] = {
@@ -5962,7 +5992,7 @@ def action_domain(name: str) -> str:
     if name.startswith(("build_killbox", "build_fallback", "build_turret", "build_mortar", "build_firefoam", "process_mechanoids")): return "defense"
     if name in {"rescue_downed_animal", "care_for_injured_animal", "feed_hungry_animal", "feed_hungry_colonist", "eat_available_meal", "open_sealed_food_store", "open_blocked_food_path", "build_hospital", "build_passive_cooler", "configure_hospital_beds", "build_prison", "assign_real_bed", "prepare_emergency_medical_bed", "rescue_neutral_arrival"}: return "care"
     if name in {"unforbid_corpses", "create_human_corpse_dump", "create_animal_corpse_dump", "build_cemetery", "build_crematorium"}: return "corpse_management"
-    if name.startswith(("build_", "create_", "expand_", "floor_", "install_", "commission_", "excavate_", "finish_")) or name in {"plan_architecture", "improve_room_lighting", "upgrade_workbench"}: return "construction"
+    if name.startswith(("build_", "create_", "expand_", "floor_", "install_", "commission_", "excavate_", "finish_")) or name in {"plan_architecture", "repair_architecture", "improve_room_lighting", "upgrade_workbench"}: return "construction"
     return "strategy"
 
 
@@ -5976,7 +6006,7 @@ def action_family(name: str) -> str:
     if name.startswith("income_"): return "income_strategy"
     if name.startswith("prioritize_") or name in {"set_work_priority", "rebalance_cooking"}: return "work_priority"
     if name.startswith("build_"): return "building_project"
-    if name in {"plan_architecture", "improve_room_lighting", "upgrade_workbench"}: return "building_project"
+    if name in {"plan_architecture", "repair_architecture", "improve_room_lighting", "upgrade_workbench"}: return "building_project"
     if name in {"develop_colonist_skill", "optimize_night_owl_schedule", "schedule_recreation"}: return "workforce_development"
     if name.startswith("create_"): return "zone_or_production"
     return name.split(":", 1)[0]
@@ -6097,6 +6127,10 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
                 "instructions": "Choose which injured colonist receives this direct medical action. Compare bleeding, health and time to death; other patients remain at risk.",
                 "criteria": options,
             }
+    elif action == "repair_architecture" and dev.get("architecture_repair_options"):
+        q["architecture_repair"] = {"type": "choice",
+            "instructions": "Choose an incomplete saved plan to restore at its original site. No redesign or demolition.",
+            "criteria": dev["architecture_repair_options"]}
     elif action == "plan_architecture" and dev.get("architecture_program_options"):
         q["architecture_program"] = {
             "type": "choice",
@@ -7321,6 +7355,27 @@ def select_research_if_available(client: bridge.RimApiClient, name: str) -> dict
     return client.post("/api/v1/research/target", query={"name": name, "force": False})
 
 
+def expedition_request(snapshot: dict[str, Any], map_state: dict[str, Any], choice: str, details: dict[str, Any]) -> dict[str, Any] | None:
+    request = {"map_id": int(snapshot["map"]["id"]), "minimum_home_defenders": 2,
+               "minimum_food_at_home": 20, "minimum_medicine_at_home": 8, "margin_days": 2}
+    if choice.startswith("trade_to:"):
+        _, target, sale = choice.split(":", 2)
+        purchase = str(details.get("trade_purchase") or "none")
+        request.update(mode="trade", destination_settlement_id=int(target),
+            sale_categories=["none"] if sale == "funds" else available_sale_categories(snapshot) if sale == "mixed" else [sale],
+            purchase_priorities=[] if purchase == "none" else [purchase],
+            prisoner_ids=[int(pid) for pid, policy in (map_state.get("prisoner_plans") or {}).items() if policy == "sell" and
+                          any(int(p.get("id", -1)) == int(pid) for p in snapshot.get("combat", {}).get("prisoners", []))])
+    elif choice.startswith("raid_to:"):
+        target = int(choice.split(":", 1)[1])
+        destination = next((d for d in snapshot["development"].get("raid_destinations", []) if int(d.get("settlement_id", -1)) == target), {})
+        request.update(mode="raid", destination_settlement_id=target, minimum_food_at_home=30,
+                       minimum_medicine_at_home=10, allow_starting_war=bool(destination.get("would_start_war")))
+    else:
+        return None
+    return request
+
+
 def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_state: dict[str, Any], choice: str, details: dict[str, Any]) -> Any:
     map_id = snapshot["map"]["id"]
     tick = int(snapshot["game"].get("tick") or 0)
@@ -7389,6 +7444,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         })
         return result
 
+    if choice == "repair_architecture":
+        return architect.execute_repair(client, snapshot, map_state, details.get("architecture_repair"), terrain_defs_at_cells)
+
     if choice == "plan_architecture":
         program = str(details.get("architecture_program") or "")
         variant_id = str(details.get("architecture_variant") or "")
@@ -7416,7 +7474,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         ring = sequence // len(offsets)
         desired = {"x": int(anchor["x"]) + dx + (4 * ring if dx >= 0 else -4 * ring),
                    "z": int(anchor["z"]) + dz + (4 * ring if dz >= 0 else -4 * ring)}
-        terrain = client.get("/api/v1/map/terrain", map_id=map_id)
+        fresh_construction = architect.read_construction(client, map_id)
+        terrain = fresh_construction["terrain"]
         origin = find_terrain_rect(
             terrain,
             desired,
@@ -7424,32 +7483,55 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             int(selected["height"]),
             {"Soil", "SoilRich"} if program == "greenhouse_soil" else {"Soil", "SoilRich", "Gravel", "Sand"},
             radius=16,
-            blocked=architecture_occupied_cells(snapshot.get("development") or {}, map_state),
+            blocked=architecture_occupied_cells(fresh_construction, map_state),
             clearance=1,
         )
         if origin is None:
             issued["architecture_site_search"] = tick
             return {"applied": False, "reason": "No dry, unoccupied site with access clearance for this building"}
-        response = client.post("/api/v1/builder/blueprint", body={
-            "map_id": map_id,
-            "position": position(origin["x"], origin["z"]),
-            "blueprint": selected["layout"],
-            "clear_obstacles": False,
-        })
+        budget = architect.placement_budget(client, map_id, selected["layout"], fresh_construction)
+        if budget["locked_definitions"] or budget["shortages"]:
+            return {"applied": False, "reason": "architecture_fresh_budget_or_research", **budget}
+        checked = architect.preview_layout(client, map_id, origin, selected["layout"])
+        if checked.get("all_placeable") is not True:
+            issued["architecture_site_search"] = tick
+            return {"applied": False, "reason": "architecture_native_layout_blocked", "preview": checked}
+        placement_error = None
+        response = None
+        try:
+            response = client.post("/api/v1/builder/blueprint", body={
+                "map_id": map_id,
+                "position": position(origin["x"], origin["z"]),
+                "blueprint": selected["layout"],
+                "clear_obstacles": False,
+            })
+        except Exception as error:
+            placement_error = str(error)
         # Builder accepts partial layouts. Observe exact requested definitions
         # and coordinates before claiming the generated architecture was placed.
-        observed_raw = client.get("/api/v1/builder/projects", map_id=map_id)
-        observed = observed_raw.get("projects") or [] if isinstance(observed_raw, dict) else []
-        built_raw = client.get("/api/v1/map/buildings", map_id=map_id)
-        built = built_raw if isinstance(built_raw, list) else []
-        planned_cells = {(str(row.get("def_name")), (row.get("position") or {}).get("x"),
-                          (row.get("position") or {}).get("z")) for row in observed if isinstance(row, dict)}
-        actual_cells = {(str(row.get("def")), (row.get("position") or {}).get("x"),
-                         (row.get("position") or {}).get("z")) for row in built if isinstance(row, dict)}
+        try:
+            observed_raw = client.get("/api/v1/builder/projects", map_id=map_id)
+            observed = observed_raw.get("projects") or [] if isinstance(observed_raw, dict) else []
+            built_raw = client.get("/api/v1/map/buildings", map_id=map_id)
+            built = built_raw if isinstance(built_raw, list) else []
+        except Exception:
+            map_state.setdefault("architecture_projects", []).append({
+                "map_id": map_id, "layout": copy.deepcopy(selected["layout"]),
+                "program": program, "origin": origin, "width": selected["width"],
+                "height": selected["height"], "issued_tick": tick,
+                "reservation_active": True, "observation_pending": True,
+                "complete_plan_placed": False})
+            raise
         layout = selected["layout"]
         requested = {(str(row["def_name"]), int(origin["x"]) + int(row["rel_x"]),
                       int(origin["z"]) + int(row["rel_z"]))
                      for row in (layout.get("buildings") or []) + (layout.get("floors") or [])}
+        planned_cells = {(str(row["def_name"]), origin["x"] + row["rel_x"], origin["z"] + row["rel_z"])
+                         for row in (layout.get("buildings") or []) + (layout.get("floors") or [])
+                         if any(architect.element_matches(row, observed_row, origin) for observed_row in observed)}
+        actual_cells = {(str(row["def_name"]), origin["x"] + row["rel_x"], origin["z"] + row["rel_z"])
+                        for row in layout.get("buildings") or []
+                        if any(architect.element_matches(row, built_row, origin) for built_row in built)}
         floor_rows = [row for row in layout.get("floors") or []
                       if (str(row["def_name"]), int(origin["x"]) + int(row["rel_x"]),
                           int(origin["z"]) + int(row["rel_z"])) not in planned_cells]
@@ -7466,8 +7548,11 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         if not verified:
             issued["architecture_site_search"] = tick
             return {"applied": False, "reason": "No requested architecture element appeared at its exact site",
-                    "blueprint": response, "requested_count": len(requested), "verified_count": 0}
+                    "blueprint": response, "transport_error": placement_error, "requested_count": len(requested), "verified_count": 0}
         project = {
+            "map_id": map_id,
+            "layout": copy.deepcopy(layout),
+            "reservation_active": True,
             "program": program,
             "variant": variant_id,
             "style": selected.get("style"),
@@ -7496,6 +7581,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "project": project,
             "summary": selected.get("summary"),
             "blueprint": response,
+            "transport_error": placement_error,
             "construction": prioritize(client, snapshot, "Construction"),
         }
 
@@ -7964,9 +8050,23 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return {"applied": True, "site": site, "material": stuff, "blueprint": result,
                 "construction": prioritize(client, snapshot, "Construction")}
     if choice == "build_hospital":
-        result = post_blueprint(client, map_id, anchor, hospital_blueprint(), dx=25, dz=0)
+        def hospital_site(fresh, layout, desired):
+            # Failed empty origins are search exclusions, not actual projects.
+            exclusions = [{"origin": origin, "width": layout["width"], "height": layout["height"],
+                           "reservation_active": True}
+                for project in map_state.get("architecture_projects") or []
+                if project.get("map_id") == map_id and project.get("variant") == "legacy_hospital"
+                for origin in project.get("failed_origins") or []]
+            search_memory = {**map_state, "architecture_projects": [*(map_state.get("architecture_projects") or []), *exclusions]}
+            return find_clear_layout_site(client, map_id, desired, layout,
+                {**snapshot["development"], **fresh}, search_memory)
+        result = architect.execute_legacy_hospital(client, snapshot, map_state, hospital_blueprint(),
+            {"x": int(anchor["x"]) + 25, "z": int(anchor["z"])}, terrain_defs_at_cells,
+            site_finder=hospital_site)
         issued["hospital_blueprint"] = tick
-        return {"applied": True, "blueprint": result, "construction": prioritize(client, snapshot, "Construction")}
+        if result.get("applied") or (result.get("project") or {}).get("verified_count"):
+            result["construction"] = prioritize(client, snapshot, "Construction")
+        return result
     if choice == "build_passive_cooler":
         key = str(details.get("cool_room") or "")
         options = details.get("cool_room_options") or {}
@@ -8905,56 +9005,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         map_state.setdefault("prisoner_plans", {})[str(pawn_id)] = policy
         issued[f"prisoner:{pawn_id}:{policy}"] = tick
         return {"applied": True, "prisoner_id": pawn_id, "policy": policy, "response": response}
-    if choice.startswith("trade_to:"):
-        _, destination_id, sale = choice.split(":", 2)
-        sale_categories = ["none"] if sale == "funds" else available_sale_categories(snapshot) if sale == "mixed" else [sale]
-        purchase = str(details.get("trade_purchase") or "none")
-        sale_prisoner_ids = [
-            int(pawn_id) for pawn_id, policy in (map_state.get("prisoner_plans") or {}).items()
-            if policy == "sell" and any(int(p.get("id", -1)) == int(pawn_id) for p in snapshot.get("combat", {}).get("prisoners", []))
-        ]
-        response = client.post("/api/v1/world/caravan/trade/start", body={
-            "map_id": map_id,
-            "destination_settlement_id": int(destination_id),
-            "minimum_home_defenders": 2,
-            "minimum_food_at_home": 20,
-            "minimum_medicine_at_home": 8,
-            "sale_categories": sale_categories,
-            "purchase_priorities": [] if purchase == "none" else [purchase],
-            "prisoner_ids": sale_prisoner_ids,
-        })
-        issued["trade_caravan"] = tick
-        map_state["caravan_plan"] = {"kind": "trade", "destination_id": int(destination_id), "purchase": purchase}
-        return response
-    if choice.startswith("raid_to:"):
-        destination_id = int(choice.split(":", 1)[1])
-        destination = next((d for d in snapshot["development"].get("raid_destinations", []) if int(d.get("settlement_id", -1)) == destination_id), {})
-        response = client.post("/api/v1/world/caravan/raid/start", body={
-            "map_id": map_id,
-            "destination_settlement_id": destination_id,
-            "minimum_home_defenders": 2,
-            "minimum_food_at_home": 30,
-            "minimum_medicine_at_home": 10,
-            "allow_starting_war": bool(destination.get("would_start_war")),
-        })
-        issued["raid_caravan"] = tick
-        map_state["caravan_plan"] = {"kind": "raid", "destination_id": destination_id}
-        return response
-    if choice == "prepare_trade_caravan":
-        # The endpoint refuses unsafe parties and keeps at least two healthy
-        # defenders, food and medicine at home.
-        destination = next((row for row in snapshot["development"].get("trade_destinations", []) if row.get("can_trade_now")), None)
-        if destination is None:
-            return {"applied": False, "reason": "No safe trading destination is currently available"}
-        response = client.post("/api/v1/world/caravan/trade/start", body={
-            "map_id": map_id,
-            "destination_settlement_id": int(destination["settlement_id"]),
-            "minimum_home_defenders": 2,
-            "minimum_food_at_home": 20,
-            "minimum_medicine_at_home": 8,
-        })
-        issued["trade_caravan"] = tick
-        return response
+    if choice.startswith(("trade_to:", "raid_to:")) or choice == "prepare_trade_caravan":
+        result = expeditions.execute(client, details.get("expedition"))
+        if result.get("applied"):
+            body = details["expedition"]["body"]
+            issued[f"{body['mode']}_caravan"] = tick
+            map_state["caravan_plan"] = {"kind": body["mode"], "destination_id": body["destination_settlement_id"],
+                                         "formation_id": (result.get("response") or {}).get("formation_id")}
+        return result
     if choice == "prioritize_construction":
         worker_id = details.get("worker_pawn")
         if worker_id is None:
@@ -9309,6 +9367,7 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     snapshot["development"]["shelter_exposure_days"] = max(
         0.0, (int(snapshot["game"].get("tick") or 0) - int(map_state.get("first_seen_tick") or 0)) / 60000.0
     )
+    project_expedition_readiness(snapshot, map_state)
     snapshot["development"]["income_strategy"] = map_state.get("income_strategy")
     snapshot["development"]["prisoner_plans"] = map_state.get("prisoner_plans", {})
     snapshot["development"]["doctrine"] = map_state.get("doctrine", {})
@@ -9359,6 +9418,18 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     decision = choose_action(agent, snapshot, candidates)
     details = merge_decision_details(details, decision)
     choice = str(decision["choice"])
+    if choice == "prepare_trade_caravan":
+        destinations = {str(row["settlement_id"]): str(row.get("name")) for row in snapshot["development"].get("trade_destinations", []) if row.get("can_trade_now")}
+        if destinations:
+            target, _ = ask_laya_choice(agent, {}, "expedition_destination", "Choose an actual trade destination or defer.", {**destinations, "defer": "Keep crew home"})
+            request = expedition_request(snapshot, map_state, f"trade_to:{target}:mixed", details) if target in destinations else None
+        else:
+            request = None
+        details["expedition"] = expeditions.prepare(client, agent, request, ask_laya_choice) if request else {"status": "deferred", "reason": "No expedition destination confirmed"}
+    else:
+        request = expedition_request(snapshot, map_state, choice, details)
+        if request:
+            details["expedition"] = expeditions.prepare(client, agent, request, ask_laya_choice)
     try:
         result = execute_action(client, snapshot, map_state, choice, details)
     except bridge.RimApiError as exc:
@@ -9386,7 +9457,14 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
         if (choice.startswith("income_") and choice.removeprefix("income_") in strategy.DIRECT_INCOME_PLANS
                 and isinstance(result, dict) and result.get("applied")):
             map_state["income_plan_started"] = choice.removeprefix("income_")
-        clear_action_failure(map_state, choice)
+        if details.get("expedition") and not (isinstance(result, dict) and result.get("applied")):
+            failure = register_action_failure(map_state, choice, result.get("reason", "Expedition not acknowledged"))
+            failure["retry_after"] = time.time() + (30 if result.get("deliberate_defer") else min(30, 5 * 2 ** (failure["count"] - 1)))
+            map_state["expedition_readiness"] = {"observed_tick": int(snapshot["game"].get("tick") or 0), "reason": result.get("reason"), "readiness": details["expedition"].get("readiness") or {}}
+        else:
+            clear_action_failure(map_state, choice)
+            if details.get("expedition") and isinstance(result, dict) and result.get("applied"):
+                map_state.pop("expedition_readiness", None)
     try:
         publish_overlay(client, snapshot, candidates, decision)
     except bridge.RimApiError as exc:
@@ -9568,26 +9646,12 @@ def _execute_event_response(
             return {"applied": False, "reason": "No live quest matches this event."}
         return client.post("/api/v1/quest/accept", body={"quest_id": int(quest["id"])})
     if response == "prepare_rescue_mission":
-        quest = _event_quest(context, event)
-        if not quest:
-            return {"applied": False, "reason": "No rescue quest with a world target is active."}
-        responses = []
-        if not quest.get("ever_accepted"):
-            responses.append(client.post("/api/v1/quest/accept", body={"quest_id": int(quest["id"])}))
-        targets = [row for row in quest.get("look_targets") or [] if row.get("world_object_id") is not None]
-        if not targets:
-            return {"applied": bool(responses), "reason": "Quest accepted, but no visitable rescue site exists yet.", "responses": responses}
-        target = min(targets, key=lambda row: float(row.get("estimated_threat_points") or 0))
-        responses.append(client.post("/api/v1/world/caravan/rescue/start", body={
-            "map_id": map_id,
-            "quest_id": int(quest["id"]),
-            "site_id": int(target["world_object_id"]),
-            "minimum_home_defenders": 2,
-            "minimum_food_at_home": max(20, len(snapshot.get("colonists", [])) * 5),
-            "minimum_medicine_at_home": 8,
-        }))
-        map_state["rescue_mission"] = {"quest_id": int(quest["id"]), "site_id": int(target["world_object_id"]), "started_tick": tick}
-        return {"applied": True, "responses": responses}
+        result = expeditions.execute(client, details.get("expedition"))
+        if result.get("applied"):
+            body = details["expedition"]["body"]
+            map_state["rescue_mission"] = {"quest_id": body["quest_id"], "site_id": body["site_id"], "started_tick": tick,
+                "formation_id": (result.get("response") or {}).get("formation_id")}
+        return result
     if response == "trade_now":
         trader_id = str(details.get("trader_id") or "")
         trader = next((row for row in context.get("trade_opportunities") or []
@@ -9689,6 +9753,34 @@ def publish_event_overlay(client: bridge.RimApiClient, event: dict[str, Any], op
     )
 
 
+def prune_event_history(history: Any, tick: int) -> dict[str, int]:
+    """Keep acknowledgments only in the current save's forward tick window."""
+    kept = {}
+    for key, value in (history.items() if isinstance(history, dict) else []):
+        try:
+            recorded = int(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if 0 <= tick - recorded < 120000:
+            kept[str(key)] = recorded
+    return kept
+
+
+def event_result_acknowledged(response: str, result: Any) -> bool:
+    """Explicit observation/defer is intentional; a rejected mutation is retryable."""
+    if response in {"observe_event", "skip_trade", "defer_rescue", "defer_quest",
+                    "evaluate_animals", "evaluate_recruit", "ask_laya_generic",
+                    "rescue_arrival", "delegate_to_combat_planner"}:
+        return True
+    if not isinstance(result, dict):
+        return False
+    if result.get("applied") is False or result.get("success") is False:
+        if result.get("deliberate_defer") is True:
+            return True
+        return response == "trade_now" and result.get("reason") == "Laya chose no sale and no purchase"
+    return result.get("applied") is True or result.get("success") is True
+
+
 def run_event_cycle(
     client: bridge.RimApiClient,
     agent: Any,
@@ -9706,6 +9798,7 @@ def run_event_cycle(
     travel_medicine = sum(int(amount or 0) for name, amount in stock.items() if str(name).startswith("Medicine"))
     reserve = max(20, len(snapshot.get("colonists") or []) * 5)
     context["rescue_readiness"] = {
+        "native_preview_required": True,
         "travel_food": travel_food, "minimum_travel_food": reserve + 16,
         "medicine": travel_medicine, "minimum_medicine": 10,
         "ready": travel_food >= reserve + 16 and travel_medicine >= 10,
@@ -9720,7 +9813,7 @@ def run_event_cycle(
         client, context, int(snapshot["map"]["id"]), trade_reserve)
     tick = int(snapshot["game"].get("tick") or 0)
     history = map_state.setdefault("handled_events", {})
-    history = {str(key): int(value) for key, value in history.items() if tick - int(value) < 120000}
+    history = prune_event_history(history, tick)
     map_state["handled_events"] = history
     pending = events.pending_events(context, set(history))
     if not pending:
@@ -9899,12 +9992,26 @@ def run_event_cycle(
                 "Choose which real fire threatens the colony most.", targets)
             details["fire_target"] = fire_id
             raw["fire_target"] = fire_raw
+    if response == "prepare_rescue_mission":
+        quest = _event_quest(context, event) or {}
+        targets = {str(row["world_object_id"]): str(row.get("label") or row.get("world_object_id")) for row in quest.get("look_targets") or [] if row.get("world_object_id") is not None}
+        if quest.get("ever_accepted") and targets:
+            target, target_raw = ask_laya_choice(agent, event_model_context, "rescue_destination", "Choose the disclosed quest site or defer rescue.", {**targets, "defer": "Keep rescuers home"})
+            if target in targets:
+                details["expedition"] = expeditions.prepare(client, agent, {"mode": "rescue", "map_id": int(snapshot["map"]["id"]),
+                    "quest_id": int(quest["id"]), "site_id": int(target), "minimum_home_defenders": 2,
+                    "minimum_food_at_home": max(20, len(snapshot.get("colonists", [])) * 5), "minimum_medicine_at_home": 8, "margin_days": 2}, ask_laya_choice)
+            else:
+                details["expedition"] = {"status": "deferred", "reason": "Laya deferred rescue destination"}
+        else:
+            details["expedition"] = {"status": "blocked", "reason": "Accept the disclosed rescue quest first; no accepted site is available"}
     execution_failed = False
     try:
         result = _execute_event_response(client, snapshot, map_state, event, context, response, details)
     except bridge.RimApiError as exc:
         execution_failed = True
         failure = register_action_failure(map_state, f"{failure_prefix}{response}", exc)
+        failure["retry_after"] = time.time() + min(30.0, 5.0 * 2 ** (failure["count"] - 1))
         result = {
             "applied": False,
             "skipped": "event_api_error_backoff",
@@ -9913,7 +10020,17 @@ def run_event_cycle(
             "retry_in_seconds": round(float(failure["retry_after"]) - time.time(), 1),
         }
     else:
-        clear_action_failure(map_state, f"{failure_prefix}{response}")
+        if event_result_acknowledged(response, result):
+            clear_action_failure(map_state, f"{failure_prefix}{response}")
+        else:
+            execution_failed = True
+            failure = register_action_failure(map_state, f"{failure_prefix}{response}",
+                (result or {}).get("reason", "Event action was not acknowledged") if isinstance(result, dict) else "Unknown event result")
+            # Failed native options need a short bounded retry, not a handled-event entry.
+            failure["retry_after"] = time.time() + min(30.0, 5.0 * 2 ** (failure["count"] - 1))
+            if isinstance(result, dict):
+                result = {**result, "failure_count": failure["count"],
+                          "retry_in_seconds": round(failure["retry_after"] - time.time(), 1)}
     if response == "trade_now" and bool((result or {}).get("applied")):
         trade = (result or {}).get("trade") or {}
         map_state.setdefault("trade_ledger", []).append({
@@ -9963,7 +10080,21 @@ def run_rescue_site_cycle(
         return None
     if status.get("active_threat"):
         return None
-    if status.get("captive_pawn_ids"):
+    mission = active_plans[0]["rescue_mission"]
+    targets = sorted(status.get("captive_pawn_ids") or [])
+    retry_key = [status.get("site_id"), targets, bool(status.get("can_return_home"))]
+    prior = mission.get("site_retry") or {}
+    if prior.get("key") == retry_key and retry_recent(prior, int(snapshot["game"].get("tick") or 0), 60):
+        return None
+
+    def order(endpoint):
+        mission["site_retry"] = {**failure_record(int(snapshot["game"].get("tick") or 0), seconds=15), "key": retry_key}
+        try:
+            return client.post(endpoint, body={"map_id": int(snapshot["map"]["id"])})
+        except bridge.RimApiError as exc:
+            return {"applied": False, "reason": str(exc), "outcome_unknown": True}
+
+    if targets:
         release_active = any(
             "releaseprisoner" in str(pawn.get("current_job") or "").replace("_", "").lower()
             for pawn in snapshot.get("combat", {}).get("colonists", [])
@@ -9972,16 +10103,23 @@ def run_rescue_site_cycle(
             result = {"applied": False, "reason": "normal prisoner release job is still active"}
             phase = "wait-for-release"
         else:
-            result = client.post("/api/v1/world/rescue/site/secure", body={"map_id": int(snapshot["map"]["id"])})
+            result = order("/api/v1/world/rescue/site/secure")
             phase = "free-captive"
     elif status.get("can_return_home"):
-        result = client.post("/api/v1/world/rescue/site/return", body={"map_id": int(snapshot["map"]["id"])})
+        result = order("/api/v1/world/rescue/site/return")
         phase = "return-home"
-        for map_state in active_plans:
-            map_state["last_rescue_mission"] = map_state.pop("rescue_mission")
-            map_state["last_rescue_mission"]["completed_tick"] = int(snapshot["game"].get("tick") or 0)
     else:
         return None
+    acknowledged = (isinstance(result, dict) and result.get("applied") is not False
+                    and result.get("success") is not False
+                    and (result.get("applied") is True or (phase == "free-captive" and result.get("success") is True)))
+    if acknowledged:
+        mission.pop("site_retry", None)
+        if phase == "return-home":
+            for map_state in active_plans:
+                map_state["last_rescue_mission"] = map_state.pop("rescue_mission")
+                map_state["last_rescue_mission"]["return_requested_tick"] = int(snapshot["game"].get("tick") or 0)
+                map_state["last_rescue_mission"]["completion"] = "unverified"
     record = {
         "timestamp": bridge.utc_now(), "mode": "rescue-site", "phase": phase,
         "status": status, "result": result,
@@ -10528,13 +10666,53 @@ def combat_positioning_finished(snapshot: dict[str, Any], record: dict[str, Any]
     )
 
 
+def combat_tactical_acceptance(response: Any) -> bool:
+    return isinstance(response, dict) and response.get("applied") is not False and any(
+        bool(response.get(k)) for k in ("positioned_pawn_ids", "attacking_pawn_ids", "psycast_queued"))
+
+
+def combat_record_rejected(record: dict | None) -> bool:
+    record = record or {}
+    result = record.get("result") or {}
+    if result.get("failed_command_index") is not None:
+        return True  # Also retry denied status/speed/job commands in bounded time.
+    commands = (record.get("action") or {}).get("commands") or []
+    responses = result.get("responses") or []
+    choice = (record.get("decision") or {}).get("choice")
+    tactics = [i for i, c in enumerate(commands) if c.get("endpoint") == "/api/v1/combat/tactic"]
+    primary = [i for i in tactics if (commands[i].get("body") or {}).get("tactic") == choice]
+    if not primary:
+        # Composite melee role assignment has no single named native tactic.
+        # Optional reserve withdrawal cannot establish attack acceptance.
+        primary = [i for i in tactics if (commands[i].get("body") or {}).get("tactic") not in {"withdraw_and_regroup", "civilian_retreat"}]
+    if not primary:
+        primary = tactics
+    return bool(primary) and not any(i < len(responses) and combat_tactical_acceptance(responses[i]) for i in primary)
+
+
+def combat_failed_retry_due(signature, previous, elapsed: float) -> bool:
+    return signature != previous or elapsed >= 5.0
+
+
+def record_combat_step(record: dict, response: Any) -> None:
+    """Replace the current hop acknowledgment; earlier success cannot mask denial."""
+    commands = (record.get("action") or {}).get("commands") or []
+    index = next((i for i, c in enumerate(commands) if c.get("endpoint") == "/api/v1/combat/tactic" and (c.get("body") or {}).get("tactic") == "preemptive_strike"), None)
+    if index is None:
+        return
+    responses = list((record.get("result") or {}).get("responses") or [])
+    while len(responses) <= index:
+        responses.append(None)
+    responses[index] = response
+    record["result"] = bridge.command_result(commands, responses)
+
 def preemptive_advance_state(snapshot: dict[str, Any], record: dict[str, Any] | None,
                              elapsed: float) -> tuple[str, dict[str, Any] | None]:
     """Continue Laya's strike in short map-validated hops, or reassess new danger."""
     if not record or (record.get("decision") or {}).get("choice") != "preemptive_strike":
         return "none", None
     commands = (record.get("action") or {}).get("commands") or []
-    command = next((row for row in commands if row.get("endpoint") == "/api/v1/combat/tactic"), None)
+    command = next((row for row in commands if row.get("endpoint") == "/api/v1/combat/tactic" and (row.get("body") or {}).get("tactic") == "preemptive_strike"), None)
     if not command or (command.get("body") or {}).get("tactic") != "preemptive_strike":
         return "none", None
     body = command["body"]
@@ -10554,8 +10732,8 @@ def preemptive_advance_state(snapshot: dict[str, Any], record: dict[str, Any] | 
     responses = (record.get("result") or {}).get("responses") or []
     tactic_index = commands.index(command)
     tactic_response = responses[tactic_index] if len(responses) > tactic_index else {}
-    if tactic_response and not (tactic_response.get("positioned_pawn_ids") or tactic_response.get("attacking_pawn_ids")):
-        return "wait", None
+    if not combat_tactical_acceptance(tactic_response):
+        return "replan", None
     if elapsed < 2.0 or any(str(row.get("current_job") or "").lower() == "goto" for row in fighters):
         return "wait", None
     if all(str(row.get("current_job") or "").lower() == "attackstatic" for row in fighters):
@@ -11443,6 +11621,7 @@ def main() -> int:
     last_combat_record: dict[str, Any] | None = None
     last_combat_order_time = 0.0
     last_combat_step_time = 0.0
+    last_combat_failure_time: float | None = None
     next_colony_cycle = 0.0
     next_downed_cycle = 0.0
     next_post_combat_care_cycle = 0.0
@@ -11465,6 +11644,12 @@ def main() -> int:
             # merely because another retry has started.
             write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
             try:
+                # The retry gate covers native world/modal reads too. Those
+                # run before a map snapshot and can fail while no map exists.
+                remaining_retry = retry_not_before - time.monotonic()
+                if remaining_retry > 0.0:
+                    time.sleep(min(2.0, remaining_retry))
+                    continue
                 ending_evidence = bridge.safe_get(client, "/api/v1/colony/ending-evidence", [])
                 colony_sessions.bind_campaign(state, ending_evidence)
                 terminal = colony_sessions.terminal_result(ending_evidence)
@@ -11532,11 +11717,6 @@ def main() -> int:
                         for row in snapshot.get("combat", {}).get("colonists", [])
                     )
                     care_bootstrapped = True
-                remaining_retry = retry_not_before - time.monotonic()
-                if remaining_retry > 0.0:
-                    elapsed = time.monotonic() - started
-                    time.sleep(max(0.0, min(2.0, remaining_retry) - elapsed))
-                    continue
                 caravan_trade_record = run_caravan_trade_cycle(client, agent, snapshot, state, args.log)
                 if caravan_trade_record is not None:
                     save_state(args.state, state)
@@ -11686,17 +11866,22 @@ def main() -> int:
                     positioning_finished = combat_positioning_finished(
                         snapshot, last_combat_record, now - last_combat_order_time
                     )
+                    failed_wait = last_combat_failure_time is not None and not combat_failed_retry_due(
+                        signature, last_combat_signature, now - last_combat_failure_time)
+                    if last_combat_failure_time is not None and not failed_wait:
+                        advance_state = "replan"
                     if advance_state in {"advance", "wait"} and now - last_combat_order_time >= 60:
                         advance_state = "replan"
-                    if advance_state == "advance" and advance_body is not None:
+                    if not failed_wait and advance_state == "advance" and advance_body is not None:
                         step_result = client.post("/api/v1/combat/tactic", body=advance_body)
                         last_combat_step_time = now
-                        if not step_result.get("positioned_pawn_ids") and not step_result.get("attacking_pawn_ids"):
-                            last_combat_signature = None
+                        record_combat_step(last_combat_record, step_result)
+                        last_combat_failure_time = None if combat_tactical_acceptance(step_result) else now
+                        last_combat_signature = signature
                         if snapshot["game"].get("is_paused"):
                             client.post("/api/v1/game/speed", query={"speed": 1})
                         publish_combat_overlay(client, last_combat_record, repeated=True)
-                    elif advance_state == "wait" or (advance_state != "replan" and not positioning_finished
+                    elif failed_wait or advance_state == "wait" or (advance_state != "replan" and not positioning_finished
                                                        and not combat_replan_due(signature, last_combat_signature,
                                                          now - last_combat_order_time, last_combat_record is not None, urgent)):
                         if snapshot["game"].get("is_paused") and living_hostiles:
@@ -11707,7 +11892,9 @@ def main() -> int:
                         publish_combat_overlay(client, record)
                         last_combat_signature = signature
                         last_combat_record = record
-                        last_combat_order_time = now
+                        last_combat_failure_time = now if combat_record_rejected(record) else None
+                        if last_combat_failure_time is None:
+                            last_combat_order_time = now
                         last_combat_step_time = now
                         print(f"[{record['timestamp']}] combat: {record['action']['description']}", flush=True)
                     if now >= next_colony_cycle and (last_combat_record or {}).get("decision", {}).get("choice") in {
@@ -11728,6 +11915,7 @@ def main() -> int:
                     last_combat_record = None
                     last_combat_order_time = 0.0
                     last_combat_step_time = 0.0
+                    last_combat_failure_time = None
                     now = time.monotonic()
                     fire_state = bridge.safe_get(client, "/api/v1/map/fire/situation", [],
                                                  map_id=int(snapshot["map"]["id"])) or {}

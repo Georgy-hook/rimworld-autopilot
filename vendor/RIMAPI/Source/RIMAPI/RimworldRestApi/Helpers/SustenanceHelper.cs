@@ -25,6 +25,24 @@ namespace RIMAPI.Helpers {
    var allowed=new HashSet<ThingDef>(trial.ingredientFilter.AllowedThingDefs);
    return table.BillStack.Bills.OfType<Bill_Production>().FirstOrDefault(b=>b.recipe==recipe && b.GetType()==trial.GetType() && b.repeatMode==BillRepeatModeDefOf.RepeatCount && b.repeatCount==0 && allowed.SetEquals(b.ingredientFilter.AllowedThingDefs)) ?? trial;
   }
+  // Mirror only the native zone selection, without allocating a Job, rolling
+  // random fish cells or firing an ideology event during GET. Execution still
+  // asks the real giver and rejects a changed requested zone.
+  static Zone_Fishing NativeFishingZone(Pawn pawn) {
+   var map=pawn.Map;
+   if(pawn.CanReserve(pawn.Position,1,-1,ReservationLayerDefOf.Floor) && !pawn.Position.GetTerrain(map).IsWater)
+    for(int i=0;i<4;i++) {
+     var cell=pawn.Position+GenAdj.CardinalDirections[(i+pawn.thingIDNumber)%4];
+     if(cell.InBounds(map) && cell.GetZone(map) is Zone_Fishing adjacent && adjacent.ShouldFishNow
+      && adjacent.IsFishable(cell) && !cell.IsForbidden(pawn) && pawn.CanReserve(cell,1,-1,ReservationLayerDefOf.Floor))return adjacent;
+    }
+   Zone_Fishing nearest=null;float distance=float.MaxValue;
+   foreach(var zone in map.zoneManager.AllZones.OfType<Zone_Fishing>().Where(z=>z.ShouldFishNow && z.HasAnyFishableCells)) {
+    float next=pawn.Position.DistanceToSquared(zone.Cells[0]);
+    if(nearest==null || next<distance){nearest=zone;distance=next;}
+   }
+   return nearest;
+  }
   static List<Plan> Plans(Map m) {
    var list=new List<Plan>();
    var stock=m.listerThings.AllThings.Where(t=>(t.def.category==ThingCategory.Item || t is Corpse) && Safe(t)).ToArray();
@@ -78,7 +96,7 @@ namespace RIMAPI.Helpers {
      list.Add(new Plan{key=$"fishpolicy:{existingFishing.ID}:1",kind="fishpolicy",target_id=existingFishing.ID,value="1",label=existingFishing.label+": one fishing cycle",cost="Replaces current repeat mode with one ordinary catch cycle; stock/hauling remain normal",risk="population="+(existingFishing.Cells.Count>0?m.waterBodyTracker.PopulationPercentAt(existingFishing.Cells[0]):0)+"; existing population floor="+existingFishing.targetPopulationPct+" remains; slaughter precepts and dangerous catches"});
     var giver=DefDatabase<WorkGiverDef>.AllDefs.FirstOrDefault(d=>d.Worker is WorkGiver_Fish);
     if(giver!=null)foreach(var pawn in m.mapPawns.FreeColonistsSpawned.Where(p=>!Protected(p) && p.workSettings!=null && !p.WorkTypeIsDisabled(giver.workType) && p.workSettings.GetPriority(giver.workType)>0 && giver.Worker.MissingRequiredCapacity(p)==null))
-     foreach(var zone in m.zoneManager.AllZones.OfType<Zone_Fishing>().Where(z=>z.ShouldFishNow && z.HasAnyFishableCells)) {
+     foreach(var zone in new[]{NativeFishingZone(pawn)}.Where(z=>z!=null)) {
       // Native jobgiver performs final ideology, spot, floor reservation and stand-position checks on execution.
       if(!zone.Cells.Any(c=>zone.IsFishable(c) && !c.IsForbidden(pawn) && pawn.CanReserveAndReach(c,PathEndMode.Touch,Danger.Some,1,-1,ReservationLayerDefOf.Floor)))continue;
       list.Add(new Plan{key=$"fish:{pawn.thingIDNumber}:{zone.ID}",kind="fish",target_id=pawn.thingIDNumber,value=giver.defName+":"+zone.ID,label=pawn.LabelShortCap+": fish existing "+zone.label,cost="Fishing labor; loaded seasonal population/yield and zone settings",risk="Fish slaughter precepts, dangerous catches/water and depleted population; native jobgiver may reject; no instant fish"});
@@ -101,8 +119,11 @@ namespace RIMAPI.Helpers {
      list.Add(new Plan{key=$"stockfood:{z.ID}:{def.defName}",kind="stockfood",target_id=z.ID,value=def.defName,label=z.label+": permit "+def.LabelCap,cost="Hauling and storage space; other allowances remain",risk="Food may be hauled into this stockpile according to priority; temperature, roof, competition and feeding access must be assessed"});
    }
    foreach(var p in m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal && p.playerSettings!=null)) {
-    foreach(var care in new[]{MedicalCareCategory.NoMeds,MedicalCareCategory.HerbalOrWorse,MedicalCareCategory.NormalOrWorse}) if(p.playerSettings.medCare!=care)
-     list.Add(new Plan{key=$"care:{p.thingIDNumber}:{(int)care}",kind="care",target_id=p.thingIDNumber,value=((int)care).ToString(),label=p.LabelShortCap+": "+care,cost="Sets maximum medicine allowed for ordinary tending; does not order surgery",risk="Lower medicine may reduce tend quality; higher setting competes with human medicine reserves"});
+    foreach(MedicalCareCategory care in Enum.GetValues(typeof(MedicalCareCategory))) if(p.playerSettings.medCare!=care)
+     list.Add(new Plan{key=$"care:{p.thingIDNumber}:{(int)care}",kind="care",target_id=p.thingIDNumber,value=((int)care).ToString(),label=p.LabelShortCap+": "+care,cost="Sets maximum medicine allowed for ordinary tending; does not order surgery",risk=care==MedicalCareCategory.NoCare ? "No ordinary tending is permitted: injury, infection and illness may worsen or kill this animal; deliberate policy only"
+      : care==MedicalCareCategory.NoMeds ? "Ordinary tending without medicine; lower tend quality may worsen serious disease"
+      : care==MedicalCareCategory.Best ? "Allows the best loaded medicine, including glitterworld medicine; competes with human critical-care reserves"
+      : "Medicine ceiling may reduce tend quality; permitted medicine competes with human reserves"});
     if(p.playerSettings.SupportsAllowedAreas && !Protected(p)) foreach(var a in m.areaManager.AllAreas.OfType<Area_Allowed>().Where(a=>a.TrueCount>0 && a!=p.playerSettings.AreaRestrictionInPawnCurrentMap))
      list.Add(new Plan{key=$"area:{p.thingIDNumber}:{a.ID}",kind="area",target_id=p.thingIDNumber,value=a.ID.ToString(),label=p.LabelShortCap+": "+a.Label,cost="Movement restriction; ordinary animal AI chooses feeding/rest",risk="Must compare food, beds, temperature and predators inside area; restriction may interrupt current animal job"});
    }
@@ -152,7 +173,8 @@ namespace RIMAPI.Helpers {
   }
   public static ApiResult<object> Context(int id) {
    var m=MapHelper.GetMapByID(id); if(m==null)return ApiResult<object>.Fail("Map missing");
-   var animals=m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal).Select(p=>new{id=p.thingIDNumber,label=p.LabelShortCap,species=p.def.defName,gender=p.gender.ToString(),age=p.ageTracker.AgeBiologicalYearsFloat,food=p.needs?.food?.CurLevelPercentage,rest=p.needs?.rest?.CurLevelPercentage,downed=p.Downed,pregnant=p.health.hediffSet.hediffs.Any(h=>h is Hediff_Pregnant),medical_care=p.playerSettings?.medCare.ToString(),area=p.playerSettings?.AreaRestrictionInPawnCurrentMap?.Label,diet=p.RaceProps.foodType.ToString(),health=p.health.hediffSet.hediffs.Select(h=>new{def_name=h.def.defName,severity=h.Severity}).ToArray(),inspect=p.GetInspectString()}).ToArray();
+   var animals=m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal).Select(p=>new{id=p.thingIDNumber,label=p.LabelShortCap,species=p.def.defName,gender=p.gender.ToString(),age=p.ageTracker.AgeBiologicalYearsFloat,food=p.needs?.food?.CurLevelPercentage,rest=p.needs?.rest?.CurLevelPercentage,downed=p.Downed,pregnant=p.health.hediffSet.hediffs.Any(h=>h is Hediff_Pregnant),medical_care=p.playerSettings?.medCare.ToString(),area=p.playerSettings?.AreaRestrictionInPawnCurrentMap?.Label,diet=p.RaceProps.foodType.ToString(),health=p.health.hediffSet.hediffs.Where(h=>h.Visible).Select(h=>new{def_name=h.def.defName,severity=h.Severity,stage_index=h.CurStageIndex,life_threatening=h.CurStage?.lifeThreatening ?? false}).ToArray(),inspect=p.GetInspectString()}).ToArray();
+   var food_pawns=m.mapPawns.FreeColonistsSpawned.Where(p=>p.foodRestriction?.Configurable==true).Select(p=>new{id=p.thingIDNumber,label=p.LabelShortCap,food=p.needs?.food?.CurLevelPercentage,downed=p.Downed,current_policy=p.foodRestriction.CurrentFoodPolicy?.id,health=p.health.hediffSet.hediffs.Where(h=>h.Visible).Select(h=>new{def_name=h.def.defName,severity=h.Severity,stage_index=h.CurStageIndex,life_threatening=h.CurStage?.lifeThreatening ?? false}).ToArray()}).ToArray();
    var pens=m.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>()).Where(c=>c!=null).Select(c=> {var f=c.PenFoodCalculator; f.ResetAndProcessPen(c);return new{id=c.parent.thingIDNumber,label=c.RenamableLabel,enclosed=c.PenState?.Enclosed,pasture_nutrition_per_day=f.NutritionPerDayToday,consumption_per_day=f.SumNutritionConsumptionPerDay,stockpiled_nutrition=f.sumStockpiledNutritionAvailableNow,inspect=c.CompInspectStringExtra()};}).ToArray();
    var cooking=DefDatabase<WorkTypeDef>.GetNamedSilentFail("Cooking");
    var medicines=m.listerThings.AllThings.Where(t=>t.def.IsMedicine && Safe(t)).GroupBy(t=>t.def).Select(g=>new{def_name=g.Key.defName,count=g.Sum(t=>t.stackCount)}).ToArray();
@@ -167,7 +189,7 @@ namespace RIMAPI.Helpers {
    var diets=Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Select(p=>new{id=p.id,label=p.label,allowed=p.filter.AllowedThingDefs.Select(d=>d.defName).ToArray()}).ToArray();
    var coolers=m.listerBuildings.allBuildingsColonist.Where(b=>b.TryGetComp<CompTempControl>()!=null).Select(b=>new{id=b.thingIDNumber,label=b.LabelShortCap,temperature=b.AmbientTemperature,target=b.TryGetComp<CompTempControl>().targetTemperature,powered=b.TryGetComp<CompPowerTrader>()?.PowerOn}).ToArray();
    var fishing=ModsConfig.OdysseyActive ? m.zoneManager.AllZones.OfType<Zone_Fishing>().Select(z=>new{id=z.ID,label=z.label,allowed=z.Allowed,should_fish=z.ShouldFishNow,fishable=z.HasAnyFishableCells,frozen=z.AllFishableCellsFrozen,mode=z.repeatMode.ToString(),repeat=z.repeatCount,target=z.targetCount,population_floor=z.targetPopulationPct,population=z.Cells.Count>0?m.waterBodyTracker.PopulationPercentAt(z.Cells[0]):0,owned_fish=z.OwnedFishCount}).ToArray() : null;
-   return ApiResult<object>.Ok(new {available=true,options=Plans(m),fishing,odyssey_active=ModsConfig.OdysseyActive,animals,pens,tables,cooks,doctors,medicines,perishables,food,storages,stockpiles,areas,diets,coolers,outdoor_temperature=m.mapTemperature.OutdoorTemp,herds=m.autoSlaughterManager.configs.Select(c=>new{species=c.animal.defName,total=c.maxTotal,males=c.maxMales,females=c.maxFemales,young_males=c.maxMalesYoung,young_females=c.maxFemalesYoung,allow_pregnant=c.allowSlaughterPregnant,allow_bonded=c.allowSlaughterBonded}).ToArray()});
+   return ApiResult<object>.Ok(new {available=true,options=Plans(m),fishing,odyssey_active=ModsConfig.OdysseyActive,animals,food_pawns,pens,tables,cooks,doctors,medicines,perishables,food,storages,stockpiles,areas,diets,coolers,outdoor_temperature=m.mapTemperature.OutdoorTemp,herds=m.autoSlaughterManager.configs.Select(c=>new{species=c.animal.defName,total=c.maxTotal,males=c.maxMales,females=c.maxFemales,young_males=c.maxMalesYoung,young_females=c.maxFemalesYoung,allow_pregnant=c.allowSlaughterPregnant,allow_bonded=c.allowSlaughterBonded}).ToArray()});
   }
   public static ApiResult<object> Policy(SustenancePolicyDto request) {
    var m=MapHelper.GetMapByID(request.MapId);if(m==null)return ApiResult<object>.Fail("Map missing");
