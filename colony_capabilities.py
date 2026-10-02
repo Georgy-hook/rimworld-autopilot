@@ -32,6 +32,8 @@ CARE_JOBS = {"TendPatient", "Rescue", "FeedPatient", "DoBill"}
 
 
 def workers(snapshot: dict[str, Any], work: str, minimum: int = 0) -> list[dict[str, Any]]:
+    # These actions explicitly enable the selected worker after acceptance.
+    # Priority zero is a reversible assignment, unlike an incapable work type.
     skill = {"Growing": "Plants", "PlantCutting": "Plants", "Handling": "Animals", "Doctor": "Medicine"}.get(work)
     return [p for p in snapshot.get("colonists") or []
             if not p.get("downed") and not p.get("dead") and not p.get("in_mental_state") and not p.get("is_drafted")
@@ -368,6 +370,21 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
     def order(path: str, body: dict[str, Any]) -> Any:
         return client.post(path, body=body)
 
+    def accepted(value: Any) -> bool:
+        if not isinstance(value, dict):
+            return False
+        if "applied" in value:
+            return value["applied"] is True
+        if action == "create_growing_zone":
+            # This legacy endpoint returns GrowingZoneDto, not an applied flag.
+            zone = value.get("zone") or {}
+            return (value.get("plant_def_name") == selected.get("crop_type")
+                    and isinstance(zone, dict) and int(zone.get("cells_count") or 0) > 0)
+        if action == "research_greenhouse":
+            return value.get("name") == selected.get("greenhouse_research")
+        # Harvest/Equip use the non-generic ApiResult success envelope.
+        return value.get("success") is True
+
     if action in {"create_growing_zone", "configure_crop"}:
         site = plans.get(str(selected.get("crop_site")))
         crop = str(selected.get("crop_type") or "")
@@ -381,16 +398,16 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
             response = order("/api/v1/map/zone/growing", {"map_id": map_id, "plant_def": crop, "point_a": site["point_a"], "point_b": site["point_b"]})
         else:
             response = order("/api/v1/map/zone/growing/crop", {"map_id": map_id, "plant_def": crop, "zone_id": site.get("zone_id"), "building_id": site.get("building_id")})
-            if response.get("applied") and site.get("zone_id") is not None and not site.get("allow_sow"):
+            if accepted(response) and site.get("zone_id") is not None and not site.get("allow_sow"):
                 order("/api/v1/map/zone/growing/sowing", {"map_id": map_id, "zone_id": site["zone_id"], "allow_sow": True})
-        if response.get("applied", True):
+        if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "Growing", "priority": 1})
     elif action == "clear_plant_blight":
         worker = int(selected.get("blight_worker") or 0)
         if worker not in {int(p["id"]) for p in plans.get("workers") or []}:
             return {"applied": False, "reason": "No eligible cutter selected"}
         response = order("/api/v1/map/plants/cut-blight", {"map_id": map_id, "plant_ids": [p["thing_id"] for p in plans["plants"]], "worker_pawn_id": worker})
-        if response.get("applied"):
+        if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "PlantCutting", "priority": 1})
             pawn = next(p for p in plans["workers"] if int(p["id"]) == worker)
             growing_priority = (pawn.get("work_priorities", {}).get("Growing") or {}).get("priority")
@@ -401,7 +418,8 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
         if worker not in {int(p["id"]) for p in plans.get("workers") or []}:
             return {"applied": False, "reason": "No eligible harvester selected"}
         response = order("/api/v1/map/plants/harvest", {"map_id": map_id, "plant_ids": [p["thing_id"] for p in plans["plants"]]})
-        order("/api/v1/colonist/work-priority", {"id": worker, "work": "PlantCutting", "priority": 1})
+        if accepted(response):
+            order("/api/v1/colonist/work-priority", {"id": worker, "work": "PlantCutting", "priority": 1})
     elif action == "research_greenhouse":
         target = str(selected.get("greenhouse_research") or "")
         if target == "defer":
@@ -419,7 +437,7 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
         if not operation or not operation.get("ready") or doctor not in operation.get("doctor_ids", []) or bed not in operation.get("bed_ids", []):
             return {"applied": False, "reason": "No verified patient, surgeon and bed selected"}
         response = order("/api/v1/medical/augmentation", {"map_id": map_id, "patient_pawn_id": operation["patient_pawn_id"], "doctor_pawn_id": doctor, "bed_id": bed, "recipe_def": operation["recipe_def"], "body_part_index": operation["body_part_index"]})
-        if response.get("applied"):
+        if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": doctor, "work": "Doctor", "priority": 1})
     elif action in {"assign_animal_training", "assign_animal_master"}:
         plan = plans.get(str(selected.get("training_animal")))
@@ -435,7 +453,7 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
         else:
             body.update(master_pawn_id=worker, follow_drafted=True)
         response = order("/api/v1/map/animal/training", body)
-        if response.get("applied"):
+        if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "Handling", "priority": 1})
     elif action == "improve_weapon_loadout":
         if selected.get("weapon_defer"):
@@ -450,6 +468,6 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
         response = order("/api/v1/pawn/job", {"pawn_id": plan["pawn"]["id"], "job_def": "Equip", "target_thing_id": weapon["id"]})
     if response is None:
         return {"applied": False, "reason": "No capability order prepared"}
-    applied = bool(response.get("applied", True))
+    applied = accepted(response)
     map_state.setdefault("issued", {})["capability:" + action] = int(snapshot["game"].get("tick") or 0)
-    return {"applied": applied, "reason": response.get("reason"), "response": response, "selection": selected}
+    return {"applied": applied, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response, "selection": selected}

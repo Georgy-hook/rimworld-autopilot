@@ -57,6 +57,13 @@ class ProductionTests(unittest.TestCase):
         s=self.snapshot(); p.prepare(s,{})
         c=Client(s['development']['production']); r=p.execute(c,s,{},'production_utilities',{'production_policy':'2:switch_off'})
         self.assertFalse(r['applied']); self.assertEqual(1,len(c.calls))
+    def test_invalid_native_response_and_string_success_are_rejected(self):
+        for response in ('invalid', {'applied':'false'}):
+            s=self.snapshot();p.prepare(s,{})
+            c=Client(s['development']['production'], response); state={}
+            result=p.execute(c,s,state,'production_utilities',{'production_policy':'2:switch_off'})
+            self.assertFalse(result['applied'])
+            self.assertNotIn('production_utilities',p.prepare(s,state))
     def test_defer_records_cooldown_without_api_mutation(self):
         s=self.snapshot(); c=Client({}); m={}
         r=p.execute(c,s,m,'production_feed_batch',{'production_policy':'defer'})
@@ -104,6 +111,43 @@ class RecipeProductionTests(unittest.TestCase):
         for call in agent.calls:
             self.assertLessEqual(len(agent.tok(json.dumps(call,ensure_ascii=False))['input_ids']),312)
             self.assertTrue(all(set(card)=={'benefit','cost','risk','inaction','uncertainty'} and all(card.values()) for card in call['effects'].values()))
+
+class ProductionGoalTests(unittest.TestCase):
+    def test_every_stage_retains_compact_ending_requirements_and_downsides(self):
+        import json
+        class Tokenizer:
+            def __call__(self,text,**kwargs):return {'input_ids':list(range((len(text)+2)//3))}
+        class Agent:
+            tok=Tokenizer();cfg={'max_len':512,'head_max_len':192}
+            def __init__(self):self.calls=[]
+            def predict(self,visible,questions):
+                self.calls.append(copy.deepcopy(visible));qid,q=next(iter(questions.items()))
+                return {'answers':{qid:{'choice':next(k for k in q['criteria'] if k!='defer')}}}
+        state={'endgame':'ship_escape','goal_requirements':{'journey':'Pemmican:40','ship_materials':{'ComponentSpacer':12}},
+               'building_catalog':'unrelated catalog '*1000}
+        for action in p.ACTIONS:
+            snapshot=ProductionTests().snapshot()
+            context=snapshot['development']['production']
+            context['recipe_context']={'options':[RecipeProductionTests().plan()]}
+            context['logistics_context']={'options':[LogisticsProductionTests().plan()]}
+            p.prepare(snapshot,{})
+            agent=Agent();p.choose(agent,state,action,snapshot)
+            self.assertGreaterEqual(len(agent.calls),1,action)
+            for call in agent.calls:
+                facts=str(call['facts'])
+                self.assertIn('ship_escape',facts,action)
+                self.assertIn('Pemmican:40',facts,action)
+                self.assertIn('ComponentSpacer',facts,action)
+                self.assertNotIn('unrelated catalog',facts)
+                self.assertLessEqual(len(agent.tok(json.dumps(call,ensure_ascii=False))['input_ids']),312)
+                for effect in call['effects'].values():
+                    self.assertEqual(set(effect),{'benefit','risk','cost','inaction','uncertainty'})
+                    self.assertTrue(all(effect.values()))
+    def test_direct_recipe_and_logistics_callers_can_omit_goal_state(self):
+        with patch.object(p,'ask_laya_choice',return_value=('defer',{})):
+            self.assertEqual(p.recipe_choose(None,{'recipe_context':{'options':[]}})[0]['production_policy'],'defer')
+            self.assertEqual(p.logistics_choose(None,{'logistics_context':{'options':[]}})[0]['production_policy'],'defer')
+
 
 class LogisticsProductionTests(unittest.TestCase):
     def plan(self):

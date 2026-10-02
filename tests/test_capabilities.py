@@ -140,6 +140,37 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(body["plant_def"], "ModBarley")
         self.assertEqual(body["point_a"], site["point_a"])
 
+    def test_native_zone_dto_enables_priority_zero_grower_after_acceptance(self):
+        s=snapshot(); s['colonists'][0]['work_priorities']['Growing']['priority']=0
+        p=crop(); site=growing_site(kind='new_ground',plant=None,options=[p])
+        s['development']['plant_catalog']={'plants':[p],'growers':[site]}
+        caps.prepare(s,{})
+        selected={'crop_site':site['id'],'crop_type':p['def_name'],'crop_worker':'1'}
+        client=Client()
+        def post(endpoint, **kwargs):
+            client.calls.append((endpoint,kwargs))
+            return {'zone':{'id':8,'cells_count':9},'plant_def_name':p['def_name']} if endpoint.endswith('/growing') else {'success':True}
+        client.post=post
+        self.assertTrue(caps.execute(client,s,{},'create_growing_zone',selected)['applied'])
+        self.assertEqual(client.calls[-1][1]['body'],{'id':1,'work':'Growing','priority':1})
+
+    def test_empty_or_string_applied_never_claims_accepted_crop_or_changes_work(self):
+        s=snapshot(); p=crop(); site=growing_site(kind='new_ground',plant=None,options=[p])
+        s['development']['plant_catalog']={'plants':[p],'growers':[site]};caps.prepare(s,{})
+        for response in ({}, {'applied':'false'}):
+            client=Client()
+            def post(endpoint, **kwargs):
+                client.calls.append((endpoint,kwargs));return response
+            client.post=post
+            result=caps.execute(client,s,{},'create_growing_zone',{'crop_site':site['id'],'crop_type':p['def_name'],'crop_worker':'1'})
+            self.assertFalse(result['applied']);self.assertEqual(len(client.calls),1)
+
+    def test_rejected_harvest_does_not_enable_worker(self):
+        s=snapshot(); s['development']['plants']=[{'thing_id':5,'harvestable_now':True,'dying':True}]
+        caps.prepare(s,{});client=Client(applied=False)
+        self.assertFalse(caps.execute(client,s,{},'harvest_at_risk_crops',{'harvest_worker':'1'})['applied'])
+        self.assertEqual(len(client.calls),1)
+
     def test_blight_selects_infected_only_and_does_not_interrupt_doctor(self):
         s = snapshot(); s["development"]["plants"] = [{"thing_id": 5, "blighted": True}, {"thing_id": 6, "blighted": False}]
         actions = caps.prepare(s, {})

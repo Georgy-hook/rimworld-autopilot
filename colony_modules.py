@@ -44,12 +44,26 @@ def signals(snapshot: dict[str, Any]) -> dict[str, Any]:
         if summarize is None:
             continue
         for key, value in summarize(snapshot).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                result[key] = value
             if isinstance(value, dict):
                 if int(value.get("count") or 0) > 0:
                     result[key] = value["count"]
                 if int(value.get("unfrozen_wastepacks") or 0) > 0:
                     result["unfrozen_wastepacks"] = value["unfrozen_wastepacks"]
     return result
+
+
+def goal_requirements(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Carry compact prerequisites across domain boundaries, not full catalogs."""
+    import colony_architect
+    progression = owner("progression_ending")
+    journey = progression.summary(snapshot).get("journey_needs") if progression else None
+    ship = (snapshot.get("development") or {}).get("ship_construction") or {}
+    royal = colony_architect.royal_goal_needs(snapshot.get("development") or {})
+    return {**({"journey": journey} if journey else {}),
+            **({"royal": royal} if royal.get("rooms") else {}),
+            **({"ship_materials": ship["shortages"]} if ship.get("shortages") else {})}
 
 
 def collect(client: Any, snapshot: dict[str, Any]) -> None:

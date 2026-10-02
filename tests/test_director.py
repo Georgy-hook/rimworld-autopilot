@@ -3642,7 +3642,7 @@ class DirectorTests(unittest.TestCase):
                 "item_counts": {"WoodLog": 9000, "Steel": 5000},
                 "material": "WoodLog", "powered": True, "climate": "cold"}
         for program in director.architect.PROGRAM_CATALOG:
-            if program.startswith("greenhouse_"):
+            if program.startswith("greenhouse_") or program == "royal_bedroom":
                 self.assertEqual(director.architect.generate_program_variants(program, base), {})
                 continue  # Unresearched composite layouts are tested with live-style metadata separately.
             for entry_side in ("north", "east", "south", "west"):
@@ -3741,7 +3741,7 @@ class DirectorTests(unittest.TestCase):
             "item_counts": {"BlocksGranite": 10000},
             "material": "BlocksGranite",
             "powered": True,
-            "royalty": {"colonists": [{"title_def_name": "Count"}]},
+            "royalty": {"colonists": [{"title_def_name": "Count", "throne_required_defs": ["GrandThrone"]}]},
         })["throne_room_2"]["layout"]
         defs = {row["def_name"] for row in layout["buildings"]}
         self.assertIn("GrandThrone", defs)
@@ -3849,6 +3849,11 @@ class DirectorTests(unittest.TestCase):
                 self.posts = []
 
             def get(self, endpoint, **kwargs):
+                if endpoint.endswith('/projects') and self.posts:
+                    request=self.posts[-1][1]['body']; layout=request['blueprint']; origin=request['position']
+                    return {'projects':[{'def_name':row['def_name'],'position':{
+                        'x':origin['x']+row['rel_x'],'z':origin['z']+row['rel_z']}}
+                        for row in layout['buildings']+layout['floors']]}
                 return {}
 
             def post(self, endpoint, **kwargs):
@@ -4113,7 +4118,7 @@ class DirectorTests(unittest.TestCase):
                   "preview": initial}
         event = {"family": "trade", "signature": "trade:pawn:9", "urgency": 58}
         context = {"trade_opportunities": [trader]}
-        agent = self.FakeAgent(["trade_now", "300", "slaves", "45", "1800"])
+        agent = self.FakeAgent(["trade_now", "300", "slaves", "45", "800"])
         with tempfile.TemporaryDirectory() as folder, \
                 mock.patch.object(director.bridge, "collect_snapshot", return_value=snapshot), \
                 mock.patch.object(director, "collect_development", return_value=snapshot), \
@@ -4155,7 +4160,7 @@ class DirectorTests(unittest.TestCase):
         event = {"family": "trade", "signature": "trade:pawn:9", "urgency": 58}
         context = {"trade_opportunities": [{"id": "pawn:9", "name": "Slaver",
                                             "stock": [{"humanlike": True}]}]}
-        agent = self.FakeAgent(["trade_now", "0", "slaves", "45", "1800"])
+        agent = self.FakeAgent(["trade_now", "0", "slaves", "45", "800"])
         with tempfile.TemporaryDirectory() as folder, \
                 mock.patch.object(director.bridge, "collect_snapshot", return_value=snapshot), \
                 mock.patch.object(director, "collect_development", return_value=snapshot), \
@@ -4192,12 +4197,18 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("gravship_nomads", odyssey["available"])
 
     def test_doctrine_is_a_conditional_cascade(self):
-        choices = [
-            "choose_colony_doctrine", "prosperity", "industrial_manufacturing",
-            "compact", "manufacturing", "industrial", "industrial", "ranged_firepower", "pragmatic",
-            "peaceful_trade", "expansionist", "peaceful_trade", "balanced", "art",
-        ]
-        agent = self.FakeAgent(choices)
+        class CascadeAgent:
+            def __init__(self):
+                self.calls, self.states = [], []
+            def predict(self, state, questions):
+                self.calls.append(questions); self.states.append(state)
+                key, question = next(iter(questions.items()))
+                wanted = {"colony_goal_action": "choose_colony_doctrine", "doctrine_endgame": "ship_escape",
+                          "doctrine_domain": "prosperity", "doctrine_primary_direction": "industrial_manufacturing",
+                          "doctrine_economy_family": "manufacturing", "doctrine_economy_product": "art"}
+                desired = wanted.get(key.split("_round_")[0])
+                return {"answers": {key: {"choice": desired if desired in question["criteria"] else next(iter(question["criteria"]))}}}
+        agent = CascadeAgent()
         context = {
             "material_options": {"WoodLog": "wood"}, "profession_choices": {},
             "active_mods": [{"package_id": "ludeon.rimworld"}], "research_tree": [],
@@ -4213,11 +4224,13 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(doctrine["economy_family"], "manufacturing")
         self.assertEqual(doctrine["economy_product"], "art")
         self.assertNotIn("doctrine_mining_product", result["raw"]["answers"])
-        direction_question = agent.calls[2]["doctrine_primary_direction"]["criteria"]
-        self.assertTrue(direction_question)
-        self.assertTrue(all(colony_strategy.DIRECTIONS[key]["domain"] == "prosperity" for key in direction_question))
-        self.assertEqual(agent.states[3]["chosen_so_far"]["primary_direction"], "industrial_manufacturing")
-        self.assertEqual(agent.states[-1]["chosen_so_far"]["endgame"], "ship_escape")
+        direction_questions = [question["criteria"] for call in agent.calls for key, question in call.items()
+                               if key.startswith("doctrine_primary_direction")]
+        self.assertTrue(direction_questions)
+        self.assertTrue(all(colony_strategy.DIRECTIONS[key]["domain"] == "prosperity"
+                            for question in direction_questions for key in question))
+        self.assertEqual(agent.states[-1]["facts"]["direction"], "industrial_manufacturing")
+        self.assertEqual(agent.states[-1]["facts"]["endgame"], "ship_escape")
 
     def test_existing_doctrine_can_be_explicitly_kept_without_reselecting_every_axis(self):
         current = {"schema_version": 2, "primary_direction": "research_starflight",
@@ -4956,7 +4969,7 @@ class DirectorTests(unittest.TestCase):
                     "development": {"item_counts": {"Silver": 900}}}
         state = {}
         with tempfile.TemporaryDirectory() as folder:
-            record = director.run_caravan_trade_cycle(client, self.FakeAgent(["100", "17"]),
+            record = director.run_caravan_trade_cycle(client, self.FakeAgent(["100", "17", "700"]),
                 snapshot, state, pathlib.Path(folder) / "test.jsonl")
         self.assertTrue(record["result"]["applied"])
         self.assertEqual(record["decision"]["recruit"], "17")

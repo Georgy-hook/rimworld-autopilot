@@ -16,6 +16,7 @@ namespace RIMAPI.Controllers
     // Records only the engine's actual victory credits, never inferred from a countdown.
     public class EndingEvidence : GameComponent
     {
+        public string CampaignId = System.Guid.NewGuid().ToString("N");
         public string Route;
         public string Text;
         public int Tick = -1;
@@ -23,10 +24,13 @@ namespace RIMAPI.Controllers
         public bool RoyalCountdown;
         public EndingEvidence(Game game) { }
         public override void ExposeData() {
+            Scribe_Values.Look(ref CampaignId, "layaCampaignId");
+            if (Scribe.mode == LoadSaveMode.PostLoadInit && string.IsNullOrEmpty(CampaignId)) CampaignId = System.Guid.NewGuid().ToString("N");
             Scribe_Values.Look(ref Route, "layaEndingRoute");
             Scribe_Values.Look(ref Text, "layaEndingText");
             Scribe_Values.Look(ref Tick, "layaEndingTick", -1);
             Scribe_Values.Look(ref ExitsToMainMenu, "layaEndingTerminal");
+            Scribe_Values.Look(ref RoyalCountdown, "layaRoyalCountdown");
         }
     }
     [HarmonyPatch(typeof(GameVictoryUtility), nameof(GameVictoryUtility.ShowCredits))]
@@ -75,10 +79,11 @@ namespace RIMAPI.Controllers
     [HarmonyPatch(typeof(QuestPart_EndGame), nameof(QuestPart_EndGame.Notify_QuestSignalReceived))]
     public static class EndingRoyalCountdownHook
     {
-        public static void Postfix(QuestPart_EndGame __instance, Signal signal) {
-            if (signal.tag != __instance.inSignal || !ShipCountdown.CountingDown) return;
+        public static void Prefix(out bool __state) { __state = !ShipCountdown.CountingDown; }
+        public static void Postfix(QuestPart_EndGame __instance, Signal signal, bool __state) {
+            if (!__state || signal.tag != __instance.inSignal || !ShipCountdown.CountingDown) return;
             var evidence = Current.Game?.GetComponent<EndingEvidence>();
-            if (evidence != null && __instance.quest?.root?.defName == "EndGame_RoyalAscent") evidence.RoyalCountdown = true;
+            if (evidence != null) evidence.RoyalCountdown = __instance.quest?.root?.defName == "EndGame_RoyalAscent";
         }
     }
     [HarmonyPatch(typeof(ShipCountdown), nameof(ShipCountdown.InitiateCountdown), new[] { typeof(Building) })]
@@ -109,7 +114,11 @@ namespace RIMAPI.Controllers
                 part_types = q.PartsListForReading.Select(p => p.GetType().Name).Distinct().ToList()
             }).ToList();
             var jobs = new List<object>();
+            var blockers = new List<object>();
             foreach (var site in Sites()) foreach (var pawn in site.Map.mapPawns.FreeColonistsSpawned.Where(p => !SpecialistNativeSafety.Protected(p))) {
+                foreach (var option in Options(site, pawn).Where(o => o.Disabled || o.action == null))
+                    blockers.Add(new { map_id = site.Map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
+                        site = site.def.defName, label = option.Label, inspect = site.GetInspectString() });
                 foreach (var option in Options(site, pawn).Where(o => !o.Disabled && o.action != null))
                     jobs.Add(new { map_id = site.Map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
                         label = option.Label, site = site.def.defName, pawn = pawn.LabelShortCap.ToString(),
@@ -120,7 +129,7 @@ namespace RIMAPI.Controllers
             await context.SendJsonResponse(ApiResult<object>.Ok(new {
                 royalty = ModsConfig.RoyaltyActive, ideology = ModsConfig.IdeologyActive,
                 biotech = ModsConfig.BiotechActive, anomaly = ModsConfig.AnomalyActive, odyssey = ModsConfig.OdysseyActive,
-                quests, site_jobs = jobs, ship_countdown = ShipCountdown.CountingDown,
+                quests, site_jobs = jobs, site_blockers = blockers, ship_countdown = ShipCountdown.CountingDown,
                 archonexus_countdown = ArchonexusCountdown.CountdownActivated,
                 victory_verified = evidence != null && evidence.Tick >= 0,
                 ending_tick = evidence?.Tick ?? -1, ending_route = evidence?.Route,
@@ -134,7 +143,7 @@ namespace RIMAPI.Controllers
                     { "anomaly_void", ResearchFor(d => ModsConfig.AnomalyActive && d.thingClass != null && typeof(Building_HoldingPlatform).IsAssignableFrom(d.thingClass)) },
                     { "odyssey_mechhive", ResearchFor(d => ModsConfig.OdysseyActive && (d.thingClass == typeof(Building_GravEngine) || d.comps != null && d.comps.Any(c => c.compClass != null && typeof(CompGravshipFacility).IsAssignableFrom(c.compClass)))) }
                 },
-                research_gate_note = "Royal Ascent requires honor/title and hospitality, Archonexus requires native cycle wealth/study/faction gates, and monolith advancement requires studied discoveries. Infrastructure research targets are supporting options, never substitute proof of those gates."
+                research_gate_note = "Royal Ascent requires honor/title and hospitality, Archonexus requires native cycle wealth/study/faction gates, and monolith advancement checks native entity discoveries and active-condition restrictions. Infrastructure research targets are supporting options, never substitute proof of those gates."
             }));
         }
         private static List<string> ResearchFor(System.Func<ThingDef, bool> filter) => DefDatabase<ThingDef>.AllDefsListForReading.Where(filter)

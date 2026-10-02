@@ -106,6 +106,8 @@ namespace RIMAPI.Models
 
     public class LiveTradeCategoryDto
     {
+        public int? ThingId { get; set; }
+        public float? PlannedSaleValue { get; set; }
         public string Description { get; set; }
         public string Category { get; set; }
         public string Example { get; set; }
@@ -149,12 +151,15 @@ namespace RIMAPI.Models
         public int TraderSilver { get; set; }
         public System.Collections.Generic.List<LiveTradePawnOfferDto> HumanlikeOffers { get; set; } = new System.Collections.Generic.List<LiveTradePawnOfferDto>();
         public System.Collections.Generic.List<LiveTradeCategoryDto> SaleOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
+        public System.Collections.Generic.List<LiveTradeCategoryDto> PurchaseOptions { get; set; } = new System.Collections.Generic.List<LiveTradeCategoryDto>();
     }
 
     public class ActiveCaravanTradeRequestDto
     {
         public int SettlementId { get; set; }
         public int? PurchasePawnId { get; set; }
+        public int? PurchaseThingId { get; set; }
+        public float? ExpectedUnitPrice { get; set; }
         public string SaleCategory { get; set; }
         public int MinimumSilverReserve { get; set; }
         public int MaximumSpend { get; set; } = 2500;

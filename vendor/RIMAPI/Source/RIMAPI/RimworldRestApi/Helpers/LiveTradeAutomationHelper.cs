@@ -60,6 +60,10 @@ namespace RIMAPI.Helpers
         public static ApiResult<LiveTradePreviewDto> GetPreview(int mapId, string traderId, int minimumSilverReserve, int maximumSpend, string saleCategory)
         {
             bool opened = false;
+            ITrader previousTrader = TradeSession.trader;
+            Pawn previousNegotiator = TradeSession.playerNegotiator;
+            TradeDeal previousDeal = TradeSession.deal;
+            bool previousGiftMode = TradeSession.giftMode;
             try
             {
                 Map map = MapHelper.GetMapByID(mapId);
@@ -76,8 +80,8 @@ namespace RIMAPI.Helpers
                 if (trader is TradeShip && !map.listerBuildings.allBuildingsColonist.Any(b =>
                     b.def?.defName == "OrbitalTradeBeacon" && (b.TryGetComp<CompPowerTrader>()?.PowerOn ?? true)))
                     return ApiResult<LiveTradePreviewDto>.Fail("A powered trade beacon is required.");
-                TradeSession.SetupWith(trader, negotiator, false);
                 opened = true;
+                TradeSession.SetupWith(trader, negotiator, false);
                 TradeDeal deal = TradeSession.deal;
                 Tradeable currency = deal.CurrencyTradeable;
                 int colonySilver = currency?.CountHeldBy(Transactor.Colony) ?? 0;
@@ -125,7 +129,9 @@ namespace RIMAPI.Helpers
                     .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0 && AugmentationAutomationHelper.IsAugmentationItem(t.ThingDef))
                     .Select(t => "implant:" + t.ThingDef.defName).Distinct()).Concat(deal.AllTradeables
                     .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0 && t.ThingDef?.IsWeapon == true)
-                    .Select(t => "weapon:" + t.ThingDef.defName).Distinct()))
+                    .Select(t => "weapon:" + t.ThingDef.defName).Distinct()).Concat(deal.AllTradeables
+                    .Where(t => t.TraderWillTrade && !t.IsCurrency && t.CountHeldBy(Transactor.Trader) > 0 && t.ThingDef != null && t.ThingDef.race == null)
+                    .Select(t => "item:" + t.ThingDef.defName).Distinct()))
                 {
                     Tradeable row = deal.AllTradeables.Where(t => t.TraderWillTrade
                         && t.CountHeldBy(Transactor.Trader) > 0 && MatchesPriority(t, priority)
@@ -180,12 +186,17 @@ namespace RIMAPI.Helpers
             }
             finally
             {
-                if (opened && TradeSession.Active) TradeSession.Close();
+                if (opened)
+                {
+                    TradeSession.trader=previousTrader; TradeSession.playerNegotiator=previousNegotiator;
+                    TradeSession.deal=previousDeal; TradeSession.giftMode=previousGiftMode;
+                }
             }
         }
 
         public static ApiResult<LiveTradeResponseDto> Execute(LiveTradeRequestDto request)
         {
+            bool opened = false;
             try
             {
                 Map map = MapHelper.GetMapByID(request.MapId);
@@ -208,7 +219,9 @@ namespace RIMAPI.Helpers
                         return ApiResult<LiveTradeResponseDto>.Fail("Orbital trade requires a powered comms console and orbital trade beacon.");
                 }
 
-                if (TradeSession.Active) TradeSession.Close();
+                if (TradeSession.Active)
+                    return ApiResult<LiveTradeResponseDto>.Fail("An existing trade session must be resolved before automated trading.");
+                opened = true;
                 TradeSession.SetupWith(trader, negotiator, false);
                 TradeDeal deal = TradeSession.deal;
                 if (request.PurchasePawnId.HasValue && !(request.PurchasePriorities ?? new List<string>())
@@ -258,10 +271,13 @@ namespace RIMAPI.Helpers
 
                 float spend = 0f;
                 bool selectedPersonPurchased = !request.PurchasePawnId.HasValue;
-                foreach (string priority in request.PurchasePriorities ?? new List<string>())
+                var pendingItems = new HashSet<string>((request.PurchasePriorities ?? new List<string>()).Where(p => p != null && p.StartsWith("item:",StringComparison.Ordinal)));
+                foreach (string priority in (request.PurchasePriorities ?? new List<string>()).Distinct())
                 {
                     int remainingPawns = priority.Equals("slaves", StringComparison.OrdinalIgnoreCase)
-                        || priority.Equals("livestock", StringComparison.OrdinalIgnoreCase) ? 1 : int.MaxValue;
+                        || priority.Equals("livestock", StringComparison.OrdinalIgnoreCase)
+                        || priority.StartsWith("item:",StringComparison.Ordinal) || priority.StartsWith("implant:",StringComparison.Ordinal)
+                        || priority.StartsWith("weapon:",StringComparison.Ordinal) ? 1 : int.MaxValue;
                     foreach (Tradeable row in deal.AllTradeables
                         .Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Trader) > 0
                             && MatchesPriority(t, priority) && CanKeepPurchasedAnimal(t, map)
@@ -290,6 +306,7 @@ namespace RIMAPI.Helpers
                         response.BoughtUnits += count;
                         response.ApproximatePurchaseValue += unitPrice * count;
                         response.Bought.Add($"{row.Label} x{count}");
+                        pendingItems.Remove(priority);
                         if (request.PurchasePawnId.HasValue && priority.Equals("slaves", StringComparison.OrdinalIgnoreCase)
                             && row.FirstThingTrader is Pawn boughtPawn
                             && boughtPawn.thingIDNumber == request.PurchasePawnId.Value)
@@ -299,10 +316,10 @@ namespace RIMAPI.Helpers
                     }
                 }
 
-                if (!selectedPersonPurchased)
+                if (!selectedPersonPurchased || pendingItems.Count > 0)
                 {
                     TradeSession.Close();
-                    return ApiResult<LiveTradeResponseDto>.Fail("The selected person is no longer affordable; no partial sale was made.");
+                    return ApiResult<LiveTradeResponseDto>.Fail("The selected person or exact item is no longer available or affordable; no partial sale was made.");
                 }
                 if (response.SoldUnits == 0 && response.BoughtUnits == 0)
                 {
@@ -323,7 +340,7 @@ namespace RIMAPI.Helpers
             }
             catch (Exception ex)
             {
-                if (TradeSession.Active) TradeSession.Close();
+                if (opened && TradeSession.Active) TradeSession.Close();
                 LogApi.Error($"Live trade automation failed: {ex}");
                 return ApiResult<LiveTradeResponseDto>.Fail(ex.Message);
             }
@@ -426,6 +443,8 @@ namespace RIMAPI.Helpers
         private static bool MatchesPriority(Tradeable row, string priority)
         {
             if (row.ThingDef == null) return false;
+            if ((priority ?? "").StartsWith("item:", StringComparison.Ordinal))
+                return !row.IsCurrency && row.ThingDef.race == null && row.ThingDef.defName == priority.Substring(5);
             string wanted = (priority ?? "").ToLowerInvariant().Replace("_", "");
             if ((priority ?? "").StartsWith("implant:", StringComparison.Ordinal))
                 return row.ThingDef.defName == priority.Substring(8) && AugmentationAutomationHelper.IsAugmentationItem(row.ThingDef);
@@ -458,6 +477,7 @@ namespace RIMAPI.Helpers
         private static int PurchaseTarget(string priority, Tradeable row)
         {
             string value = (priority ?? "").ToLowerInvariant();
+            if (value.StartsWith("item:")) return 1;
             if (value.StartsWith("implant:")) return 1;
             if (value.StartsWith("weapon:")) return 1;
             if (value == "wood") return 100;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import ctypes
 import json
 import os
@@ -22,6 +23,7 @@ import colony_modules
 import colony_reasoning
 import colony_outcomes
 import colony_sessions
+import colony_shipbuilding
 from colony_actions import ACTION_DESCRIPTIONS, ACTION_LABELS, ACTION_LABELS_EN
 import laya_preferences
 from laya_decisions import ask_laya_choice
@@ -753,20 +755,25 @@ def fabrication_blueprint() -> dict[str, Any]:
 
 
 def ship_blueprint(colonist_count: int) -> dict[str, Any]:
-    items: list[dict[str, Any]] = []
-    for x in range(2, 22, 2):
-        items.append(building("Ship_Beam", x, 8))
+    # North-facing occupied rectangles from installed vanilla defs: beams 2x6,
+    # reactor 6x7, engines 3x4, core/sensors 2x2, caskets 1x2.
+    # Native ShipUtility traverses cardinal adjacency and requires 3 engines.
+    caskets = max(1, int(colonist_count))
+    last_beam_x = 17 + 2 * (caskets - 1)
+    items = [building("Ship_Beam", x, 10) for x in range(3, last_beam_x + 1, 2)]
     items.extend(
         [
-            building("Ship_Reactor", 8, 5),
-            building("Ship_ComputerCore", 12, 5),
-            building("Ship_SensorCluster", 16, 5),
-            building("Ship_Engine", 2, 5, rotation=3),
+            building("Ship_Reactor", 5, 17),
+            building("Ship_ComputerCore", 10, 14),
+            building("Ship_SensorCluster", 14, 14),
+            *[building("Ship_Engine", x, 5) for x in (4, 8, 12)],
         ]
     )
-    for index in range(max(3, min(colonist_count, 8))):
-        items.append(building("Ship_CryptosleepCasket", 4 + index * 2, 9, rotation=0))
-    return blueprint(items, 24, 14)
+    # Each casket's head (loc - north) is on a beam; east interaction cells
+    # stay free. Place caskets after the supporting beams finish construction.
+    for index in range(caskets):
+        items.append(building("Ship_CryptosleepCasket", 17 + index * 2, 14))
+    return blueprint(items, last_beam_x + 4, 23)
 
 
 def anchor_from_snapshot(snapshot: dict[str, Any]) -> dict[str, int]:
@@ -823,7 +830,8 @@ def map_state_for_snapshot(state: dict[str, Any], snapshot: dict[str, Any]) -> d
     known = set(map(int, current.get("known_colonist_ids") or []))
     previous_tick = current.get("last_seen_tick")
     restarted = previous_tick is not None and tick + 100 < int(previous_tick)
-    replaced_roster = bool(present and known and not present.intersection(known))
+    replaced_roster = bool(present and known and not present.intersection(known)
+                           and not state.get("campaign", {}).get("id"))
     if restarted or replaced_roster:
         prior = current
         current = {"issued": {}}
@@ -835,6 +843,16 @@ def map_state_for_snapshot(state: dict[str, Any], snapshot: dict[str, Any]) -> d
                 if prior.get("income_strategy"):
                     current["income_strategy"] = prior["income_strategy"]
         maps[key] = current
+    campaign = state.get("campaign") or {}
+    if int(campaign.get("doctrine_tick") or 0) > tick:
+        for field in ("doctrine", "doctrine_tick", "income_strategy", "native_intent"):
+            campaign.pop(field, None)
+    # A caravan, sold colony or gravship changes maps, not the intended ending.
+    # Spatial orders remain local; only deliberate campaign intent is shared.
+    if campaign.get("doctrine") and int(campaign.get("doctrine_tick") or 0) <= tick:
+        for field in ("doctrine", "doctrine_tick", "income_strategy"):
+            if field in campaign:
+                current[field] = copy.deepcopy(campaign[field])
     current.setdefault("first_seen_tick", tick)
     current["last_seen_tick"] = tick
     current["known_colonist_ids"] = sorted(present | (set() if restarted or replaced_roster else known))
@@ -1257,7 +1275,7 @@ def collect_development(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
     tile_id = snapshot.get("map", {}).get("tile_id")
     tile_details = bridge.safe_get(client, "/api/v1/world/tile/details", warnings, id=int(tile_id)) if tile_id is not None else {}
     zones = zones_raw.get("zones", []) if isinstance(zones_raw, dict) else []
-    rooms = rooms_raw.get("rooms", []) if isinstance(rooms_raw, dict) else []
+    rooms = normalize_room_rows(rooms_raw)
     finished = finished_raw.get("finished_projects", []) if isinstance(finished_raw, dict) else []
     corpses = [
         row for row in things if isinstance(row, dict)
@@ -1314,7 +1332,38 @@ def collect_development(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
         snapshot.get("colonists", []), snapshot["development"]["work_types"]
     )
     colony_modules.collect(client, snapshot)
+    integrate_native_goal_context(snapshot)
     return snapshot
+
+
+def normalize_room_rows(value: Any) -> list[dict[str, Any]]:
+    rows = value.get("rooms", []) if isinstance(value, dict) else value if isinstance(value, list) else []
+    return [{**room, "role_display_label": room.get("role_display_label", room.get("role_label")),
+             "role_label": room.get("role_def_name") or room.get("role_label")} for room in rows]
+
+
+def integrate_native_goal_context(snapshot: dict[str, Any]) -> None:
+    dev = snapshot.setdefault("development", {})
+    royalty = (dev.get("specialists") or {}).get("royalty_context")
+    if isinstance(royalty, dict):
+        dev["royalty"] = {**(dev.get("royalty") or {}), **royalty}
+    targets = architect.royal_research_targets(dev)
+    if targets:
+        progression = dev.setdefault("progression", {})
+        module = colony_modules.owner("progression_research")
+        extra = module.research_frontier(progression.get("research_tree") or dev.get("research_tree"), targets)
+        existing = progression.setdefault("support_research", {}).get("royal_ascent") or {}
+        progression["support_research"]["royal_ascent"] = {
+            "frontier": list(dict.fromkeys((existing.get("frontier") or []) + extra["frontier"])),
+            "blockers": (existing.get("blockers") or []) + extra["blockers"],
+            "complete": False,
+        }
+
+
+def room_impressiveness_target(room: dict[str, Any], development: dict[str, Any]) -> float:
+    role = str(room.get("role_def_name") or room.get("role_label") or "").lower()
+    field = "minimum_throne_room_impressiveness" if "throne" in role else "minimum_bedroom_impressiveness" if "bedroom" in role else None
+    return max([120.0] + [float(person.get(field) or 0) for person in architect.royal_people(development)]) if field else 120.0
 
 
 def issued_recently(map_state: dict[str, Any], name: str, tick: int, retry_ticks: int = 60000) -> bool:
@@ -3049,7 +3098,7 @@ def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "course": {
             **{name: doctrine.get(name) for name in (
-                "primary_direction", "economy_product", "diplomacy", "endgame") if doctrine.get(name)},
+                "endgame", "primary_direction", "economy_product", "diplomacy") if doctrine.get(name)},
             "recorded_sales": (dev.get("economic_outlook") or {}).get("recent_approx_sale_value", 0),
         },
         "income": {key: (dev.get("economic_outlook") or {}).get(key) for key in (
@@ -4107,8 +4156,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         one_time.append("build_fabrication")
     ship_ready = all(name in finished for name in RESEARCH_ROUTE[6:])
     chosen_endgame = str(current_doctrine.get("endgame") or "")
-    if ship_ready and chosen_endgame == "ship_escape" and counts.get("Ship_ComputerCore", 0) == 0 and "ship" not in map_state["issued"]:
-        one_time.append("build_ship")
+    if ship_ready and chosen_endgame == "ship_escape":
+        ship_plan = colony_shipbuilding.prepare(snapshot, map_state, ship_blueprint(len(snapshot["colonists"])))
+        if ship_plan and ship_plan["ready_layout"]["buildings"] and not issued_recently(map_state, "ship", tick, retry_ticks=2500):
+            one_time.append("build_ship")
     if has_research_bench:
         research_tree = dev.get("research_tree") or []
         doctrine_research = strategy.doctrine_research_candidates(
@@ -4569,8 +4620,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     valued_rooms = [
         room for room in dev.get("rooms", [])
         if not room.get("touches_map_edge") and room.get("cells")
-        and any(token in str(room.get("role_label") or "").lower() for token in ("dining", "rec", "bedroom", "hospital", "workshop"))
-        and float(room.get("impressiveness") or 0.0) < 120
+        and any(token in str(room.get("role_label") or "").lower() for token in ("dining", "rec", "bedroom", "hospital", "workshop", "throne"))
+        and float(room.get("impressiveness") or 0.0) < room_impressiveness_target(room, dev)
     ]
     if sculptures and valued_rooms and not issued_recently(map_state, "install_sculpture", tick, retry_ticks=30000):
         install_options: dict[str, dict[str, Any]] = {}
@@ -5552,7 +5603,6 @@ def defer_discretionary_work_until_shelter(
             "build_catalog_building", "floor_critical_room", "upgrade_workbench",
             "build_income_infrastructure", "configure_income_production",
             "plan_colonist_augmentation", "assign_animal_training", "assign_animal_master",
-            "progression_ship", "progression_boardship", "progression_ending",
             "specialists_ritual", "specialists_genetics", "specialists_mech_boss",
             "production_recipe_batch", "affordances_scanner",
         }:
@@ -6294,7 +6344,10 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
 
 def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -> dict[str, Any]:
     state = fit_model_context(agent, model_decision_context(snapshot))
+    state["goal_requirements"] = colony_modules.goal_requirements(snapshot)
     module_signals = colony_modules.signals(snapshot)
+    attention_state = {**state, "decision_facts": {
+        **colony_reasoning.decision_facts(state), "module_signals": module_signals}}
     raw_domain = None
     raw_family = None
     resources = (snapshot.get("map") or {}).get("resources") or {}
@@ -6435,7 +6488,7 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
                                  + ", ".join(action_label(name, snapshot, "en") for name in names[:4]))
                 return f"priority {priority}/100; {len(names)} available; {available}"
 
-            selected_domain, raw_domain = ask_laya_choice(agent, state, "colony_goal_domain",
+            selected_domain, raw_domain = ask_laya_choice(agent, attention_state, "colony_goal_domain",
                 "Choose the most valuable area of attention now.", {
                     domain: domain_criterion(domain, names)
                     for domain, names in domains.items()
@@ -6446,7 +6499,7 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
         for name in considered:
             families.setdefault(action_family(name), []).append(name)
         if len(families) > 1:
-            selected_family, raw_family = ask_laya_choice(agent, state, "colony_goal_family",
+            selected_family, raw_family = ask_laya_choice(agent, attention_state, "colony_goal_family",
                 "Choose the work family to examine.", {
                     family: (f"priority {max(laya_preferences.priority_for_action(name, player_preferences) for name in names)}/100; "
                              + ("research cannot start until its first bench is built; "
@@ -6562,7 +6615,9 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
         raw_details = selection_raw
         merged_answers.update(selection_raw.get("answers", {}))
     elif colony_modules.owner(choice) is not None:
-        parsed, raw_details = colony_modules.choose(agent, state, choice, snapshot)
+        module_state = {**state, "endgame": (snapshot.get("development", {}).get("doctrine") or {}).get("endgame"),
+                        "goal_requirements": colony_modules.goal_requirements(snapshot)}
+        parsed, raw_details = colony_modules.choose(agent, module_state, choice, snapshot)
         merged_answers.update(raw_details.get("answers", {}))
     elif choice in capabilities.ACTIONS:
         parsed, raw_details = capabilities.choose(agent, state, choice, snapshot)
@@ -7381,6 +7436,37 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "blueprint": selected["layout"],
             "clear_obstacles": False,
         })
+        # Builder accepts partial layouts. Observe exact requested definitions
+        # and coordinates before claiming the generated architecture was placed.
+        observed_raw = client.get("/api/v1/builder/projects", map_id=map_id)
+        observed = observed_raw.get("projects") or [] if isinstance(observed_raw, dict) else []
+        built_raw = client.get("/api/v1/map/buildings", map_id=map_id)
+        built = built_raw if isinstance(built_raw, list) else []
+        planned_cells = {(str(row.get("def_name")), (row.get("position") or {}).get("x"),
+                          (row.get("position") or {}).get("z")) for row in observed if isinstance(row, dict)}
+        actual_cells = {(str(row.get("def")), (row.get("position") or {}).get("x"),
+                         (row.get("position") or {}).get("z")) for row in built if isinstance(row, dict)}
+        layout = selected["layout"]
+        requested = {(str(row["def_name"]), int(origin["x"]) + int(row["rel_x"]),
+                      int(origin["z"]) + int(row["rel_z"]))
+                     for row in (layout.get("buildings") or []) + (layout.get("floors") or [])}
+        floor_rows = [row for row in layout.get("floors") or []
+                      if (str(row["def_name"]), int(origin["x"]) + int(row["rel_x"]),
+                          int(origin["z"]) + int(row["rel_z"])) not in planned_cells]
+        if floor_rows:
+            floor_positions = [{"x": int(origin["x"]) + int(row["rel_x"]),
+                                "z": int(origin["z"]) + int(row["rel_z"])} for row in floor_rows]
+            try:
+                terrain_now = terrain_defs_at_cells(client.get("/api/v1/map/terrain", map_id=map_id), floor_positions)
+            except (ValueError, TypeError, AttributeError):
+                terrain_now = {}  # Incomplete observation cannot prove a floor was placed.
+            actual_cells.update((str(name), x, z) for (x, z), name in terrain_now.items())
+        verified = requested & (planned_cells | actual_cells)
+        complete_plan = bool(requested) and requested <= verified
+        if not verified:
+            issued["architecture_site_search"] = tick
+            return {"applied": False, "reason": "No requested architecture element appeared at its exact site",
+                    "blueprint": response, "requested_count": len(requested), "verified_count": 0}
         project = {
             "program": program,
             "variant": variant_id,
@@ -7393,13 +7479,20 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "width": int(selected["width"]),
             "height": int(selected["height"]),
             "issued_tick": tick,
+            "complete_plan_placed": complete_plan,
+            "requested_count": len(requested),
+            "verified_count": len(verified),
         }
         map_state.setdefault("architecture_projects", []).append(project)
         map_state["architecture_sequence"] = sequence + 1
-        issued["architecture_project"] = tick
-        issued[f"architecture:{program}:{sequence}"] = tick
+        if complete_plan:
+            issued["architecture_project"] = tick
+            issued[f"architecture:{program}:{sequence}"] = tick
+        else:
+            issued["architecture_site_search"] = tick
         return {
-            "applied": True,
+            "applied": complete_plan,
+            "reason": "architecture_plan_verified" if complete_plan else "partial_architecture_plan_observed",
             "project": project,
             "summary": selected.get("summary"),
             "blueprint": response,
@@ -8544,8 +8637,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["fabrication"] = tick
         return result
     if choice == "build_ship":
-        result = post_blueprint(client, map_id, anchor, ship_blueprint(len(snapshot["colonists"])), dx=-5, dz=25)
-        issued["ship"] = tick
+        result = colony_shipbuilding.execute(client, snapshot, map_state, ship_blueprint(len(snapshot["colonists"])))
+        if result.get("applied"):
+            issued["ship"] = tick
         return result
     if choice.startswith("human_reproduction:"):
         _, first_id, second_id, approach = choice.split(":", 3)
@@ -9194,7 +9288,18 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
     raise bridge.RimApiError(f"Unknown colony director action: {choice}")
 
 
-def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[str, Any], state_path: Path, log_path: Path) -> dict[str, Any]:
+def expedition_candidates(candidates: list[str]) -> list[str]:
+    # Quest and escape-ship maps need the same native progression/interaction
+    # pipeline. Restrict unrelated home expansion while retaining field survival.
+    support = IMMEDIATE_CARE_ACTIONS | {"hold_survival", "unforbid_supplies", "equip_colonists",
+        "build_sleeping_spots", "build_animal_spots", "build_campfire", "build_passive_cooler",
+        "configure_food_bills", "build_butcher_spot", "harvest_local_plants", "harvest_nearby_trees",
+        "prioritize_hauling", "prioritize_cooking", "prioritize_firefighting", "select_research",
+        "prioritize_construction_project", "feed_hungry_colonist", "eat_available_meal"}
+    return [name for name in candidates if name in support or colony_modules.owner(name) is not None]
+
+
+def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[str, Any], state_path: Path, log_path: Path, *, expedition: bool = False) -> dict[str, Any]:
     snapshot = collect_development(client, bridge.collect_snapshot(client))
     player_preferences = laya_preferences.load_preferences()
     snapshot["development"]["user_preferences"] = player_preferences
@@ -9241,6 +9346,8 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     snapshot["development"]["base_anchor"] = map_state["anchor"]
     retire_starter_sleeping_spots(client, snapshot, map_state, log_path)
     candidates, details = candidate_actions(client, snapshot, map_state)
+    if expedition:
+        candidates = expedition_candidates(candidates)
     candidates = laya_preferences.filter_candidates(candidates, player_preferences)
     candidates, blocked_actions = filter_backed_off_choices(map_state, candidates)
     if not candidates:
@@ -9298,6 +9405,7 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     record["module_observations"] = snapshot["development"].get("module_status") or {}
     record["module_signals"] = colony_modules.signals(snapshot)
     colony_outcomes.record(snapshot, map_state, choice, result)
+    colony_sessions.remember_campaign(state, map_state)
     map_state.setdefault("recent_decisions", []).append({
         "action": choice,
         "applied": bool(result.get("applied")) if isinstance(result, dict) else True,
@@ -9371,6 +9479,17 @@ def verified_trade_options(preview: dict[str, Any], side: str) -> dict[str, str]
     ) for row in rows if int(row.get("maximum_units") or 0) > 0 and row.get("category")}
 
 
+def trade_spending_options(unit_price: float, cash: float, reserve: int) -> dict[str, str]:
+    """Actual funds bound every cap; expensive native goods remain selectable."""
+    import math
+    available = max(0, math.floor(cash - reserve))
+    minimum = math.ceil(unit_price)
+    if minimum <= 0 or minimum > available:
+        return {}
+    amounts = sorted({minimum, available, *(amount for amount in (500, 1800, 4000) if minimum <= amount <= available)})
+    return {str(amount): f"Spend up to {amount} silver; keep {reserve} in reserve" for amount in amounts}
+
+
 def preview_live_traders(client: bridge.RimApiClient, context: dict[str, Any],
                          map_id: int, reserve: int) -> list[dict[str, Any]]:
     """A listed visitor is not necessarily an actionable trading opportunity."""
@@ -9381,7 +9500,7 @@ def preview_live_traders(client: bridge.RimApiClient, context: dict[str, Any],
             continue
         try:
             preview = client.get("/api/v1/trade/preview", map_id=map_id, trader_id=trader_id,
-                                 minimum_silver_reserve=reserve, maximum_spend=4000)
+                                 minimum_silver_reserve=reserve, maximum_spend=2147483647)
         except bridge.RimApiError as exc:
             context.setdefault("trade_preview_errors", []).append(f"{trader_id}: {exc}")
             continue
@@ -9641,7 +9760,7 @@ def run_event_cycle(
             "type": "choice",
             "instructions": "Choose the exact live trader using remaining time, stock, negotiator skill and orbital infrastructure.",
             "criteria": {
-                str(row["id"]): f"{row.get('name')} ({row.get('trader_kind')}); orbital={row.get('orbital')}; departs in {row.get('ticks_until_departure')} ticks; stock {[(item.get('label'), item.get('count')) for item in (row.get('stock') or [])[:18]]}"
+                str(row["id"]): f"{row.get('name')}; persona core price={next((item.get('unit_price') for item in (row.get('preview') or {}).get('purchase_options') or [] if item.get('category') == 'item:AIPersonaCore'), 'not affordable/offered')}; ({row.get('trader_kind')}); orbital={row.get('orbital')}; departs in {row.get('ticks_until_departure')} ticks; stock {[(item.get('label'), item.get('count')) for item in (row.get('stock') or [])[:18]]}"
                 for row in traders if row.get("id")
             },
         }}
@@ -9664,7 +9783,7 @@ def run_event_cycle(
                     selected_preview = client.get(
                         "/api/v1/trade/preview", map_id=int(snapshot["map"]["id"]),
                         trader_id=trader_id, minimum_silver_reserve=trade_reserve,
-                        maximum_spend=4000, sale_category=sale_category)
+                        maximum_spend=2147483647, sale_category=sale_category)
                 except bridge.RimApiError as exc:
                     details["financed_preview_error"] = str(exc)
                     selected_preview = preview
@@ -9693,7 +9812,7 @@ def run_event_cycle(
                         selected_preview = client.get(
                             "/api/v1/trade/preview", map_id=int(snapshot["map"]["id"]),
                             trader_id=trader_id, minimum_silver_reserve=reserve,
-                            maximum_spend=4000,
+                            maximum_spend=2147483647,
                             **({"sale_category": sale_category} if sale_category != "none" else {}))
                     except bridge.RimApiError as exc:
                         details["reserved_preview_error"] = str(exc)
@@ -9717,6 +9836,8 @@ def run_event_cycle(
                                 if count and name in {d for r in (snapshot.get("development", {}).get("augmentation_context") or {}).get("catalog") or []
                                                       for d in r.get("implant_defs") or []}},
                 "growth": growth.trade_population_context(snapshot),
+                "endgame": (map_state.get("doctrine") or {}).get("endgame"),
+                "owned_persona_cores": (snapshot.get("development", {}).get("item_counts") or {}).get("AIPersonaCore", 0),
                 "trade": {"silver": selected_preview.get("colony_silver"), "reserve": reserve,
                           "sale_value": selected_preview.get("planned_sale_value")},
                 "recruits": [growth.brief_humanlike_offer_description(row)
@@ -9751,10 +9872,14 @@ def run_event_cycle(
                     unit_price = next((float(row.get("unit_price") or 0)
                                        for row in selected_preview.get("humanlike_offers") or []
                                        if int(row.get("pawn_id") or -1) == details["purchase_pawn_id"]), unit_price)
-                budgets = {str(amount): f"Spend up to {amount} silver; keep {reserve} in reserve"
-                           for amount in (500, 1800, 4000) if amount >= unit_price}
-                budget, budget_raw = ask_laya_choice(agent, event_model_context, "trade_budget",
-                    "Choose a spending cap for this verified purchase.", budgets)
+                budgets = trade_spending_options(unit_price, float(selected_preview.get("colony_silver") or 0)
+                                                + float(selected_preview.get("planned_sale_value") or 0), reserve)
+                if budgets:
+                    budget, budget_raw = ask_laya_choice(agent, event_model_context, "trade_budget",
+                        "Choose a spending cap for this verified purchase from actual funds after reserve.", budgets)
+                else:
+                    purchase_priority = "none"
+                    details.pop("purchase_pawn_id", None)
             details["sale_category"] = sale_category
             details["purchase_priority"] = purchase_priority
             details["minimum_silver_reserve"] = reserve
@@ -9831,6 +9956,11 @@ def run_rescue_site_cycle(
     if not active_plans or not snapshot.get("map", {}).get("is_temp_incident_map"):
         return None
     status = client.get("/api/v1/world/rescue/site/status", map_id=int(snapshot["map"]["id"]))
+    active_plans = [plan for plan in active_plans
+                    if plan["rescue_mission"].get("site_id") is not None
+                    and plan["rescue_mission"]["site_id"] == status.get("site_id")]
+    if not active_plans:
+        return None
     if status.get("active_threat"):
         return None
     if status.get("captive_pawn_ids"):
@@ -10456,7 +10586,7 @@ def collect_care_environment(client: bridge.RimApiClient, snapshot: dict[str, An
     for key, endpoint in (("buildings", "/api/v1/map/buildings"), ("rooms", "/api/v1/map/rooms")):
         if key not in dev:
             rows = client.get(endpoint, map_id=int(snapshot.get("map", {}).get("id") or 0)) or []
-            dev[key] = rows if isinstance(rows, list) else []
+            dev[key] = normalize_room_rows(rows) if key == "rooms" else rows if isinstance(rows, list) else []
     return dev["buildings"]
 
 
@@ -11017,7 +11147,8 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
                                   dialogue["suggested_names" if naming else "enabled_options"] if label))
     if not options:
         return None
-    map_state = map_state_for_snapshot(state, snapshot)
+    map_state = (map_state_for_snapshot(state, snapshot) if snapshot.get("map", {}).get("id") is not None
+                 else state.setdefault("native_session", {}))
     key = "|".join([str(dialogue.get("window_type")), str(dialogue.get("dialog_text") or "")[:120], *options])
     if time.time() < float((map_state.get("deferred_dialogs") or {}).get(key) or 0):
         return None
@@ -11082,7 +11213,8 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
                               snapshot.setdefault("warnings", [])) or {}
     if not session.get("active"):
         return None
-    map_state = map_state_for_snapshot(state, snapshot)
+    map_state = (map_state_for_snapshot(state, snapshot) if (snapshot.get("map") or {}).get("id") is not None
+                 else state.setdefault("native_session", {}))
     settlement_id = int(session.get("settlement_id") or 0)
     retry = map_state.setdefault("caravan_trade_retry", {})
     if time.time() < float(retry.get(str(settlement_id)) or 0):
@@ -11095,6 +11227,8 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
                     if isinstance(row, dict) and row.get("category")}
     people = [row for row in session.get("humanlike_offers") or [] if isinstance(row, dict)
               and row.get("pawn_id") is not None]
+    items = [row for row in session.get("purchase_options") or [] if isinstance(row, dict)
+             and row.get("thing_id") is not None and int(row.get("maximum_units") or 0) > 0]
     context = {
         "settlement": session.get("settlement_name"), "cash": cash, "trader_cash": trader_cash,
         "population": len(snapshot.get("colonists") or []),
@@ -11110,8 +11244,9 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
             key: f"{row.get('example')}, up to {row.get('maximum_units')} units at about {row.get('unit_price')} silver each; buyer has {trader_cash} silver"
             for key, row in sale_options.items()}})
     sale_row = sale_options.get(sale_choice) or {}
-    estimated_proceeds = min(trader_cash, float(sale_row.get("unit_price") or 0)
-                             * int(sale_row.get("maximum_units") or 0))
+    estimated_proceeds = min(trader_cash, 2500, float(sale_row.get("planned_sale_value")
+                            if sale_row.get("planned_sale_value") is not None else float(sale_row.get("unit_price") or 0)
+                            * int(sale_row.get("maximum_units") or 0)))
     reserve_options = {str(amount): f"Keep at least {amount} silver after this trade"
                        for amount in (0, 100, 300) if amount <= cash + estimated_proceeds}
     reserve, reserve_raw = ask_laya_choice(agent, {**context, "chosen_sale": sale_choice},
@@ -11124,10 +11259,29 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
         {"none": "Do not buy a person at this settlement.", **{
             str(row["pawn_id"]): growth.brief_humanlike_offer_description(row)
             for row in affordable}})
+    item_choice, item_raw = "none", None
+    selected_purchase = next((row for row in affordable if str(row["pawn_id"]) == recruit_choice), None)
+    if recruit_choice == "none":
+        affordable_items = [row for row in items if 0 < float(row.get("unit_price") or 0)
+                            <= cash + estimated_proceeds - int(reserve)]
+        item_choice, item_raw = ask_laya_choice(agent, {**context, "reserve": int(reserve),
+            "available_silver": cash + estimated_proceeds - int(reserve)}, "caravan_item",
+            "Choose one actual item to buy for the colony or ship ending, or decline. This buys one unit at the native price; preserve supplies and reserve.",
+            {"none": "Preserve cash; buy no item.", **{str(row["thing_id"]):
+                f"{row.get('category')}; {row.get('example')}; one costs {row.get('unit_price')} silver; {row.get('description')}"
+                for row in affordable_items}})
+        selected_purchase = next((row for row in affordable_items if str(row["thing_id"]) == item_choice), None)
+    budget, budget_raw = "0", None
+    if selected_purchase:
+        budgets = trade_spending_options(float(selected_purchase.get("unit_price") or 0), cash + estimated_proceeds, int(reserve))
+        budget, budget_raw = ask_laya_choice(agent, context, "caravan_budget",
+            "Choose the spending limit for this specific purchase using funds after the chosen sale and reserve.", budgets)
     body = {"settlement_id": settlement_id, "sale_category": sale_choice,
             "purchase_pawn_id": int(recruit_choice) if recruit_choice != "none" else None,
-            "minimum_silver_reserve": int(reserve), "maximum_spend": max(0, cash + int(estimated_proceeds)),
-            "close_without_trade": sale_choice == "none" and recruit_choice == "none"}
+            "purchase_thing_id": int(item_choice) if item_choice != "none" else None,
+            "expected_unit_price": float(selected_purchase["unit_price"]) if selected_purchase else None,
+            "minimum_silver_reserve": int(reserve), "maximum_spend": int(budget),
+            "close_without_trade": sale_choice == "none" and recruit_choice == "none" and item_choice == "none"}
     try:
         trade = client.post("/api/v1/trade/caravan/session/execute", body=body)
     except bridge.RimApiError as exc:
@@ -11149,8 +11303,8 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
                   "trade": trade, "closed_without_trade": body["close_without_trade"]}
     record = {"timestamp": bridge.utc_now(), "mode": "caravan-trade", "session": context,
               "decision": {"choice": "trade" if not body["close_without_trade"] else "leave",
-                           "sale": sale_choice, "recruit": recruit_choice, "reserve": int(reserve),
-                           "raw": [sale_raw, reserve_raw, recruit_raw]}, "result": result}
+                           "sale": sale_choice, "recruit": recruit_choice, "item": item_choice, "reserve": int(reserve),
+                           "budget": int(budget), "raw": [sale_raw, reserve_raw, recruit_raw, item_raw, budget_raw]}, "result": result}
     bridge.append_log(log_path, record)
     return record
 
@@ -11311,8 +11465,9 @@ def main() -> int:
             # merely because another retry has started.
             write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
             try:
-                terminal = colony_sessions.terminal_result(
-                    bridge.safe_get(client, "/api/v1/colony/ending-evidence", []))
+                ending_evidence = bridge.safe_get(client, "/api/v1/colony/ending-evidence", [])
+                colony_sessions.bind_campaign(state, ending_evidence)
+                terminal = colony_sessions.terminal_result(ending_evidence)
                 if terminal is not None:
                     terminal["timestamp"] = bridge.utc_now()
                     bridge.append_log(args.log, terminal)
@@ -11339,6 +11494,22 @@ def main() -> int:
                     if not pending_world.get("quiet"):
                         bridge.append_log(args.log, pending_world)
                     save_state(args.state, state)
+                    time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
+                    continue
+                if isinstance(ending_evidence, dict) and ending_evidence.get("loaded_map_count") == 0:
+                    world_snapshot = {"map": {"resources": {}}, "game": {"tick": ending_evidence.get("game_tick")},
+                                      "colonists": [], "development": {}}
+                    world_dialogue = run_caravan_trade_cycle(client, agent, world_snapshot, state, args.log)
+                    if world_dialogue is None:
+                        world_dialogue = run_window_cycle(client, agent, world_snapshot, state, args.log)
+                    if world_dialogue is not None:
+                        save_state(args.state, state)
+                    elif ending_evidence.get("player_caravans"):
+                        # An all-colony journey is a playable world state, not
+                        # a missing-save error. Native caravan travel owns movement.
+                        if ending_evidence.get("is_paused") and not client.get("/api/v1/ui/windows"):
+                            client.post("/api/v1/game/speed", query={"speed": 3})
+                    runtime_state, runtime_detail = "running", "Native world continuation or caravan travel"
                     time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
                     continue
                 snapshot = bridge.collect_snapshot(client)
@@ -11495,9 +11666,9 @@ def main() -> int:
                             publish_combat_overlay(client, last_combat_record, repeated=True)
                         if ((last_combat_record or {}).get("decision") or {}).get("choice") in {
                             "leave_downed_raiders", "wait_for_prison",
-                        } and now >= next_colony_cycle and not recurring_entity_unresolved(snapshot) \
-                                and not snapshot["map"].get("is_temp_incident_map"):
-                            development_record = run_development_cycle(client, agent, state, args.state, args.log)
+                        } and now >= next_colony_cycle and not recurring_entity_unresolved(snapshot):
+                            development_record = run_development_cycle(client, agent, state, args.state, args.log,
+                                expedition=bool(snapshot["map"].get("is_temp_incident_map")))
                             next_colony_cycle = time.monotonic() + args.interval
                             print(f"[{development_record['timestamp']}] colony work beside downed raider: "
                                   f"{development_record['decision']['choice']}", flush=True)
@@ -11631,8 +11802,8 @@ def main() -> int:
                         if event_record is not None:
                             next_colony_cycle = now + args.interval
                             print(f"[{event_record['timestamp']}] event: {event_record['decision']['choice']} | {event_record['result']}", flush=True)
-                    if rescue_record is None and ancient_record is None and event_record is None and not away_site and now >= next_colony_cycle:
-                        record = run_development_cycle(client, agent, state, args.state, args.log)
+                    if rescue_record is None and ancient_record is None and event_record is None and now >= next_colony_cycle:
+                        record = run_development_cycle(client, agent, state, args.state, args.log, expedition=away_site)
                         next_colony_cycle = now + (2.0 if active_home_fire else args.interval)
                         print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {record['result']}", flush=True)
                 runtime_state = "running"

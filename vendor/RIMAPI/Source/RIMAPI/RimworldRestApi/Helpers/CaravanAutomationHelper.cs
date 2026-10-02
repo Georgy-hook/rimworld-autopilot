@@ -436,6 +436,7 @@ namespace RIMAPI.Helpers
                 return ApiResult<RescueSiteStatusDto>.Ok(new RescueSiteStatusDto
                 {
                     MapId = map.uniqueID,
+                    SiteId = map.Parent?.ID,
                     IsTemporaryMap = map.IsTempIncidentMap,
                     ActiveThreat = threat,
                     RescuerPawnIds = map.mapPawns.FreeColonistsSpawned.Select(p => p.thingIDNumber).ToList(),

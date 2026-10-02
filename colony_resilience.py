@@ -53,7 +53,7 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             options[action][key] = row
     context['plans'] = options
     tick = int(snapshot.get('game', {}).get('tick') or 0)
-    return [a for a, rows in options.items() if rows and tick - int(map_state.get('issued', {}).get('resilience:' + a, -1000000)) >= (60000 if a == 'resilience_inspect' else 600 if a in ('resilience_tend', 'resilience_rescue', 'resilience_feed') else 2500)]
+    return [a for a, rows in options.items() if rows and (tick < int((map_state.get('issued') or {}).get('resilience:' + a, -1000000)) or tick - int((map_state.get('issued') or {}).get('resilience:' + a, -1000000)) >= (60000 if a == 'resilience_inspect' else 600 if a in ('resilience_tend', 'resilience_rescue', 'resilience_feed') else 2500))]
 
 def assess(action: str, snapshot: dict) -> dict:
     return {'benefit': DESCRIPTIONS[action], 'cost': 'Worker time, medicine or food; other work waits.',

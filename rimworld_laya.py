@@ -184,6 +184,8 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
         result.append(
             {
                 "id": int(pawn_id),
+                "map_id": pawn.get("map_id"),
+                "spawned": pawn.get("spawned"),
                 "name": str(pawn.get("name") or pawn_id),
                 "gender": str(pawn.get("gender") or "None"),
                 "age": int(first_number(pawn.get("age"))),
@@ -326,22 +328,33 @@ def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) 
             detail["current_job"] = str(pawn["current_job"])
 
 
+def select_work_map(maps: list[dict[str, Any]]) -> dict[str, Any]:
+    """Select an actionable map, including a ship after its last pawn boards."""
+    def priority(row):
+        people = int(first_number(row.get("free_colonists"))) > 0
+        if people and int(first_number(row.get("hostiles"))) > 0:
+            return 0
+        if people and row.get("is_temp_incident_map"):
+            return 1
+        if not people and int(first_number(row.get("player_ship_passengers"))) > 0:
+            return 2
+        if people and row.get("is_current_map"):
+            return 3
+        if people and row.get("is_player_home"):
+            return 4
+        if people:
+            return 5
+        return 6 if row.get("is_player_home") else 7
+    return min(maps, key=priority)
+
+
 def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     warnings: list[str] = []
     game = client.get("/api/v1/game/state")
     maps = client.get("/api/v1/maps")
     if not isinstance(maps, list) or not maps:
         raise RimApiError("RIMAPI reports no loaded map; load a colony first")
-    # An active quest/rescue map takes precedence over the home colony while
-    # player pawns are fighting there.  Otherwise use the currently selected
-    # populated map, then the main settlement.
-    home = next(
-        (m for m in maps if int(first_number(m.get("free_colonists"))) > 0 and int(first_number(m.get("hostiles"))) > 0),
-        next(
-            (m for m in maps if m.get("is_temp_incident_map") and int(first_number(m.get("free_colonists"))) > 0),
-            next((m for m in maps if m.get("is_player_home")), maps[0]),
-        ),
-    )
+    home = select_work_map(maps)
     map_id = int(home.get("id", home.get("index", 0)))
 
     raw_colonists = safe_get(client, "/api/v2/colonists/detailed", warnings)
@@ -358,6 +371,14 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     hostiles = combat.get("hostiles") if isinstance(combat, dict) else []
     fighters = combat.get("colonists") if isinstance(combat, dict) else []
     weapons = combat.get("available_weapons") if isinstance(combat, dict) else []
+    # The colonist endpoint includes caravans and every loaded map. Local food,
+    # work, rescue and construction must only use pawns on the selected map.
+    # Older servers lack location fields: combat membership is a conservative
+    # fallback rather than treating travellers as available home workers.
+    local_ids = {int(p["id"]) for p in fighters or [] if p.get("id") is not None}
+    colonists = [p for p in colonists if
+                 (p["map_id"] == map_id and p["spawned"] is not False)
+                 or (p["map_id"] is None and p["spawned"] is None and p["id"] in local_ids)]
     annotate_mental_states(colonists, fighters)
     annotate_combat_capability(colonists, combat)
     annotate_combat_medical_state(colonists, combat)

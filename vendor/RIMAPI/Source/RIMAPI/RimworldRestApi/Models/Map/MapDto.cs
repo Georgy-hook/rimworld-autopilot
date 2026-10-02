@@ -14,6 +14,7 @@ namespace RIMAPI.Models
         public bool IsTempIncidentMap { get; set; }
         public bool IsCurrentMap { get; set; }
         public int FreeColonists { get; set; }
+        public int PlayerShipPassengers { get; set; }
         public int Hostiles { get; set; }
         public string Size { get; set; }
     }
@@ -222,6 +223,7 @@ namespace RIMAPI.Models
 
     public class RoomDto
     {
+        public string RoleDefName { get; set; }
         public int Id { get; set; }
         public string RoleLabel { get; set; }
         public float Temperature { get; set; }

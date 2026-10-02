@@ -61,7 +61,7 @@ namespace RIMAPI.Helpers
                 || t.Map.gasGrid.DensityAt(t.Position, GasType.RotStink) > 0) return false;
             threats=threats ?? t.Map.mapPawns.AllPawnsSpawned.Where(h => !h.Dead && !h.Downed && h.HostileTo(p)).ToList();
             return !threats.Any(h => h.Position.DistanceTo(t.Position) < 30 || h.Position.DistanceTo(p.Position) < 20)
-                && p.CanReach(t, PathEndMode.Touch, Danger.Some);
+                && ResilienceAutomationHelper.RoutineRouteSafe(p,t);
         }
         private static IEnumerable<FloatMenuOption> Menus(Pawn p, Thing t, List<Pawn> threats = null)
         {
@@ -88,9 +88,10 @@ namespace RIMAPI.Helpers
         private static object PawnFacts(Pawn p) => new {
             pawn_id=p.thingIDNumber, name=p.LabelShort, health=p.health.summaryHealth.SummaryHealthPercent,
             downed=p.Downed, drafted=p.Drafted, job=p.CurJobDef?.defName,
-            food=p.needs?.food?.CurLevelPercentage, mood=p.needs?.mood?.CurLevelPercentage,
+            food=p.needs?.food?.CurLevelPercentage, food_category=p.needs?.food?.CurCategory.ToString(), mood=p.needs?.mood?.CurLevelPercentage,
             ideology=p.Ideo?.name, conditions=p.health.hediffSet.hediffs.Where(h => h.Visible).Select(h => new {
-                def_name=h.def.defName, severity=h.Severity, part=h.Part?.Label }).ToList(),
+                def_name=h.def.defName, severity=h.Severity, stage=h.CurStageIndex,
+                life_threatening=h.CurStage?.lifeThreatening ?? false, part=h.Part?.Label }).ToList(),
             skills=p.skills?.skills.Select(s => new { name=s.def.defName, level=s.Level }).ToList()
         };
 

@@ -52,7 +52,8 @@ namespace RIMAPI.Helpers {
       eligible_nutrition=g.Where(t=>EligibleStock(t) && SafeFeedDef(t.def)).Sum(t=>t.def.ingestible==null ? 0f : t.GetStatValue(StatDefOf.Nutrition)*t.stackCount)}).ToArray();
    var recipe=DefDatabase<RecipeDef>.GetNamedSilentFail("Make_Kibble");
    var feedTables=map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>()
-    .Where(t=>recipe!=null && recipe.AvailableNow && t.def.AllRecipes.Contains(recipe))
+    .Where(t=>recipe!=null && recipe.AvailableNow && recipe.AvailableOnNow(t) && t.def.AllRecipes.Contains(recipe)
+     && (Reusable(t,recipe)!=null || t.BillStack.Bills.Count<15))
     .Select(t=>new {id=t.thingIDNumber, label=t.LabelShortCap, usable=t.CurrentlyUsableForBills(),
      existing_bill=t.BillStack.Bills.Any(b=>b.recipe==recipe && Pending(b)), eligible_worker_ids=map.mapPawns.FreeColonistsSpawned.Where(p=>ReadyCook(t,recipe,p,stockPool,reachable)).Select(p=>p.thingIDNumber).ToArray(),
      ingredients=recipe.ingredients.Select(i=>new {count=i.GetBaseCount(), units="nutrition", allowed_defs=i.filter.AllowedThingDefs
@@ -79,7 +80,7 @@ namespace RIMAPI.Helpers {
     fuel.allowAutoRefuel=wanted; result.Reason=result.Applied ? "refuel_policy_changed" : "already_configured";
    } else if(r.Policy=="kibble_batch") {
     var table=b as Building_WorkTable; var recipe=DefDatabase<RecipeDef>.GetNamedSilentFail("Make_Kibble");
-    if(table==null || recipe==null || !recipe.AvailableNow || !table.def.AllRecipes.Contains(recipe)
+    if(table==null || recipe==null || !recipe.AvailableNow || !recipe.AvailableOnNow(table) || !table.def.AllRecipes.Contains(recipe)
       || !table.CurrentlyUsableForBills() || !table.Map.mapPawns.FreeColonistsSpawned.Any(p=>ReadyCook(table,recipe,p))
       || !table.Map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Any(p=>p.RaceProps.Animal && p.RaceProps.CanEverEat(DefDatabase<ThingDef>.GetNamed("Kibble")))
       || table.BillStack.Bills.Any(x=>x.recipe==recipe && Pending(x)))

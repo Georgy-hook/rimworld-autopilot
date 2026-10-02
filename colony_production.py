@@ -28,48 +28,67 @@ def collect(client, snapshot):
 def recipe_options(context):
     return {p["key"]: p for p in (context.get("recipe_context") or {}).get("options") or [] if isinstance(p, dict) and isinstance(p.get("key"), str) and p.get("worker_ids") and p.get("recipe")}
 
-def recipe_choose(agent, context):
-    from colony_sustenance import _stage
+def _facts(state, question):
+    state = state or {}
+    # The caller supplies compact requirements. Goal facts precede stage names
+    # in the bounded adapter; catalogs and inventory stay outside this envelope.
+    return {"endgame": state.get("endgame"), "goal_requirements": state.get("goal_requirements") or {}, "purpose": question}
+
+
+def _stage(agent, state, rows, question, instructions):
+    indexed = {f"o{i}": row for i, row in enumerate(rows)}
+    choices = {alias: row[1] for alias, row in indexed.items()}
+    effects = {alias: row[2] for alias, row in indexed.items()}
+    choices["defer"] = "Keep current stock and work; defer"
+    effects["defer"] = {"benefit": "Preserve resources/current services", "risk": "Goal shortages and current delays continue",
+                        "cost": "No added labor/resources", "inaction": "Current policy continues", "uncertainty": "No completed production or delivery"}
+    selected, raw = ask_laya_choice(agent, {"decision_facts": _facts(state, question), "option_effects": effects},
+                                    question, instructions, choices, detailed=True)
+    if selected not in choices:
+        raise ValueError("Unverified production choice")
+    return (None if selected == "defer" else indexed[selected][0]), raw
+
+
+def recipe_choose(agent, context, state=None):
     plans = recipe_options(context)
     stages = []
     def effect(p):
-        return {"benefit": f"material={p.get('material') or 'default'} {p.get('recipe')} table={p.get('building_id')}", "cost": p.get("cost", "Ingredients/labor"),
-                "risk": "Bandwidth/waste/power" if p.get("gestation_cycles") else "Consumes scarce stock; biological/social cost if applicable",
+        return {"benefit": f"{p.get('products') or p.get('recipe')} material={p.get('material') or 'default'} table={p.get('building_id')}", "cost": p.get("cost", "Ingredients/labor"),
+                "risk": p.get("risk") or ("Bandwidth/waste/power" if p.get("gestation_cycles") else "Consumes scarce stock; biological/social cost if applicable"),
                 "inaction": "No products; stocks/labor preserved", "uncertainty": "Bill accepted only; normal work pending"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan.get("category") or "other", []).append((key, plan))
-    group, raw = _stage(agent, {}, [(category, category, effect(items[0][1])) for category, items in groups.items()], "production_purpose", "Choose production purpose or defer; compare scarcity, bandwidth, waste and costs.")
+    group, raw = _stage(agent, state, [(category, category, effect(items[0][1])) for category, items in groups.items()], "production_purpose", "Choose production purpose or defer; compare scarcity, bandwidth, waste and costs.")
     stages.append(raw)
     if group is None: return {"production_policy":"defer"}, {"stages":stages}
     recipes = {}
     for key, plan in groups[group]: recipes.setdefault(plan['recipe'], []).append((key,plan))
-    recipe, raw = _stage(agent, {}, [(r, items[0][1].get('label'), effect(items[0][1])) for r,items in recipes.items()], "production_recipe", "Choose loaded feasible recipe or defer. Work, materials and autonomous cycles remain pending.")
+    recipe, raw = _stage(agent, state, [(r, items[0][1].get('label'), effect(items[0][1])) for r,items in recipes.items()], "production_recipe", "Choose loaded feasible recipe or defer. Work, materials and autonomous cycles remain pending.")
     stages.append(raw)
     if recipe is None: return {"production_policy":"defer"}, {"stages":stages}
-    key, raw = _stage(agent, {}, [(key, plan.get('label'), effect(plan)) for key, plan in recipes[recipe]], "production_table_material", "Choose actual table/material or defer. Competing resources and labor are real costs.")
+    key, raw = _stage(agent, state, [(key, plan.get('label'), effect(plan)) for key, plan in recipes[recipe]], "production_table_material", "Choose actual table/material or defer. Competing resources and labor are real costs.")
     stages.append(raw)
     return {"production_policy":key or "defer"}, {"stages":stages}
 
 def logistics_options(context):
     return {p["key"]: p for p in (context.get("logistics_context") or {}).get("options") or [] if isinstance(p, dict) and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul"}}
 
-def logistics_choose(agent, context):
-    from colony_sustenance import _stage
+def logistics_choose(agent, context, state=None):
     plans = logistics_options(context)
     stages = []
     def effect(plan):
         return {"benefit": str(plan.get("label")), "risk": str(plan.get("risk")), "cost": str(plan.get("cost")), "inaction": "Forbidden/exposed/unstored stock and delivery delays continue", "uncertainty": "Ordinary policy/job only; no delivered materials yet"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan["kind"], []).append((key, plan))
-    kind, raw = _stage(agent, {}, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose ordinary material logistics purpose or defer; compare labor, exposure and lost floor space.")
+    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose ordinary material logistics purpose or defer; compare labor, exposure and lost floor space.")
     stages.append(raw)
     if kind is None: return {"production_policy":"defer"}, {"stages":stages}
     subjects = {}
     for key, plan in groups[kind]: subjects.setdefault(str(plan["target_id"]), []).append((key, plan))
-    subject, raw = _stage(agent, {}, [(subject, str(items[0][1].get('label')), effect(items[0][1])) for subject, items in subjects.items()], "production_logistics_subject", "Choose actual storage, table or material stack; do not claim permission equals delivery.")
+    subject, raw = _stage(agent, state, [(subject, str(items[0][1].get('label')), effect(items[0][1])) for subject, items in subjects.items()], "production_logistics_subject", "Choose actual storage, table or material stack; do not claim permission equals delivery.")
     stages.append(raw)
     if subject is None: return {"production_policy":"defer"}, {"stages":stages}
-    key, raw = _stage(agent, {}, [(key, str(plan.get('label')), effect(plan)) for key, plan in subjects[subject]], "production_logistics_policy", "Choose actual material or enabled hauler, or defer to preserve labor/floor space.")
+    key, raw = _stage(agent, state, [(key, str(plan.get('label')), effect(plan)) for key, plan in subjects[subject]], "production_logistics_policy", "Choose actual material or enabled hauler, or defer to preserve labor/floor space.")
     stages.append(raw)
     return {"production_policy":key or "defer"}, {"stages":stages}
 
@@ -111,9 +130,9 @@ def prepare(snapshot, map_state):
 def choose(agent, state, action, snapshot):
     context = snapshot["development"]["production"]
     if action == "production_recipe_batch":
-        return recipe_choose(agent, context)
+        return recipe_choose(agent, context, state)
     if action == "production_material_logistics":
-        return logistics_choose(agent, context)
+        return logistics_choose(agent, context, state)
     plans = context.get("feed_options" if action == "production_feed_batch" else "options", {})
     stages = []
     def effect(plan):
@@ -135,7 +154,7 @@ def choose(agent, state, action, snapshot):
         effects={alias:effect(plan) for alias,(_,plan) in indexed.items()}
         choices['defer']='Keep current services, fuel and food; defer'
         effects['defer']={"benefit":"Preserve services/resources", "risk":"Existing shortages/rot/fuel burn continue", "cost":"No added labor/resources", "inaction":"Current policies continue", "uncertainty":"No produced feed/restored service"}
-        selected,raw=ask_laya_choice(agent,{"decision_facts":{"purpose":action},"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
+        selected,raw=ask_laya_choice(agent,{"decision_facts":_facts(state, question),"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
         stages.append(raw)
         if selected not in choices: raise ValueError('Unverified production policy')
         return None if selected=='defer' else indexed[selected][0]
@@ -165,9 +184,8 @@ def execute(client, snapshot, map_state, action, selected):
         if not live or any(live.get(k) != original.get(k) for k in ("kind", "target_id", "value", "worker_id", "cells")):
             return {"applied": False, "reason": "logistics_no_longer_available"}
         response = client.post("/api/v1/production/logistics", body={"map_id": snapshot["map"]["id"], "key": key})
-        if response.get("applied") is True:
-            map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-        return {"applied": response.get("applied") is True, "reason": response.get("reason"), "response": response}
+        map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+        return {"applied": isinstance(response, dict) and response.get("applied") is True, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response}
     if action == "production_recipe_batch":
         original = recipe_options(snapshot.get("development", {}).get("production", {})).get(key)
         if not original:
@@ -176,9 +194,8 @@ def execute(client, snapshot, map_state, action, selected):
         if not live or any(live.get(k) != original.get(k) for k in ("building_id", "recipe", "material")):
             return {"applied": False, "reason": "recipe_no_longer_available"}
         response = client.post("/api/v1/production/recipe-bill", body={"map_id": snapshot["map"]["id"], "key": key})
-        if response.get("applied") is True:
-            map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-        return {"applied": response.get("applied") is True, "reason": response.get("reason"), "response": response}
+        map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+        return {"applied": isinstance(response, dict) and response.get("applied") is True, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response}
     plan_key = "feed_options" if action == "production_feed_batch" else "options"
     original = snapshot.get("development", {}).get("production", {}).get(plan_key, {}).get(key)
     if not original:
@@ -194,7 +211,7 @@ def execute(client, snapshot, map_state, action, selected):
         return {"applied": False, "reason": "policy_no_longer_available"}
     response = client.post("/api/v1/production/policy", body={"map_id": snapshot["map"]["id"], "building_id": live["building"]["id"], "policy": live["policy"]})
     map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
-    return {"applied": bool(response.get("applied", False)), "reason": response.get("reason"), "response": response}
+    return {"applied": isinstance(response, dict) and response.get("applied") is True, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response}
 
 def assess(action, snapshot):
     if action == "production_material_logistics":

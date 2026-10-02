@@ -105,6 +105,7 @@ namespace RIMAPI.Models
     public class RescueSiteStatusDto
     {
         public int MapId { get; set; }
+        public int? SiteId { get; set; }
         public bool IsTemporaryMap { get; set; }
         public bool ActiveThreat { get; set; }
         public List<int> RescuerPawnIds { get; set; } = new List<int>();

@@ -23,6 +23,10 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(resilience.prepare(self.snapshot, {}), ['resilience_rescue'])
         self.assertEqual(resilience.prepare(self.snapshot, {'issued': {'resilience:resilience_rescue': 9800}}), [])
 
+    def test_loading_older_save_does_not_disable_emergency_rescue(self):
+        self.assertEqual(resilience.prepare(self.snapshot, {'issued': {'resilience:resilience_rescue': 900000}}), ['resilience_rescue'])
+        self.assertEqual(resilience.prepare(self.snapshot, {'issued': None}), ['resilience_rescue'])
+
     def test_worker_became_unavailable_does_not_order(self):
         client = Client([])
         self.assertFalse(resilience.execute(client, self.snapshot, {}, 'resilience_rescue', self.row)['applied'])

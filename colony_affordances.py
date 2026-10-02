@@ -49,7 +49,25 @@ def evidence(row: dict) -> dict:
         if isinstance(value, list):
             return [stable(v) for v in value]
         return value
-    return stable({k: row.get(k) for k in ("cost", "risk", "pawn", "target_pawn", "target_hostile", "affected_allies")})
+    result = stable({k: row.get(k) for k in ("cost", "risk", "pawn", "target_pawn", "target_hostile", "affected_allies")})
+    for field in ("pawn", "target_pawn"):
+        if isinstance(result.get(field), dict):
+            # Natural hunger/mood drift and switching between ordinary jobs do
+            # not invalidate an unchanged action. Native execution still checks
+            # availability/protected jobs. Clinical stage/identity remain bound.
+            for transient in ("food", "mood", "job", "name"):
+                result[field].pop(transient, None)
+    return result
+
+
+def evidence_changed(prior: Any, current: Any) -> bool:
+    if isinstance(prior, dict) and isinstance(current, dict):
+        return set(prior) != set(current) or any(evidence_changed(prior[key], current[key]) for key in prior)
+    if isinstance(prior, list) and isinstance(current, list):
+        return len(prior) != len(current) or any(evidence_changed(a, b) for a, b in zip(prior, current))
+    if isinstance(prior, float) and isinstance(current, float):
+        return abs(prior - current) > 0.020001
+    return prior != current
 
 def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, dict]:
     rows = snapshot.get("development", {}).get("affordances", {}).get("candidates", {}).get(action) or {}
@@ -110,7 +128,12 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     expected = {"affordances_ability": "ability", "affordances_interaction": "menu", "affordances_scanner": "scanner"}.get(action)
     if len(match) != 1 or payload.get("kind") != expected:
         return {"applied": False, "reason": "selection_no_longer_feasible"}
-    if "decision_evidence" in selected and selected["decision_evidence"] != evidence(match[0]):
+    prior = selected.get("decision_evidence")
+    live_evidence = evidence(match[0])
+    # Costs and collateral never use clinical tolerance.
+    changed = prior is not None and (any(prior.get(k) != live_evidence.get(k) for k in ("cost", "risk", "target_hostile", "affected_allies"))
+        or any(evidence_changed(prior.get(k), live_evidence.get(k)) for k in ("pawn", "target_pawn")))
+    if changed:
         return {"applied": False, "reason": "actor_target_or_cost_changed"}
     result = client.post("/api/v1/affordances/order", body={"map_id": snapshot["map"]["id"], **payload})
     memory[str(selected["key"])] = tick

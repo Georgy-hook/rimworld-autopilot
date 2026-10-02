@@ -11,9 +11,8 @@ namespace RIMAPI.Helpers
     public static class SpecialistAutomationHelper
     {
         private static bool Protected(Pawn p) => p == null || p.Dead || p.Downed || p.Drafted || p.InMentalState
-            || p.CurJobDef == JobDefOf.TendPatient || p.CurJobDef == JobDefOf.Rescue || p.CurJobDef == JobDefOf.FeedPatient
-            || p.CurJobDef == JobDefOf.DoBill || p.health.hediffSet.hediffs.Any(h => h.IsCurrentlyLifeThreatening
-                || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immune && immune.Immunity < 1));
+            || CombatNativeHelper.HasCareJob(p) || p.health.hediffSet.hediffs.Any(h => h.Visible && (h.IsCurrentlyLifeThreatening || h.TendableNow()
+                || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immune && immune.Immunity < 1)));
         private static List<string> Modes(Pawn owner, MechanitorControlGroup group, Map map)
         {
             var mechs = group.MechsForReading;
@@ -34,7 +33,7 @@ namespace RIMAPI.Helpers
         private static bool WardenAvailable(Pawn p, Building_HoldingPlatform platform) => !Protected(p) && p.Spawned
             && p.Faction == Faction.OfPlayer && p.IsColonistPlayerControlled && p.Map == platform.Map
             && !p.WorkTypeIsDisabled(WorkTypeDefOf.Warden) && (p.workSettings?.GetPriority(WorkTypeDefOf.Warden) ?? 0) > 0
-            && p.CurJobDef != JobDefOf.ActivitySuppression && p.CanReach(platform, PathEndMode.Touch, Danger.Some);
+            && p.CurJobDef != JobDefOf.ActivitySuppression && ResilienceAutomationHelper.RoutineRouteSafe(p,platform);
         // Installed WorkGiver has no nonallocating HasJobOnThing override.
         // Mirror its eligibility checks without JobMaker or JobFailReason writes.
         private static bool SuppressionReady(Pawn worker, Building_HoldingPlatform platform)
@@ -62,6 +61,8 @@ namespace RIMAPI.Helpers
             if (map == null) return ApiResult<SpecialistContextDto>.Fail("Map not found.");
             var result = new SpecialistContextDto { RoyaltyActive = ModsConfig.RoyaltyActive, IdeologyActive = ModsConfig.IdeologyActive,
                 BiotechActive = ModsConfig.BiotechActive, AnomalyActive = ModsConfig.AnomalyActive };
+            result.RoyaltyContext=RoyalHospitalityHelper.Context(map);
+            result.RoyalAssignments=RoyalHospitalityHelper.Options(map);
             if (ModsConfig.BiotechActive)
             {
                 result.PollutedCells = map.pollutionGrid.TotalPollution; result.PollutionPercent = map.pollutionGrid.AllPollutableCells.Count > 0 ? map.pollutionGrid.TotalPollutionPercent : 0;
@@ -154,6 +155,7 @@ namespace RIMAPI.Helpers
             var map = MapHelper.GetMapByID(request.MapId);
             if (map == null) return ApiResult<CapabilityOrderResultDto>.Fail("Map not found.");
             var result = new CapabilityOrderResultDto { Reason = "selection_no_longer_feasible" };
+            if(request.Kind=="royal_bed" || request.Kind=="royal_throne")return RoyalHospitalityHelper.Execute(map,request);
             if (request.Kind == "mech_mode" && ModsConfig.BiotechActive && request.MechanitorId.HasValue && request.GroupIndex.HasValue)
             {
                 var owner = MapHelper.GetThingOnMapById(request.MapId, request.MechanitorId.Value) as Pawn;

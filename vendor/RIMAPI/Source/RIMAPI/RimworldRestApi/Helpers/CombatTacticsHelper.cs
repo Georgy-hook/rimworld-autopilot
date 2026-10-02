@@ -33,11 +33,17 @@ namespace RIMAPI.Helpers
                 if(new[]{"emp_control","smoke_advance","mortar_counterbattery","mortar_reload","attack_structure"}.Contains(tactic))return ApiResult<CombatTacticResponseDto>.Ok(CombatNativeHelper.Apply(map,request));
                 if (tactic == "stand_down")
                 {
+                    if (map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        || map.listerBuildings.allBuildingsNonColonist.Any(CombatNativeHelper.ActiveStructure))
+                        return ApiResult<CombatTacticResponseDto>.Fail("Hostiles remain; stand down no longer feasible.");
                     foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.drafter?.Drafted == true))
                         pawn.drafter.Drafted = false;
                     return ApiResult<CombatTacticResponseDto>.Ok(new CombatTacticResponseDto { Tactic = tactic });
                 }
 
+                if (!PositioningTactics.Contains(tactic) && !new[] { "melee_assault", "rush_ranged", "melee_hold_line", "lure_enemy",
+                    "preemptive_strike", "screen_melee", "guard_shooters", "psycast_control", "psycast_support" }.Contains(tactic))
+                    return ApiResult<CombatTacticResponseDto>.Fail("Unknown combat tactic; no fighters drafted.");
                 List<Pawn> fighters = map.mapPawns.FreeColonistsSpawned
                     .Where(p => request.FighterIds.Contains(p.thingIDNumber) && !p.Dead && !p.Downed
                         && !p.InMentalState && !CombatNativeHelper.Protected(p))
@@ -45,11 +51,13 @@ namespace RIMAPI.Helpers
                 if (fighters.Count == 0)
                     return ApiResult<CombatTacticResponseDto>.Fail("No selected healthy fighter is available on this map.");
                 Pawn target = request.TargetPawnId.HasValue
-                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead)
+                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
                     : map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
+                if (target == null && tactic != "psycast_support" && tactic != "psycast_control")
+                    return ApiResult<CombatTacticResponseDto>.Fail("No living active hostile target remains; no fighters drafted.");
                 var result = new CombatTacticResponseDto
                 {
                     Tactic = tactic,

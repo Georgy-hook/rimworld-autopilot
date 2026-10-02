@@ -11,7 +11,8 @@ namespace RIMAPI.Helpers
     public static class CombatNativeHelper
     {
         private static readonly HashSet<string> Care=new HashSet<string>{"TendPatient","Rescue","FeedPatient","DoBill","Deathrest","Breastfeed","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafety","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessongiving","Lessonreceiving","PrisonerInterrogateIdentity"};
-        public static bool Protected(Pawn pawn) => Care.Contains(pawn.CurJobDef?.defName ?? "")
+        public static bool HasCareJob(Pawn pawn) => Care.Contains(pawn.CurJobDef?.defName ?? "");
+        public static bool Protected(Pawn pawn) => HasCareJob(pawn)
             && !pawn.Map.mapPawns.AllPawnsSpawned.Any(e=>!e.Dead && !e.Downed && e.HostileTo(Faction.OfPlayer) && e.Position.InHorDistOf(pawn.Position,4f))
             && !pawn.Map.listerBuildings.allBuildingsNonColonist.Any(b=>b is Building_Turret && b.HostileTo(Faction.OfPlayer) && b.Position.InHorDistOf(pawn.Position,4f));
         public static bool Kidnapper(Pawn pawn) => pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer

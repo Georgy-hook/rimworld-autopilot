@@ -31,16 +31,9 @@ def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
     """Protect active treatment, rescue and dependent feeding from distant combat."""
     colonists = (snapshot.get("combat") or {}).get("colonists") or []
-    untreated_patients = {int(row["id"]) for row in colonists
-                          if row.get("id") is not None and not row.get("is_dead")
-                          and (row.get("tendable_now") or row.get("is_downed") or row.get("life_threatening"))}
-    untreated_patients.update(int(row['pawn_id']) for row in snapshot.get('development', {}).get('resilience', {}).get('patients') or []
-                              if row.get('pawn_id') is not None and (row.get('tendable_now') or row.get('downed') or row.get('life_threatening')))
     return {int(row["id"]) for row in colonists
             if row.get("id") is not None and not row.get("is_dead") and not row.get("is_downed")
-            and (str(row.get("current_job") or "").lower() in {"tendpatient", "rescue", "feedpatient", "dobill", "deathrest", "breastfeed", "bottlefeedbaby", "breastfeedcarrytomom", "bringbabytosafety", "bringbabytosafetyunforced", "carrytomomafterbirth", "playstatic", "playwalking", "playtoys", "lessongiving", "lessonreceiving"})
-            and (str(row.get("current_job") or "").lower() not in {"tendpatient", "rescue", "feedpatient"}
-                 or any(row.get(k) is not None and int(row[k]) in untreated_patients for k in ("current_job_target_id", "current_job_target_id_b")))
+            and (str(row.get("current_job") or "").lower() in {"tendpatient", "rescue", "feedpatient", "dobill", "deathrest", "breastfeed", "bottlefeedbaby", "breastfeedcarrytomom", "bringbabytosafety", "bringbabytosafetyunforced", "carrytomomafterbirth", "babysuckle", "babyplay", "playstatic", "playwalking", "playtoys", "lessongiving", "lessonreceiving", "prisonerinterrogateidentity"})
             and opponent_distance(row, 0) > 4}
 
 

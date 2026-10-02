@@ -20,6 +20,8 @@ def main():
     from laya.common import build_sequence, serialize_state
     import colony_modules
     import colony_sessions
+    import colony_strategy
+    from laya_decisions import ask_laya_choice
     from tests.test_affordances import option
     from tests.test_production import ProductionTests, RecipeProductionTests, LogisticsProductionTests
     from tests.test_society import snapshot as society_snapshot
@@ -40,7 +42,8 @@ def main():
             assert sequence[-len(ids)-1:-1] == ids, ("encoder truncated state", qid)
             assert len(markers) == len(question["criteria"]), ("lost option", qid)
             cards = state.get("effects", {})
-            assert len(cards) == len(question["criteria"]), ("missing consequence cards", qid, state)
+            if "effects" in state:
+                assert len(cards) == len(question["criteria"]), ("missing consequence cards", qid, state)
             for card in cards.values():
                 assert set(card) == {"benefit", "risk", "cost", "inaction", "uncertainty"}
                 assert all(card.values()), ("empty field", qid)
@@ -77,6 +80,17 @@ def main():
         ("specialists", "specialists_mech_mode", specialist_snapshot()),
         ("specialists", "specialists_suppress_entity", specialist_snapshot()),
         ("progression", "progression_ship", ship),
+        ("specialists", "specialists_royal_assign", snap("specialists", {"royal_assignments": [
+            {"kind": "royal_bed", "pawn_id": i, "thing_id": 100+i,
+             "label": f"Guest{i}: assign qualifying RoyalBed in room {i}",
+             "description": "Actual room requirements met; assignment does not prove good mood or successful hospitality."}
+            for i in range(12)]})),
+        ("progression", "progression_ending", snap("progression", {"ending_journey": {"journeys": [
+            {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": days,
+             "route": "ship_journey", "travel_days": 18.2, "native_approx_food_days": days,
+             "food_margin_days": days-18.2, "pawn_ids": [3,4], "travelers": ["A","B"],
+             "colonists_at_home": [], "food_nutrition": days*3.2, "home_food_nutrition": 0,
+             "medicine_count": 4, "mass": 22, "capacity": 70} for days in (21,30)]}})),
         ("affordances", "affordances_ability", snap("affordances", {"options": [
             option(i, (f"Способность {i} ")*50) for i in range(15)]})),
     ]
@@ -86,7 +100,8 @@ def main():
         module = colony_modules.owner(action)
         assert module is not None, action
         module.prepare(snapshot, {})
-        module.choose(agent, {"endgame": "archonexus"}, action, snapshot)
+        module.choose(agent, {"endgame": "archonexus", "goal_requirements": {
+            "journey": {"route": "archonexus", "blockers": ["diet-allowed survival meals missing"], "ration_work": "Cooking8,ElectricStove"}}}, action, snapshot)
         completed.append(action)
     colony_sessions.target_choice(agent, {"session_id": 1, "map_id": 1, "source": "Verb_CastAbility",
         "effect_label": "Coagulate", "effect_description": "Stop bleeding", "effect_cost": "hemogen",
@@ -94,6 +109,18 @@ def main():
                      "label": f"Pawn{i}", "health": .1 if i == 31 else 1,
                      "downed": i == 31, "bleed_rate": .8 if i == 31 else 0} for i in range(32)]})
     completed.append("native_target")
+    # Full strategy cascade: later choices used to disappear behind a large
+    # progression/catalogue object despite the per-module prompt checks passing.
+    doctrine = colony_strategy.choose_cascaded_doctrine(agent,
+        {"people": 5, "needs": {"food": 300, "sheltered_beds": 5}},
+        {"active_mods": [{"package_id": value} for value in colony_strategy.EXPANSION_PACKAGES.values()],
+         "ending_progress": {"huge_catalogue": "irrelevant details " * 3000},
+         "material_options": {"WoodLog": "wood", "Steel": "steel"}})
+    assert doctrine["selection"]["endgame"] != "enduring_colony"
+    completed.append("full_doctrine_cascade_all_dlc_fixture")
+    ask_laya_choice(agent, {"decision_facts": {"endgame": "archonexus"}, "large_history": "x" * 30000},
+        "legacy_large_context", "Choose the next native step", {"study": "Study the current archostructure", "wait": "Wait"})
+    completed.append("legacy_oversized_context")
     result = {"checkpoint": str(args.checkpoint), "scenarios": completed, "model_weights_loaded": False,
               "max_len": agent.cfg["max_len"], "head_max_len": agent.cfg["head_max_len"],
               "full_state_retained": True, "calls": agent.calls}

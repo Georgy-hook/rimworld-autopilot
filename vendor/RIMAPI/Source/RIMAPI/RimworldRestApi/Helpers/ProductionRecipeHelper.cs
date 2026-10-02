@@ -22,6 +22,7 @@ namespace RIMAPI.Helpers
             public string label;
             public string cost;
             public string risk;
+            public string products;
             public int[] worker_ids;
         }
 
@@ -211,6 +212,7 @@ namespace RIMAPI.Helpers
                             gestation_cycles = recipe.gestationCycles, category = info.Category,
                             label = table.LabelShortCap + ": " + recipe.LabelCap + (material == null ? "" : " material " + material),
                             cost = info.Cost, worker_ids = eligible.ToArray(),
+                            products = string.Join("; ", recipe.products.Select(p => p.thingDef.defName + " x" + p.count)),
                             risk = "Scarce ingredients/labor/power; mech bandwidth and waste; biological/drug consequences remain vanilla. No pawn donors allocated."
                         });
                     }

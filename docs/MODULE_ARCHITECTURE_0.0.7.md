@@ -35,6 +35,7 @@ flowchart TD
 | `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Previous capability audit; retained |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
 | `colony_architect` | Building purpose, materials and generated layouts | Actual catalog, stock, research and placement checks |
+| `colony_shipbuilding` | Persistent connected ship layout and separately funded building stages | Native blueprint preview, completed beams before caskets, observed placements, unallocated stock |
 | `colony_strategy`, `colony_growth`, `colony_professions`, `colony_events` | Existing course, population, workforce and event support | These remain partial; catalogue entries are not completed chains |
 | `colony_reasoning`, `laya_decisions` | Consequence descriptions and bounded native comparisons | Exact compared state is logged |
 | `colony_outcomes` | Last order and subsequent measured changes | Acceptance, observation and completion are distinct |
@@ -110,6 +111,68 @@ bounded prefixes; this limitation is distinct from the new consequence cards.
   have been reproduced or fixed.
 
 ## Observation, memory and intent
+
+### Campaign, map and pending native session
+
+`EndingEvidence.CampaignId` is persisted in the game save. Python binds doctrine
+and income intent to that identity; changing maps or accepting an Archonexus
+colony transfer does not create a new strategic goal. A different campaign clears
+old map orders; loading an earlier tick cannot restore a future doctrine.
+Map coordinates, construction footprints and issued-order markers stay local.
+
+The colonist endpoint covers maps and caravans. Pawn `map_id` and `spawned` now
+separate available local workers from that global roster. Map selection also
+sees native ship passengers, so boarding the last pawn cannot hide the ship
+behind the abandoned home map. Empty maps are distinct from verified game over.
+During mapless travel, world continuation, caravan trade and native dialog
+handlers run before any request for a map snapshot.
+
+Temporary maps use the same domain executors for care, interactions and endings,
+with a restricted list of unrelated home construction. Shelter startup filters
+do not suppress native boarding or final interactions. Rescue continuation is
+bound to the actual world site ID; an old rescue intent cannot recall an
+expedition from an unrelated ending site.
+
+### Prerequisites shared across domains
+
+`colony_modules.goal_requirements` exposes compact chosen-route journey needs
+and missing ship materials. These facts reach domain selection and every
+production sub-selection. Actual complete catalogs remain in module snapshots.
+Doctrine comparisons retain the selected ending throughout income and work
+choices. Production no longer loses this goal when choosing a recipe or table.
+
+Oversized legacy choices now use explicit bounded packing before the model
+encoder. This prevents silent encoder truncation; the stored visible-state log
+still identifies which detail was omitted. English model criteria and Russian
+display labels have separate responsibilities.
+
+### Native work and observed acceptance
+
+`/builder/blueprint/preview` reads exact rotated footprints, current research,
+stuff, native placement rules, overlaps and interaction cells without placing
+anything. Proposed beams/floors do not count as completed prerequisites.
+`colony_shipbuilding` reserves one connected site, funds available parts, waits
+for actual beam completion and retries missing parts. Architecture and ship
+placement read back exact definition/coordinates; an empty successful envelope
+does not establish that construction was placed or completed.
+
+Ending journeys use normal caravan formation and saved native visit arrival
+actions. Native path/rest/movement estimates are calculated once per team and
+destination within an observation, then shared by supply alternatives. Estimates
+can change; travel, arrival, boarding and launch countdown are separate states.
+Trade discovery can offer an exact live `item:<def>` such as an AI persona core;
+execution revalidates price, funds, sold inventory and the chosen reserve.
+Native trade preview temporarily initializes the game trade session and restores
+its four static session fields in `finally`. It is not described as a pure read:
+native setup may emit messages and initialize trader silver allocations.
+
+Royal hospitality context includes actual and prospective quest guests, effective
+native room requirements and qualifying ownership choices. The director merges
+this into architecture and research observations. Required furniture/floor
+alternatives expose supporting research; completed room impressiveness and
+assignment are checked later. Room identity uses `role_def_name` across game
+languages, while the original display label is preserved. Emergency care unwraps
+the native `{rooms: [...]}` envelope rather than silently discarding it.
 
 The existing doctrine remains the persistent intended course. Progression now
 compares that intention with a real prerequisite frontier and engine blockers.

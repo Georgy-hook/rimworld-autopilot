@@ -16,10 +16,11 @@ SHIP_RESEARCH = ("ShipBasics", "ShipCryptosleep", "ShipReactor", "ShipEngine", "
 APPLIED_RETRY_TICKS = {"progression_research": 30000, "progression_ship": 15000, "progression_boardship": 600}
 APPLIED_RETRY_TICKS["progression_ending"] = 600
 ENDING_ROUTES = {
+    "ship_journey": {"dlc": None, "prerequisites": "Travel by native caravan to the revealed escape ship, survive its native reactor startup, board passengers and launch.", "cost": "Travel supplies, lost home labor and reactor defense; people left at home remain.", "risk": "Caravan ambushes, starvation, illness and ship defense; arrival does not verify escape."},
     "ship_escape": {"dlc": None, "prerequisites": "Research and construct a connected ship, survive reactor startup, board chosen passengers and launch; alternatively travel to the offered landed ship.", "cost": "Research, advanced materials, construction, travel or 15 days of reactor defense; unboarded people remain.", "risk": "Repeated raids and loss of colony labor during boarding."},
-    "royal_ascent": {"dlc": "royalty", "prerequisites": "Earn Count/Countess rank, qualify for and accept Royal Ascent, host the stellarch successfully, then board the native departure shuttle.", "cost": "Honor, noble rooms and throne requirements, hospitality and defense for the visit.", "risk": "Guest death, mood or hospitality failure; repeated attacks."},
+    "royal_ascent": {"dlc": "royalty", "prerequisites": "Earn the native required Royal Ascent title (installed Count definition labeled archon), qualify for and accept Royal Ascent, host the stellarch successfully, then board the native departure shuttle.", "cost": "Honor, noble rooms and throne requirements, hospitality and defense for the visit.", "risk": "Guest death, mood or hospitality failure; repeated attacks."},
     "archonexus": {"dlc": "ideology", "prerequisites": "Reach each native wealth/research/faction requirement, accept three colony-sale cycles with explicit survivor and item selection, travel to the revealed core and invoke it.", "cost": "Three colony rebuilds; only the native selected pawns, animals and possessions transfer.", "risk": "Irreversible sale and separated colonists; final site defense."},
-    "anomaly_void": {"dlc": "anomaly", "prerequisites": "Investigate monolith, study discovered entities to unlock each native advancement, survive void awakening, reach and resolve the final native choice.", "cost": "Study and containment labor, stronger anomalies and final emergency.", "risk": "Entity escapes, darkness and assault; final embrace/disrupt choice has different consequences."},
+    "anomaly_void": {"dlc": "anomaly", "prerequisites": "Investigate monolith, discover the native required entity categories/counts, satisfy active-condition gates, survive void awakening, reach and resolve the final native choice. Study supports anomaly research and containment.", "cost": "Discovery, study and containment labor, stronger anomalies and final emergency.", "risk": "Entity escapes, darkness and assault; final embrace/disrupt choice has different consequences."},
     "odyssey_mechhive": {"dlc": "odyssey", "prerequisites": "Build and operate a gravship, progress offered gravship quests, obtain native space capability, travel to and resolve the mechhive objective.", "cost": "Gravship construction, fuel, travel, upgrades and orbital combat.", "risk": "Space hazards and mechanoid defenses; unavailable while Odyssey is inactive."},
 }
 PENDING_WINDOWS = ("Dialog_ChooseThingsForNewColony", "Dialog_ConfigureIdeo", "Screen_ArchonexusSettlementCinematics")
@@ -132,6 +133,15 @@ def collect(client, snapshot):
     map_id = (snapshot.get("map") or {}).get("id")
     if map_id is not None:
         result["native_milestones"] = [r for r in result.get("native_milestones") or [] if isinstance(r, dict) and str(r.get("map_id")) == str(map_id)]
+        try:
+            result["ending_journey"] = client.get("/api/v1/colony/endings/journey", map_id=map_id)
+            journey = result["ending_journey"] or {}
+            targets = journey.get("support_research_targets") or []
+            for route in {r.get("route") for r in journey.get("readiness") or []}:
+                if route in ("ship_journey", "archonexus") and targets:
+                    result["support_research"][route] = research_frontier(result.get("research_tree"), targets)
+        except Exception as exc:
+            result["errors"]["ending_journey"] = str(exc)
     return result
 
 
@@ -154,6 +164,8 @@ def _options(context):
 def prepare(snapshot, map_state):
     cooling = {action: _cooling(snapshot, map_state, action) for action in ACTIONS}
     context = snapshot.setdefault("development", {}).setdefault("progression", {})
+    if context.get("victory_verified") is True or (context.get("endings") or {}).get("victory_verified") is True:
+        return []
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
     chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
@@ -217,7 +229,36 @@ def ending_options(context):
         options[key] = {**job, "kind": "job"}
     for index, row in enumerate(odyssey.get("launches") or []):
         options[f"odyssey_pilot_{index}"] = {**row, "kind": "odyssey"}
+    for row in (context.get("ending_journey") or {}).get("journeys") or []:
+        key = f"journey_{row['map_id']}_{row['object_id']}_{row['team']}_{row['supply_days']}"
+        options[key] = {**row, "kind": "journey"}
     return options
+
+
+def journey_summary(context):
+    route = context.get("chosen_ending_route")
+    native = context.get("ending_journey") or {}
+    rows = [r for r in native.get("readiness") or [] if r.get("route") == route]
+    if not rows:
+        return {}
+    aliases = {"insufficient food edible and policy-allowed for every traveler": "diet-allowed survival meals missing",
+               "home travel-food reserve below 30 nutrition": "home ration reserve missing",
+               "insufficient travel medicine": "travel medicine missing", "home medicine reserve below eight": "home medicine reserve missing"}
+    blockers = list(dict.fromkeys(aliases.get(b, b) for r in rows for b in r.get("blockers") or []))
+    skills = list(dict.fromkeys(f"{s.get('skill')}{s.get('minimum')}" for r in native.get("ration_production") or [] for s in r.get("skill_requirements") or []))
+    stations = list(dict.fromkeys(s for r in native.get("ration_production") or [] for s in r.get("stations") or []))
+    return {"route": route, "blockers": blockers[:4], "ration_work": ",".join(skills + stations[:2]),
+            "travel_days": [r.get("travel_days") for r in rows[:2]],
+            "stock_food_margin_days": [r.get("stock_food_margin_days") for r in rows[:2]],
+            "research": native.get("support_research_targets") or [], "destinations": len({r.get("object_id") for r in rows})}
+
+
+def summary(snapshot):
+    context = dict((snapshot.get("development") or {}).get("progression") or {})
+    if not context.get("chosen_ending_route"):
+        context["chosen_ending_route"] = ((snapshot.get("development") or {}).get("doctrine") or {}).get("endgame")
+    ready = journey_summary(context)
+    return {"journey_blockers": len(ready.get("blockers") or []), "journey_needs": ready} if ready else {}
 
 
 def boarding_options(context):
@@ -256,7 +297,7 @@ def comparison(action, context):
                          "risk": "Ending escalation, colony sale or departure may be irreversible; compare route prerequisites and defense before accepting.",
                          "cost": "Pawn time, quest commitments and route-specific requirements.", "inaction": "Keep preparations; offered quest may expire.",
                          "uncertainty": "Native action requested does not prove completion; jobs and later choices remain."} for key, r in candidates.items()}
-        facts = {"ending_routes": context.get("ending_routes") or ENDING_ROUTES, "native_quests": (context.get("endings") or {}).get("quests"), "sale_selection": context.get("ending_selection"), "sale_continuation": context.get("ending_continuation"),
+        facts = {"journey_needs": journey_summary(context), "ending_routes": context.get("ending_routes") or ENDING_ROUTES, "native_quests": (context.get("endings") or {}).get("quests"), "native_site_blockers": (context.get("endings") or {}).get("site_blockers"), "sale_selection": context.get("ending_selection"), "sale_continuation": context.get("ending_continuation"),
                  "final_choices": "Choose every native confirmation, survivor/item transfer and final embrace/disrupt choice explicitly. Never auto-dismiss ending dialogs."}
         defer = {"benefit": "Prepare colony and compare ending alternatives.", "risk": "Expiry or longer exposure to threats.", "cost": "Time.", "inaction": "No ending step begins.", "uncertainty": "No victory inferred."}
     elif action == "progression_boardship":
@@ -299,7 +340,7 @@ def comparison(action, context):
                           "cost": f"{r['remaining_points']} remaining research points, researcher time and bench power.",
                           "inaction": "Keep current project; selected technology remains unavailable.",
                           "uncertainty": "Points measure work, not days; no victory inferred from research."} for name, r in candidates.items()}
-        facts = {"current_project": (context.get('current') or {}).get('name'), "chosen_ending_route": context.get("chosen_ending_route"),
+        facts = {"journey_needs": journey_summary(context), "current_project": (context.get('current') or {}).get('name'), "chosen_ending_route": context.get("chosen_ending_route"),
                  "route_gate_note": (context.get("endings") or {}).get("research_gate_note"), "time": "Research points are work, not completion days."}
         defer = {"benefit": "Keep current research and labor flexibility.", "risk": "Missing technology unlocks delayed.", "cost": "No target change; current work continues.",
                  "inaction": "Prerequisite frontier remains unresolved.", "uncertainty": "Current project may still require staff, power and inputs."}
@@ -324,7 +365,7 @@ def choose(agent, state, action, snapshot):
             if row.get("kind") == "continuation":
                 return row.get("operation")
             route = str(row.get("route") or row.get("site") or "")
-            return "imperial_ascension" if "RoyalAscent" in route else "archonexus" if "Archonexus" in route else "anomaly_void" if "Void" in route else "odyssey_mechhive" if "Gravship" in route or "Mechhive" in route else "ship_escape"
+            return "ship_journey" if row.get("kind") == "journey" and route == "ship_journey" else "imperial_ascension" if "RoyalAscent" in route else "archonexus" if "Archonexus" in route or route == "archonexus" else "anomaly_void" if "Void" in route else "odyssey_mechhive" if "Gravship" in route or "Mechhive" in route else "ship_escape"
         target_rows = {group(row): row for row in candidates.values()}
         target_choices = {key: (key + ": " + str(row.get("label") or row.get("site") or "native route")) for key, row in target_rows.items()}
         pending = pending_action(context) == action
@@ -335,7 +376,7 @@ def choose(agent, state, action, snapshot):
             catalog = ENDING_ROUTES.get("royal_ascent" if key == "imperial_ascension" else key) or {}
             target_effects[key] = {"benefit": catalog.get("prerequisites") or target_choices[key], "cost": catalog.get("cost") or "Native transfer/configuration choice.",
                 "risk": catalog.get("risk") or "Colony sale leaves unselected people and possessions behind; site and ideology change colony conditions.", "inaction": "No route step begins.", "uncertainty": "Only actual engine credits verify completion."}
-        target, first = ask_laya_choice(agent, {**state, "option_effects": target_effects, "decision_facts": {"chosen_ending_route": context.get("chosen_ending_route"), "available_routes": [r for r, info in (context.get("ending_routes") or {}).items() if info.get("available")]}}, action + "_route",
+        target, first = ask_laya_choice(agent, {**state, "option_effects": target_effects, "decision_facts": {"journey_needs": journey_summary(context), "chosen_ending_route": context.get("chosen_ending_route"), "available_routes": [r for r, info in (context.get("ending_routes") or {}).items() if info.get("available")]}}, action + "_route",
                                        "Choose a native ending route or pending configuration category; compare alternatives.", target_choices, detailed=True)
         if target == "defer":
             return {"defer": True}, first
@@ -343,7 +384,12 @@ def choose(agent, state, action, snapshot):
         choices = {key: choices[key] for key in candidates}
         effects = {key: effects[key] for key in candidates}
         for key, row in candidates.items():
-            if row.get("kind") == "odyssey":
+            if row.get("kind") == "journey":
+                effects[key]["benefit"] = f"Native travel estimate {row.get('travel_days')} days; {row.get('label')}; travelers {row.get('travelers')}; distance {row.get('approximate_distance_tiles')} tiles."
+                effects[key]["cost"] = f"Packed nutrition {row.get('food_nutrition')}; native daily need {row.get('daily_nutrition')}; native approximate food days {row.get('native_approx_food_days')}; medicine {row.get('medicine_count')}; mass {row.get('mass')} / {row.get('capacity')} capacity."
+                effects[key]["risk"] = f"Food margin {row.get('food_margin_days')} days against native ETA; people left at home {row.get('colonists_at_home')}; reserved travel nutrition {row.get('home_food_nutrition')}. Caravan ambushes, illness and absent labor."
+                effects[key]["uncertainty"] = row.get("travel_estimate_reason") or (context.get("ending_journey") or {}).get("warning") or "Formation and arrival require observation; arrival never proves victory."
+            elif row.get("kind") == "odyssey":
                 effects[key]["benefit"] = f"{row.get('label')}; fuel {row.get('fuel')}; destination fuel cost {row.get('fuel_cost')}; distance {row.get('distance')}; biome {row.get('biome')}; layer {row.get('layer_id')}."
                 effects[key]["risk"] = f"Outside ship {row.get('colonists_outside_ship')}; orbital warnings {row.get('orbital_warnings')}; landing footprint may displace obstacles. Boarding/fuel/travel never prove mechhive resolution."
             elif row.get("kind") == "world-targeting":
@@ -364,7 +410,7 @@ def choose(agent, state, action, snapshot):
             elif row.get("operation") == "submit":
                 selected_rows = [r.get("label") for r in (row.get("selection") or {}).get("rows") or [] if r.get("selected")]
                 effects[key]["risk"] = f"Sell colony; keep {selected_rows}; abandon all others. Opens native consequence confirmation."
-        facts = {"stage": target, "native_blockers": (context.get("ending_selection") or {}).get("blocker")}
+        facts = {"journey_needs": journey_summary(context), "stage": target, "native_blockers": (context.get("ending_selection") or {}).get("blocker")}
         if not pending:
             choices["defer"] = "Prepare before committing this route step."
             effects["defer"] = {"benefit": "Preserve colony work.", "cost": "Time.", "risk": "Offer may expire.", "inaction": "Route step postponed.", "uncertainty": "Readiness may change."}
@@ -382,17 +428,38 @@ def execute(client, snapshot, map_state, action, selected):
         _record_cooldown(snapshot, map_state, action, deferred=True)
         return {"applied": False, "reason": "deliberately deferred; reconsider after 15000 ticks", "deferred": True}
     fresh = collect(client, {"map": snapshot.get("map") or {}})  # Execution bypasses earlier-cycle research cache.
+    if fresh.get("victory_verified") is True:
+        return {"applied": False, "reason": "native victory already verified", "victory_verified": True}
     if action == "progression_ending":
-        candidate = next((r for r in ending_options(fresh).values() if r == selected), None)
+        # Quest expiry counts down during deliberation. Native eligibility is freshly
+        # regenerated, so elapsed ticks alone must not invalidate the chosen offer.
+        # Compare every other native field; ignore only director-added metadata.
+        def unchanged(row):
+            for key, value in row.items():
+                if key == "expires_in_ticks":
+                    continue
+                previous = selected.get(key)
+                if row.get("kind") == "journey" and key in ("travel_days", "food_margin_days", "native_approx_food_days") and isinstance(value, (int, float)) and isinstance(previous, (int, float)):
+                    if abs(value - previous) <= .25:
+                        continue  # Native rest/time estimate advances while the model thinks.
+                if previous != value:
+                    return False
+            return True
+        candidate = next((r for r in ending_options(fresh).values() if unchanged(r)), None)
         if candidate is None:
             return {"applied": False, "reason": "ending requirements, option or pawn job changed; new decision required"}
         try:
-            if candidate["kind"] in ("odyssey", "world-targeting"):
+            if candidate["kind"] == "journey":
+                fields = ("map_id", "object_id", "team", "supply_days")
+            elif candidate["kind"] in ("odyssey", "world-targeting"):
                 fields = tuple(k for k in ("operation", "map_id", "thing_id", "pawn_id", "label", "tile_id", "layer_id", "session", "object_id", "x", "z", "rotation") if k in candidate)
             else:
                 fields = ("operation", "tile_id" if candidate["operation"] == "tile" else "ideology_id") if candidate["kind"] == "continuation" else (("operation", "thing_id", "selected") if candidate.get("operation") == "select" else ("operation",)) if candidate["kind"] == "selection" else ("quest_id", "pawn_id") if candidate["kind"] == "accept" else ("map_id", "thing_id", "pawn_id", "label")
-            response = client.post("/api/v1/colony/endings/" + candidate["kind"], query={**{k: candidate[k] for k in fields}, "confirmed": True})
-            applied = response in ("ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "world_target_chosen", "world_target_cancelled")
+            query = {**{k: candidate[k] for k in fields}, "confirmed": True}
+            if candidate["kind"] == "journey":
+                query["pawn_ids"] = ",".join(str(n) for n in candidate["pawn_ids"])
+            response = client.post("/api/v1/colony/endings/" + candidate["kind"], query=query)
+            applied = response in ("ending_caravan_forming", "ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "world_target_chosen", "world_target_cancelled")
             if applied and candidate["kind"] not in ("selection", "continuation", "odyssey", "world-targeting"):
                 _record_cooldown(snapshot, map_state, action)
             return {"applied": applied, "reason": str(response), "victory_verified": False, "native_choices_required": True}

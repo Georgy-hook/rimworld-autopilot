@@ -4,6 +4,30 @@ from typing import Any
 from laya_decisions import ask_laya_choice
 import colony_modules
 
+
+def bind_campaign(state: dict, evidence: Any) -> None:
+    """A saved native campaign identity separates a new game from a new map."""
+    if not isinstance(evidence, dict) or not evidence.get("campaign_id"):
+        return
+    identity = str(evidence["campaign_id"])
+    prior = state.get("campaign") or {}
+    if prior.get("id") and prior["id"] != identity:
+        for key in ("maps", "active_map_key", "native_session", "outcome"):
+            state.pop(key, None)
+        prior = {}
+    state["campaign"] = {**prior, "id": identity}
+
+
+def remember_campaign(state: dict, map_state: dict) -> None:
+    campaign = state.get("campaign")
+    if not campaign:
+        return
+    for key in ("doctrine", "doctrine_tick", "income_strategy", "native_intent"):
+        if key in map_state:
+            # Own the copy: a later per-map reset must not mutate campaign intent.
+            import copy
+            campaign[key] = copy.deepcopy(map_state[key])
+
 def ending_result(value: Any) -> dict | None:
     if not isinstance(value, dict) or value.get("victory_verified") is not True:
         return None

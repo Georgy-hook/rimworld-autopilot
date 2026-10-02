@@ -3,6 +3,8 @@ namespace RIMAPI.Models
     public class PawnDto
     {
         public int Id { get; set; }
+        public int? MapId { get; set; }
+        public bool Spawned { get; set; }
         public string Name { get; set; }
         public string Gender { get; set; }
         public int Age { get; set; }

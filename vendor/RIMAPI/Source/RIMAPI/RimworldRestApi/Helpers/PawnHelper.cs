@@ -36,6 +36,8 @@ namespace RIMAPI.Helpers
             return new PawnDto
             {
                 Id = pawn.thingIDNumber,
+                MapId = pawn.Map?.uniqueID,
+                Spawned = pawn.Spawned,
                 Name = pawn.Name?.ToStringShort ?? "Unknown",
                 Gender = pawn.gender.ToString(),
                 Age = pawn.ageTracker.AgeBiologicalYears,

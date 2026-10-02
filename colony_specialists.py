@@ -4,6 +4,7 @@ from typing import Any
 from laya_decisions import ask_laya_choice
 
 DESCRIPTIONS = {
+    "specialists_royal_assign": "Assign an existing native qualifying bedroom or throne to a noble or royal guest. Compare ownership, guest needs and room requirements; this changes ownership and cannot improve room quality or guarantee hospitality.",
     "specialists_policy": "Compare native desired psyfocus and meditation timetable, Gauranlen pruning/caste or entity capture/study/extraction policy against labor, containment and irreversible consequences.",
     "specialists_permit": "Choose an owned native royal permit option comparing free use, cooldown or honor payment and its impact on noble progression; explicitly select any subsequent native target or confirmation.",
     "specialists_genetics": "Design a native xenogerm from whole powered genepacks, compare genes, metabolism/food cost, complexity and archites, then request normal assembly or defer.",
@@ -13,6 +14,7 @@ DESCRIPTIONS = {
     "specialists_suppress_entity": "Send an available enabled warden on a normal feasible entity suppression job. Lower activity can reduce escape risk but takes labor and can reduce study speed; unsafe containment is still unsafe.",
 }
 LABELS = {"specialists_mech_mode": "режим работы механической группы", "specialists_suppress_entity": "подавление активности сущности"}
+LABELS["specialists_royal_assign"] = "назначить подходящую королевскую комнату"
 LABELS["specialists_ritual"] = "участники и проведение ритуала"
 LABELS["specialists_genetics"] = "гены и сборка ксеногерма"
 LABELS["specialists_mech_boss"] = "вызов босса механоидов"
@@ -20,6 +22,7 @@ LABELS["specialists_permit"] = "использование королевско�
 LABELS["specialists_policy"] = "политика медитации, дриад и изучения сущностей"
 ACTIONS = set(DESCRIPTIONS)
 DOMAINS = {"specialists_mech_mode": "work_orders", "specialists_suppress_entity": "care"}
+DOMAINS["specialists_royal_assign"] = "care"
 DOMAINS["specialists_ritual"] = "strategy"
 DOMAINS["specialists_genetics"] = "strategy"
 DOMAINS["specialists_mech_boss"] = "strategy"
@@ -111,6 +114,10 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         options["specialists_permit"][str(index)] = {**row, "kind": "permit", "context": context.get("permits")}
     for index, row in enumerate((context.get("policies") or {}).get("choices") or []):
         options["specialists_policy"][str(index)] = {**row, "kind": "policy", "context": context.get("policies")}
+    for row in context.get("royal_assignments") or []:
+        if row.get("kind") in ("royal_bed", "royal_throne") and row.get("pawn_id") is not None and row.get("thing_id") is not None:
+            options["specialists_royal_assign"][f"{row['kind']}:{row['pawn_id']}:{row['thing_id']}"] = {
+                "kind": row["kind"], "pawn_id": row["pawn_id"], "thing_id": row["thing_id"], "context": row}
     if context.get("biotech_active"):
         for group in context.get("mech_groups") or []:
             for mode in group.get("mode_options") or []:
@@ -124,9 +131,13 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
                 options["specialists_suppress_entity"][key] = {"kind": "suppress", "platform_id": entity["platform_id"], "worker_id": worker["pawn_id"], "context": {"entity": entity, "worker": worker}}
     context["options"] = options
     tick = int(snapshot.get("game", {}).get("tick") or 0)
-    return [a for a, rows in options.items() if rows and ((a == "specialists_policy" and (context.get("policies") or {}).get("configuring")) or (a == "specialists_ritual" and ritual.get("configuring")) or (a == "specialists_genetics" and genetics.get("configuring")) or tick - int((map_state.get("issued") or {}).get("specialists:" + a, -1000000)) >= 15000)]
+    return [a for a, rows in options.items() if rows and ((a == "specialists_policy" and (context.get("policies") or {}).get("configuring")) or (a == "specialists_ritual" and ritual.get("configuring")) or (a == "specialists_genetics" and genetics.get("configuring")) or tick < int((map_state.get("issued") or {}).get("specialists:" + a, -1000000)) or tick - int((map_state.get("issued") or {}).get("specialists:" + a, -1000000)) >= 15000)]
 
 def assess(action: str, snapshot: dict) -> dict:
+    if action == "specialists_royal_assign":
+        return {"benefit": "Assign current qualifying native royal room ownership.", "cost": "Existing bedroom/throne becomes assigned to this pawn.",
+                "risk": "Room and availability may change; hospitality mood, food and defense still matter.", "inaction": "Noble or guest room requirements may remain unmet.",
+                "uncertainty": "Assignment does not construct furniture, increase impressiveness or complete Royal Ascent."}
     if action == "specialists_policy":
         return {"benefit": "Enable ordinary focus recovery, dryad specialization or anomaly study through native policy and jobs.", "cost": "Meditation/pruning/containment labor, time away from work and actual extraction resources.", "risk": "Higher pruning targets consume worker hours; caste changes require cocoon downtime; entity capture/transfer exposes handlers and extraction can damage entities. Containment strength remains critical.", "inaction": "Preserve current policies and labor; desired focus, dryad products or discoveries remain delayed.", "uncertainty": "Policy does not grant focus, connection strength, dryads, research or bioferrite instantly."}
     if action == "specialists_permit":
@@ -147,6 +158,16 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     context = snapshot.get("development", {}).get("specialists", {})
     plans = context.get("options", {}).get(action) or {}
     effects = assess(action, snapshot)
+    if action == "specialists_royal_assign":
+        if not plans:
+            return {"defer": True}, {"reason": "no_live_royal_assignment"}
+        choices = {key: row["context"].get("label") or key for key, row in plans.items()}
+        choices["defer"] = "Preserve current ownership; requirements may remain unmet."
+        option_effects = {key: {**effects, "benefit": (row["context"].get("label") or key) + "; " + str(row["context"].get("description") or "")}
+                          for key, row in plans.items()}
+        option_effects["defer"] = effects
+        key, raw = ask_laya_choice(agent, {"option_effects": option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
+        return ({"defer": True} if key == "defer" else {k: v for k, v in plans[key].items() if k != "context"}), raw
     if action in NATIVE_SPECIALISTS:
         def target(row):
             return str(row.get("pawn_id") or row.get("thing_id") or row.get("operation") or "ritual")
@@ -242,7 +263,7 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         if applied and (selected.get("operation") == "begin" or action in ("specialists_mech_boss", "specialists_permit")):
             map_state.setdefault("issued", {})["specialists:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
         return {"applied": applied, "reason": str(result), "completed": False}
-    payload = {k: selected[k] for k in ("kind", "mechanitor_id", "group_index", "value", "platform_id", "worker_id") if k in selected}
+    payload = {k: selected[k] for k in ("kind", "mechanitor_id", "group_index", "value", "platform_id", "worker_id", "pawn_id", "thing_id") if k in selected}
     live = collect(client, snapshot)
     prepare({"map": snapshot["map"], "development": {"specialists": live}}, {})
     rows = live.get("options", {}).get(action) or {}

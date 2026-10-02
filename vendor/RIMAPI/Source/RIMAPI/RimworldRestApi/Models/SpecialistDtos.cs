@@ -8,6 +8,8 @@ namespace RIMAPI.Models
         public bool IdeologyActive { get; set; }
         public bool BiotechActive { get; set; }
         public bool AnomalyActive { get; set; }
+        public object RoyaltyContext { get; set; }
+        public List<SpecialistRoyalAssignmentDto> RoyalAssignments { get; set; } = new List<SpecialistRoyalAssignmentDto>();
         public float PollutionPercent { get; set; }
         public int PollutedCells { get; set; }
         public List<SpecialistWastepackDto> Wastepacks { get; set; } = new List<SpecialistWastepackDto>();
@@ -62,5 +64,8 @@ namespace RIMAPI.Models
     {
         public int MapId { get; set; } public string Kind { get; set; } public int? MechanitorId { get; set; }
         public int? GroupIndex { get; set; } public string Value { get; set; } public int? PlatformId { get; set; } public int? WorkerId { get; set; }
+        public int? PawnId { get; set; } public int? ThingId { get; set; }
     }
+    public class SpecialistRoyalAssignmentDto
+    { public string Kind { get; set; } public int PawnId { get; set; } public int ThingId { get; set; } public int RoomId { get; set; } public string Label { get; set; } public string Description { get; set; } }
 }

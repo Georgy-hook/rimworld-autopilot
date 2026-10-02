@@ -54,6 +54,13 @@ def effects(action: str, snapshot: dict[str, Any], description: str, domain: str
         result.update(risk="Disconnected or unfueled generators supply no consumers",
                       cost="Construction, fuel or variable renewable supply",
                       inaction="Unpowered consumers remain offline")
+    elif action == "build_ship":
+        plan = snapshot.get("development", {}).get("ship_construction") or {}
+        result.update(benefit=f"Build {len((plan.get('ready_layout') or {}).get('buildings') or [])} currently funded connected ship parts",
+                      risk="Blueprints do not work until built; reactor startup later triggers raids",
+                      cost=f"Missing materials {plan.get('shortages')}; preserve ongoing project supplies",
+                      inaction=f"{plan.get('remaining')} unplanned parts remain; caskets require completed beams",
+                      uncertainty="Native placement is checked now; observed connected readiness is checked again before startup")
     elif action in {"create_growing_zone", "configure_crop"}:
         result.update(risk="Frost, heat, blight or premature replacement can lose crops",
                       cost="Sowing labor; food arrives only after growth and harvest",
@@ -84,7 +91,9 @@ def with_feedback(result: dict[str, str], action: str, snapshot: dict[str, Any])
 def decision_facts(state: dict[str, Any]) -> dict[str, Any]:
     """Facts relevant across alternatives, excluding catalog and option prose."""
     needs = state.get("needs") or {}
-    result = {"people": state.get("people"), "threats": state.get("threats"),
+    result = {"endgame": (state.get("course") or {}).get("endgame") or state.get("endgame"),
+              "goal_requirements": state.get("goal_requirements"),
+              "people": state.get("people"), "threats": state.get("threats"),
               "food_days": needs.get("food_runway_days_estimate", state.get("food_runway_days_estimate")),
               "downed": needs.get("downed", state.get("downed")),
               "heat": state.get("heat"), "cold": state.get("cold"), "course": state.get("course")}

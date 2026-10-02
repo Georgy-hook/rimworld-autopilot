@@ -32,6 +32,35 @@ class SustenanceTests(unittest.TestCase):
         client=Client(self.context)
         self.assertTrue(module.execute(client,self.snapshot,{},'sustenance_animal_welfare',{'sustenance_policy':self.plan['key']})['applied'])
         self.assertEqual(client.posts,[{'map_id':1,'key':'care:4:2'}])
+    def test_rejected_native_order_cools_down(self):
+        client=Client(self.context)
+        client.post=lambda *args, **kwargs: {'applied':False,'reason':'ordinary_job_not_started'}
+        state={}
+        result=module.execute(client,self.snapshot,state,'sustenance_animal_welfare',{'sustenance_policy':self.plan['key']})
+        self.assertFalse(result['applied'])
+        self.assertNotIn('sustenance_animal_welfare',module.prepare(self.snapshot,state))
+    def test_producer_food_rot_and_cooler_facts_reach_decision(self):
+        context={'food':[{'def_name':'Rice','fresh_eligible_nutrition':2.5}],
+                 'perishables':[{'ticks_until_rot':500,'eligible':True},{'ticks_until_rot':2,'eligible':False}],
+                 'coolers':[{'id':7,'temperature':19,'powered':False,'target':4}]}
+        plan={'kind':'cooler','target_id':7,'value':'-5','label':'Cooler -5 C','risk':'Native heat exhaust restriction'}
+        effect=module._effects(context,plan)
+        self.assertIn('powered=False',effect['cost'])
+        self.assertEqual(effect['risk'],plan['risk'])
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as ask:
+            module._stage(None,context,[('7',plan['label'],effect)],'sustenance_subject','choose')
+        facts=ask.call_args.args[1]['decision_facts']
+        self.assertEqual(facts['fresh_nutrition'],2.5)
+        self.assertEqual(facts['first_rot_ticks'],500)
+        context['food'][0].pop('fresh_eligible_nutrition')
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as ask:
+            module._stage(None,context,[],'sustenance_subject','choose')
+        self.assertIsNone(ask.call_args.args[1]['decision_facts']['fresh_nutrition'])
+    def test_diet_effect_includes_actual_allowed_stock(self):
+        context={'diets':[{'id':2,'allowed':['Rice']}], 'food':[{'def_name':'Rice','fresh_eligible_nutrition':.5},{'def_name':'Meat_Human','fresh_eligible_nutrition':10}]}
+        effect=module._effects(context,{'kind':'diet','value':'2'})
+        self.assertIn('Rice:0.5',effect['cost'])
+        self.assertNotIn('Meat_Human',effect['cost'])
     def test_native_choice_receives_downsides_and_defer(self):
         with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as choice:
             result,_=module.choose(None,{},'sustenance_animal_welfare',self.snapshot)

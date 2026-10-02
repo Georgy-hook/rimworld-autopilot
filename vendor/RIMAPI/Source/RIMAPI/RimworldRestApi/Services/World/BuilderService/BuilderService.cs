@@ -53,7 +53,6 @@ namespace RIMAPI.Services
                     })
                     .OrderBy(p => p.Kind == "frame" ? 0 : 1)
                     .ThenByDescending(p => p.PercentComplete)
-                    .Take(100)
                     .ToList();
                 return ApiResult<ConstructionProjectsDto>.Ok(new ConstructionProjectsDto { Projects = projects });
             }

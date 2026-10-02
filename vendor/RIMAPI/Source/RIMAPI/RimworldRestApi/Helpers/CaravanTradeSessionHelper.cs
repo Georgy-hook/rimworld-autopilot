@@ -57,17 +57,35 @@ namespace RIMAPI.Helpers
                 preview.SettlementName = settlement.LabelCap;
                 preview.ColonySilver = deal.CurrencyTradeable?.CountHeldBy(Transactor.Colony) ?? 0;
                 preview.TraderSilver = deal.CurrencyTradeable?.CountHeldBy(Transactor.Trader) ?? 0;
+                foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade && !t.IsCurrency
+                    && t.CountHeldBy(Transactor.Trader) > 0 && t.ThingDef != null && t.ThingDef.race == null))
+                {
+                    float price = row.GetPriceFor(TradeAction.PlayerBuys);
+                    if (price <= 0f || row.FirstThingTrader == null) continue;
+                    preview.PurchaseOptions.Add(new LiveTradeCategoryDto { ThingId=row.FirstThingTrader.thingIDNumber,
+                        Category="item:"+row.ThingDef.defName, Example=row.Label, MaximumUnits=row.CountHeldBy(Transactor.Trader),
+                        UnitPrice=price, Description=row.ThingDef.description });
+                }
                 foreach (string category in SaleCategories)
                 {
                     Tradeable row = deal.AllTradeables.FirstOrDefault(t => t.TraderWillTrade
                         && t.CountHeldBy(Transactor.Colony) > 0 && MatchesSale(t, category)
                         && t.GetPriceFor(TradeAction.PlayerSells) > 0f);
                     if (row == null) continue;
+                    float proceeds=0f, remaining=preview.TraderSilver;
+                    foreach (Tradeable sale in deal.AllTradeables.Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Colony)>0 && MatchesSale(t,category)))
+                    {
+                        float price=sale.GetPriceFor(TradeAction.PlayerSells);
+                        if(price<=0f)continue;
+                        int units=Math.Min(sale.CountHeldBy(Transactor.Colony),Math.Min((int)Math.Floor(remaining/price),(int)Math.Floor((2500f-proceeds)/price)));
+                        if(units<=0)continue;proceeds+=units*price;remaining-=units*price;
+                    }
                     preview.SaleOptions.Add(new LiveTradeCategoryDto
                     {
                         Category = category, Example = row.Label,
                         MaximumUnits = row.CountHeldBy(Transactor.Colony),
                         UnitPrice = row.GetPriceFor(TradeAction.PlayerSells),
+                        PlannedSaleValue = proceeds,
                     });
                 }
                 foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
@@ -119,6 +137,10 @@ namespace RIMAPI.Helpers
                     });
                 }
                 TradeDeal deal = TradeSession.deal;
+                if (request.PurchasePawnId.HasValue && request.PurchaseThingId.HasValue)
+                    return ApiResult<LiveTradeResponseDto>.Fail("Choose exactly one person or item purchase.");
+                if (deal.AllTradeables.Any(t => t.CountToTransfer != 0))
+                    return ApiResult<LiveTradeResponseDto>.Fail("Existing manual trade selections must be resolved first.");
                 var response = new LiveTradeResponseDto
                 {
                     TraderId = $"settlement:{settlement.ID}", TraderName = settlement.LabelCap,
@@ -144,26 +166,31 @@ namespace RIMAPI.Helpers
                     response.Sold.Add($"{row.Label} x{units}");
                 }
                 deal.UpdateCurrencyCount();
-                if (request.PurchasePawnId.HasValue)
+                if (request.PurchasePawnId.HasValue || request.PurchaseThingId.HasValue)
                 {
                     Tradeable selected = deal.AllTradeables.SingleOrDefault(t => t.TraderWillTrade
                         && t.CountHeldBy(Transactor.Trader) > 0
-                        && t.FirstThingTrader is Pawn pawn && pawn.thingIDNumber == request.PurchasePawnId.Value);
+                        && (request.PurchasePawnId.HasValue ? t.FirstThingTrader is Pawn pawn && pawn.RaceProps.Humanlike && pawn.thingIDNumber == request.PurchasePawnId.Value
+                            : !t.IsCurrency && t.ThingDef?.race == null && t.FirstThingTrader?.thingIDNumber == request.PurchaseThingId.Value));
                     if (selected == null)
                     {
                         ClearSelections(deal);
-                        return ApiResult<LiveTradeResponseDto>.Fail("The selected recruit is no longer offered.");
+                        return ApiResult<LiveTradeResponseDto>.Fail("The selected person or item is no longer offered.");
                     }
                     float price = selected.GetPriceFor(TradeAction.PlayerBuys);
+                    if (request.ExpectedUnitPrice.HasValue && Math.Abs(request.ExpectedUnitPrice.Value-price) > .01f)
+                    { ClearSelections(deal); return ApiResult<LiveTradeResponseDto>.Fail("The selected purchase price changed; choose again."); }
                     if (price <= 0f || price > request.MaximumSpend
                         || (deal.CurrencyTradeable?.CountPostDealFor(Transactor.Colony) ?? 0) - price
                            < Math.Max(0, request.MinimumSilverReserve))
                     {
                         ClearSelections(deal);
-                        return ApiResult<LiveTradeResponseDto>.Fail("The selected recruit exceeds the spending limit or silver reserve.");
+                        return ApiResult<LiveTradeResponseDto>.Fail("The selected purchase exceeds the spending limit or silver reserve.");
                     }
                     selected.ForceToSource(1);
                     deal.UpdateCurrencyCount();
+                    if ((deal.CurrencyTradeable?.CountPostDealFor(Transactor.Colony) ?? 0) < Math.Max(0,request.MinimumSilverReserve))
+                    { ClearSelections(deal); return ApiResult<LiveTradeResponseDto>.Fail("The normal rounded currency transfer exceeds the silver reserve."); }
                     response.BoughtUnits = 1;
                     response.ApproximatePurchaseValue = price;
                     response.Bought.Add(selected.Label);

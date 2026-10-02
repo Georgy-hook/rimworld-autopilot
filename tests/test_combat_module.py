@@ -59,6 +59,12 @@ class CombatModuleTests(unittest.TestCase):
             s=self.snapshot(current_job=job,current_job_target_id=3,distance_to_nearest_opponent=20)
             s['combat']['colonists'].append(self.pawn(id=3,tendable_now=False,is_downed=True))
             self.assertEqual({1},c.protected_emergency_care_ids(s))
+
+    def test_native_care_job_protected_when_patient_telemetry_is_absent(self):
+        for job in ['TendPatient', 'Rescue', 'FeedPatient', 'BabyPlay', 'BabySuckle', 'PrisonerInterrogateIdentity']:
+            s = self.snapshot(current_job=job, distance_to_nearest_opponent=20)
+            self.assertEqual({1}, c.protected_emergency_care_ids(s), job)
+            self.assertEqual({}, c.available_tactics(s), job)
     def test_animal_patient_rescue_keeps_distant_worker_protected(self):
         s=self.snapshot(current_job='Rescue',current_job_target_id=8,distance_to_nearest_opponent=20)
         s['development']={'resilience': {'patients': [{'pawn_id': 8, 'downed': True, 'tendable_now': False}]}}

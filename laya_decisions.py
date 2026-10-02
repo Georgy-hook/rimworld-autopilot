@@ -165,6 +165,14 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
     narrowing: list[dict[str, Any]] = []
     round_number = 0
     consequences = bool(state.get("option_effects"))
+    tokenizer = getattr(agent, "tok", None)
+    config = getattr(agent, "cfg", {}) or {}
+    state_budget = int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8
+    oversized = tokenizer is not None and len(tokenizer(
+        json.dumps(state, ensure_ascii=False, default=str), add_special_tokens=False)["input_ids"]) > state_budget
+    # Legacy event/doctrine/commerce callers can supply unbounded state too.
+    # Never rely on build_sequence silently truncating it after we log it as seen.
+    detailed = detailed or (oversized and not consequences)
     group_size = 2 if detailed or consequences else 6
 
     def predict(stage_id: str, chunk: dict[str, str]) -> dict[str, Any]:

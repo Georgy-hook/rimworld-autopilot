@@ -23,6 +23,7 @@ RUNTIME_FILES = (
     "colony_resilience.py",
     "colony_affordances.py",
     "colony_sessions.py",
+    "colony_shipbuilding.py",
     "colony_combat.py",
     "colony_director.py",
     "colony_events.py",

@@ -14,8 +14,7 @@ namespace RIMAPI.Helpers
             || (Find.AnalysisManager?.AnalysisDetailsForReading.Any(d => d.Satisfied) ?? false)
             || map.mapPawns.AllPawnsSpawned.Any(p => p.health.hediffSet.hediffs.Any(h => h.Visible && h.def.defName.IndexOf("Metalhorror",StringComparison.OrdinalIgnoreCase) >= 0)));
         private static bool RoutineSafe(Pawn p) => !p.Dead && !p.Downed && !p.Drafted && !p.InMentalState && p.health.hediffSet.BleedRateTotal <= 0
-            && p.CurJobDef != JobDefOf.TendPatient && p.CurJobDef != JobDefOf.Rescue && p.CurJobDef != JobDefOf.FeedPatient && p.CurJobDef != JobDefOf.DoBill
-            && p.CurJobDef != JobDefOf.Ingest && p.CurJobDef?.defName != "PrisonerInterrogateIdentity"
+            && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef != JobDefOf.Ingest
             && !p.health.hediffSet.hediffs.Any(h => h.Visible && (h.IsCurrentlyLifeThreatening || h.TendableNow()
                 || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immune && immune.Immunity < 1)
                 || h.def.defName == "Anesthetic" || h.def.defName == "Heatstroke" || h.def.defName == "Hypothermia"));

@@ -200,6 +200,155 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual(context["chosen_ending_route"], "odyssey_mechhive")
         self.assertEqual(context["chosen_route_support"], {"frontier": []})
 
+    def test_ending_quest_survives_elapsed_ticks_but_requires_live_eligibility(self):
+        offer = {"quest_id": 31, "route": "EndGame_RoyalAscent", "label": "Royal ascent",
+                 "state": "NotYetAccepted", "can_accept": True, "requires_accepter": True,
+                 "accepter_ids": [7], "expires_in_ticks": 9000}
+        chosen = next(iter(p.ending_options({"endings": {"quests": [offer]}}).values()))
+        class Client:
+            eligible = True
+            calls = []
+            def get(self, endpoint, **params):
+                if endpoint == "/api/v1/colony/endings":
+                    return {"quests": [{**offer, "expires_in_ticks": 8800, "can_accept": self.eligible}]}
+                return [] if endpoint.endswith("progression") else {}
+            def post(self, endpoint, **params):
+                self.calls.append((endpoint, params))
+                return "ending_quest_accepted"
+        client = Client()
+        result = p.execute(client, {}, {}, "progression_ending", {**chosen, "director_reason": "advance", "confidence": .9})
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["victory_verified"])
+        self.assertEqual(client.calls, [("/api/v1/colony/endings/accept", {"query": {"quest_id": 31, "pawn_id": 7, "confirmed": True}})])
+        client.eligible = False
+        self.assertFalse(p.execute(client, {}, {}, "progression_ending", chosen)["applied"])
+        self.assertEqual(len(client.calls), 1)
+
+    def test_native_credits_stop_all_progression_and_inflight_mutations(self):
+        ship = {"map_id": 1, "root_id": 4, "launch_blockers": [], "passengers": ["A"]}
+        context = {"endings": {"victory_verified": True}, "native_milestones": [ship],
+                   "research_tree": [project("ShipBasics")]}
+        self.assertEqual(p.prepare({"development": {"progression": context}}, {}), [])
+        class Client:
+            def get(self, endpoint, **params):
+                if endpoint == "/api/v1/colony/endings":
+                    return {"victory_verified": True, "ending_route": "ship_escape", "ending_tick": 500}
+                return [ship] if endpoint.endswith("progression") else {}
+            def post(self, *args, **params):
+                raise AssertionError("Credits must stop an already selected mutation")
+        for action in p.ACTIONS:
+            result = p.execute(Client(), {}, {}, action, {"name": "ShipBasics", "ship_action": "launch", **ship})
+            self.assertFalse(result["applied"])
+            self.assertTrue(result["victory_verified"])
+
+    def test_existing_ship_journey_contract_then_arrival_and_launch(self):
+        plan = {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": 15,
+                "route": "ship_journey", "pawn_ids": [3, 4], "travelers": ["A", "B"],
+                "colonists_at_home": [], "food_nutrition": 48.0, "home_food_nutrition": 0,
+                "medicine_count": 4, "mass": 20.0, "capacity": 70.0}
+        class Client:
+            arrived = False
+            calls = []
+            def get(self, endpoint, **params):
+                if endpoint.endswith("/journey"):
+                    return {"journeys": [] if self.arrived else [plan]}
+                if endpoint.endswith("/progression"):
+                    return [{"map_id": 2, "root_id": 90, "launch_blockers": [], "passengers": ["A", "B"], "colonists_at_home": []}] if self.arrived else []
+                return {}
+            def post(self, endpoint, **params):
+                self.calls.append((endpoint, params["query"]))
+                return "ending_caravan_forming" if endpoint.endswith("/journey") else "launch_countdown_started"
+        client = Client()
+        before = p.collect(client, {"map": {"id": 1}})
+        selected = next(iter(p.ending_options(before).values()))
+        result = p.execute(client, {"map": {"id": 1}}, {}, "progression_ending", selected)
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["victory_verified"])
+        self.assertEqual(client.calls[0], ("/api/v1/colony/endings/journey", {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": 15, "pawn_ids": "3,4", "confirmed": True}))
+        client.arrived = True
+        after = p.collect(client, {"map": {"id": 2}})
+        self.assertEqual(p.ending_options(after), {})
+        ship = next(iter(p.ship_options(after).values()))
+        launched = p.execute(client, {"map": {"id": 2}}, {}, "progression_ship", ship)
+        self.assertTrue(launched["applied"])
+        self.assertFalse(launched["victory_verified"])
+
+    def test_changed_journey_travelers_or_supplies_require_new_choice(self):
+        plan = {"map_id": 1, "object_id": 70, "team": "scout", "supply_days": 5, "pawn_ids": [3, 4], "food_nutrition": 16}
+        selected = {**plan, "kind": "journey"}
+        class Client:
+            def get(self, endpoint, **params):
+                return {"journeys": [{**plan, "pawn_ids": [3, 5]}]} if endpoint.endswith("/journey") else [] if endpoint.endswith("/progression") else {}
+            def post(self, *args, **params):
+                raise AssertionError("Changed journey must not start")
+        self.assertFalse(p.execute(Client(), {"map": {"id": 1}}, {}, "progression_ending", selected)["applied"])
+
+    def test_ship_journey_doctrine_does_not_request_self_build_research(self):
+        context = {"research_tree": [project("ShipBasics")] , "ship_research": {"frontier": ["ShipBasics"]}}
+        snapshot = {"development": {"progression": context}}
+        self.assertEqual(p.prepare(snapshot, {"doctrine": {"endgame": "ship_journey"}}), [])
+
+    def test_journey_native_food_and_destination_contract(self):
+        source = (Path(__file__).resolve().parents[1] / "vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Controllers/Colony/EndingJourneyController.cs").read_text(encoding="utf-8-sig")
+        # Native assembly APIs are the contract for gene/food-policy dependent
+        # rates and edibility. A generic fixed rate or raw nutrition total cannot
+        # establish that a restrictive-diet traveler has a usable supply.
+        for native in ("CaravanPawnsNeedsUtility.CanEatForNutritionEver(food.def, p)",
+                       "CurrentFoodPolicy?.filter.Allows(food)", "food.IngestibleNow",
+                       "t.TryGetComp<CompRottable>() == null",
+                       "NutritionBetweenHungryAndFed", "TicksUntilHungryWhenFedIgnoringMalnutrition",
+                       "DaysWorthOfFoodCalculator.ApproxDaysWorthOfFood", "IgnorePawnsInventoryMode.Ignore",
+                       "CaravanTicksPerMoveUtility.GetTicksPerMove", "CaravanArrivalTimeEstimator.EstimatedTicksToArrive",
+                       "nativeDays < estimate.Days.Value + 1f", "Math.Ceiling(estimate.Days.Value + 2f)",
+                       "!q.hidden && !q.dismissed", "s.sitePartsKnown", "!s.parts.Any(p => p.hidden)",
+                       "CaravanArrivalAction_VisitEscapeShip", "LookMode.Deep"):
+            self.assertIn(native, source)
+        self.assertNotIn("1.6f", source)
+
+    def test_native_journey_eta_drift_preserves_order_but_changed_route_cost_rejects(self):
+        plan = {"map_id": 1, "object_id": 70, "team": "migration", "supply_days": 15, "pawn_ids": [3],
+                "travel_days": 8.0, "food_margin_days": 7.0, "native_approx_food_days": 15.0}
+        selected = {**plan, "kind": "journey"}
+        class Client:
+            travel_days = 8.1
+            calls = 0
+            def get(self, endpoint, **params):
+                if endpoint.endswith("/journey"):
+                    return {"journeys": [{**plan, "travel_days": self.travel_days, "food_margin_days": 15.0 - self.travel_days}]}
+                return [] if endpoint.endswith("/progression") else {}
+            def post(self, *args, **params):
+                self.calls += 1
+                return "ending_caravan_forming"
+        client = Client()
+        self.assertTrue(p.execute(client, {"map": {"id": 1}}, {}, "progression_ending", selected)["applied"])
+        client.travel_days = 11.0
+        self.assertFalse(p.execute(client, {"map": {"id": 1}}, {}, "progression_ending", selected)["applied"])
+        self.assertEqual(client.calls, 1)
+
+    def test_unavailable_journey_exposes_ration_research_without_order(self):
+        readiness = {"journeys": [], "readiness": [{"object_id": 70, "route": "ship_journey", "label": "Revealed ship",
+                      "blockers": ["insufficient food edible and policy-allowed for every traveler"], "acceptable_stock_nutrition": 0}],
+                     "support_research_targets": ["PackagedSurvivalMeal"], "ration_production": [{"name": "CookMealSurvival", "research": "PackagedSurvivalMeal"}]}
+        class Client:
+            def get(self, endpoint, **params):
+                if endpoint.endswith("/journey"):
+                    return readiness
+                if endpoint.endswith("/tree"):
+                    return {"projects": [project("PackagedSurvivalMeal")]}
+                return [] if endpoint.endswith("/progression") else {}
+            def post(self, *args, **params):
+                raise AssertionError("No supply means no journey order")
+        context = p.collect(Client(), {"map": {"id": 1}})
+        self.assertEqual(p.ending_options(context), {})
+        snapshot = {"development": {"progression": context}}
+        self.assertEqual(p.prepare(snapshot, {"doctrine": {"endgame": "ship_journey"}}), ["progression_research"])
+        self.assertEqual(context["chosen_route_support"]["frontier"], ["PackagedSurvivalMeal"])
+        _, _, _, facts = p.comparison("progression_research", context)
+        self.assertEqual(facts["journey_needs"]["research"], ["PackagedSurvivalMeal"])
+        self.assertEqual(facts["journey_needs"]["blockers"], ["diet-allowed survival meals missing"])
+        self.assertEqual(p.summary(snapshot)["journey_blockers"], 1)
+        self.assertFalse(p.execute(Client(), {"map": {"id": 1}}, {}, "progression_ending", {"kind": "journey", "object_id": 70})["applied"])
+
     def test_hidden_prerequisite_frontier_and_cycle(self):
         tree = [project("ShipBasics", can_start_now=False, hidden_prerequisites=["Microelectronics"]),
                 project("Microelectronics", prerequisites=["ShipBasics"])]

@@ -50,12 +50,15 @@ namespace RIMAPI.Helpers
                             Index = map.Index,
                             Seed = map.ConstantRandSeed,
                             TileId = map.Tile,
-                            FactionId = map.ParentFaction.loadID.ToString(),
+                            FactionId = map.ParentFaction?.loadID.ToString(),
                             IsPlayerHome = map.IsPlayerHome,
                             IsPocketMap = map.IsPocketMap,
                             IsTempIncidentMap = map.IsTempIncidentMap,
                             IsCurrentMap = map == Find.CurrentMap,
                             FreeColonists = map.mapPawns.FreeColonistsSpawnedCount,
+                            PlayerShipPassengers = map.listerBuildings.allBuildingsColonist
+                                .OfType<Building_CryptosleepCasket>().Count(c => c.def.building.shipPart
+                                    && c.ContainedThing is Pawn p && p.Faction == Faction.OfPlayer),
                             Hostiles = map.mapPawns.AllPawnsSpawned.Count(p => p != null && !p.Dead && p.HostileTo(Faction.OfPlayer)),
                             Size = map.Size.ToString(),
                         }
@@ -657,6 +660,7 @@ namespace RIMAPI.Helpers
                     {
                         Id = s.ID,
                         RoleLabel = s.GetRoomRoleLabel(),
+                        RoleDefName = s.Role?.defName,
                         Temperature = s.Temperature,
                         CellsCount = s.CellCount,
                         TouchesMapEdge = s.TouchesMapEdge,
@@ -687,6 +691,7 @@ namespace RIMAPI.Helpers
                     {
                         Id = s.ID,
                         RoleLabel = s.GetRoomRoleLabel(),
+                        RoleDefName = s.Role?.defName,
                         Temperature = s.Temperature,
                         CellsCount = s.CellCount,
                         TouchesMapEdge = s.TouchesMapEdge,

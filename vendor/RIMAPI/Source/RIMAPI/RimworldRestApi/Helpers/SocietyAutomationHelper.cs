@@ -14,9 +14,7 @@ namespace RIMAPI.Helpers
         private static readonly string[] Care = { "NoMeds", "HerbalOrWorse", "NormalOrWorse", "Best" };
         private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Where(h=>h.Visible).Any(h => h.IsCurrentlyLifeThreatening || h.TendableNow()
             || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable immunity && immunity.Immunity < 1));
-        private static bool ProtectedActivity(Pawn p) => p.Downed || p.Drafted || p.InMentalState || p.CurJobDef == JobDefOf.TendPatient
-            || new[]{"Deathrest","Breastfeed","Lessongiving","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessonreceiving"}.Contains(p.CurJobDef?.defName)
-            || p.CurJobDef == JobDefOf.Rescue || p.CurJobDef == JobDefOf.FeedPatient || p.CurJobDef == JobDefOf.DoBill;
+        private static bool ProtectedActivity(Pawn p) => p.Downed || p.Drafted || p.InMentalState || CombatNativeHelper.HasCareJob(p);
         private static bool AvailableStaff(Pawn p, WorkTypeDef work) => p.IsColonistPlayerControlled && !ProtectedActivity(p)
             && !NeedsCare(p) && !p.WorkTypeIsDisabled(work) && (p.workSettings?.GetPriority(work) ?? 0) > 0;
         private static List<string> PrisonerOptions(Pawn p)

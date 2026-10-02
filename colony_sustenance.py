@@ -62,7 +62,15 @@ def _effects(context, plan):
     if kind in {"care", "sterilize"}:
         medicine_count = sum(int(m.get("count") or 0) for m in context.get("medicines") or [])
         evidence = f"meds={medicine_count} doctor_skills={[d.get('medicine_skill') for d in context.get('doctors') or []][:4]} " + evidence
-    return {"benefit": str(plan.get("label") or kind), "risk": risks.get(kind, str(plan.get("risk") or "Vanilla consequences remain")),
+    if kind == "cooler":
+        cooler = next((c for c in context.get("coolers") or [] if c.get("id") == target), {})
+        evidence = f"temperature={cooler.get('temperature')} powered={cooler.get('powered')} current_target={cooler.get('target')} requested={plan.get('value')}"
+    if kind == "diet":
+        diet = next((d for d in context.get("diets") or [] if str(d.get("id")) == str(plan.get("value"))), {})
+        allowed = set(diet.get("allowed") or [])
+        usable = [f"{f.get('def_name')}:{f.get('fresh_eligible_nutrition')}" for f in context.get("food") or [] if f.get("def_name") in allowed]
+        evidence = "allowed_fresh_nutrition=" + ",".join(usable)
+    return {"benefit": str(plan.get("label") or kind), "risk": str(plan.get("risk") or risks.get(kind) or "Vanilla consequences remain"),
             "cost": evidence + "; " + str(plan.get("cost") or "labor/resources"), "inaction": "Hunger/rot/breeding/current policies continue",
             "uncertainty": "Live option; normal work/outcome still pending"}
 
@@ -74,7 +82,14 @@ def _stage(agent, context, rows, question, instructions):
     effects = {alias: row[2] for alias, row in indexed.items()}
     choices["defer"] = "Keep current policy; defer"
     effects["defer"] = {"benefit": "Preserve resources/current services", "risk": "Hunger/rot/illness/breeding continue", "cost": "No added labor/resources", "inaction": "Current policy continues", "uncertainty": "No completed care or production"}
-    selected, raw = ask_laya_choice(agent, {"decision_facts": {"domain": "production" if question.startswith("production_") else "sustenance", "purpose": question}, "option_effects": effects}, question, instructions, choices, detailed=True)
+    # Preserve aggregate supply and rot urgency before purpose text in the small facts budget.
+    food = context.get("food")
+    nutrition = (sum(float(f["fresh_eligible_nutrition"]) for f in food)
+                 if food is not None and all(isinstance(f.get("fresh_eligible_nutrition"), (int, float)) for f in food) else None)
+    rot = [p["ticks_until_rot"] for p in context.get("perishables") or []
+           if isinstance(p.get("ticks_until_rot"), (int, float)) and p.get("eligible") is True]
+    facts = {"fresh_nutrition": nutrition, "first_rot_ticks": min(rot) if rot else None, "purpose": question}
+    selected, raw = ask_laya_choice(agent, {"decision_facts": facts, "option_effects": effects}, question, instructions, choices, detailed=True)
     if selected not in choices:
         raise ValueError("Unverified sustenance choice")
     return (None if selected == "defer" else indexed[selected][0]), raw
@@ -122,8 +137,8 @@ def execute(client, snapshot, map_state, action, selected):
         return {"applied": False, "reason": "policy_no_longer_available"}
     result = client.post("/api/v1/sustenance/policy", body={"map_id": snapshot["map"]["id"], "key": key})
     applied = isinstance(result, dict) and result.get("applied") is True
-    if applied:
-        map_state.setdefault("issued", {})[action] = tick
+    # A rejected native order must not be retried every director cycle.
+    map_state.setdefault("issued", {})[action] = tick
     return {"applied": applied, "reason": result.get("reason") if isinstance(result, dict) else "invalid_response", "response": result}
 
 

@@ -16,6 +16,7 @@ from typing import Any
 
 PROGRAM_CATALOG: dict[str, dict[str, Any]] = {
     "residence": {"label": "private house", "category": "housing", "skills": ["Construction", "Artistic"]},
+    "royal_bedroom": {"label": "bedroom for actual royal requirements", "category": "housing", "skills": ["Construction", "Artistic"]},
     "residential_compound": {"label": "multi-room residential compound", "category": "housing", "skills": ["Construction"]},
     "dining_recreation": {"label": "dining and recreation hall", "category": "community", "skills": ["Construction", "Artistic"]},
     "kitchen": {"label": "clean dedicated kitchen", "category": "food", "skills": ["Cooking", "Construction"]},
@@ -324,9 +325,8 @@ def _furnished_room(
         items.extend(_climate_items(index, climate, powered, width - 2, 2))
     elif program == "throne_room":
         royalty = context.get("royalty") or {}
-        title_names = {str(row.get("title_def_name") or "") for row in royalty.get("colonists", [])}
-        grand = any(name in {"Baron", "Baroness", "Count", "Countess"} or "Count" in name or "Baron" in name for name in title_names)
-        throne = "GrandThrone" if grand and _available(index, "GrandThrone") else "Throne"
+        required = [name for row in royalty.get("colonists", []) for name in row.get("throne_required_defs") or []]
+        throne = next((name for name in required if _available(index, name)), "Throne")
         add(throne, width // 2, height - 3, stuff=material, rotation=2)
         for x in (2, width - 3):
             add("Brazier", x, height - 3, stuff=material)
@@ -523,7 +523,165 @@ def generate_greenhouse_variants(program: str, context: dict[str, Any]) -> dict[
             "summary": f"13×13 roofed room, SunLamp, {'8 basins/32 growing cells' if hydro else 'unfloored fertile soil'}; climate {context.get('climate')}; connected internal cable cross; peak about {watts:.0f} W plus existing colony demand. Requires external grid connection and dependable supply. Select crops after temperature/light/power are verified; do not sow on cold blueprints."}}
 
 
+def royal_people(context: dict[str, Any]) -> list[dict[str, Any]]:
+    royalty = context.get("royalty") or {}
+    people = list(royalty.get("colonists") or [])
+    # Before accepting a lodger quest its pawns are not yet spawned colonists.
+    for quest in royalty.get("pending_bedroom_quests") or []:
+        people.extend(quest.get("guests") or [])
+    seen = set()
+    result = []
+    for row in people:
+        if isinstance(row, dict) and str(row.get("pawn_id")) not in seen:
+            result.append(row)
+            seen.add(str(row.get("pawn_id")))
+    return result
+
+
+def royal_room_prerequisites(person: dict[str, Any], context: dict[str, Any], prefix: str) -> list[str]:
+    index = catalog_index(context.get("building_catalog") or [])
+    missing = []
+    for requirement in person.get(prefix + "_required_things") or []:
+        choices = requirement.get("any_of") or []
+        if not any(_available(index, name, fallback=False) for name in choices):
+            missing.append("Unlock/load one of " + ",".join(choices))
+    if prefix == "bedroom" and not any(_available(index, name, fallback=False)
+                                        for name in person.get("bedroom_required_bed_defs") or []):
+        missing.append("Unlock/load required bed " + ",".join(person.get("bedroom_required_bed_defs") or []))
+    if person.get(prefix + "_floor_tags") and not any(_available(index, name, fallback=False)
+                                         for name in person.get(prefix + "_compatible_floor_defs") or []):
+        missing.append("Unlock/load floor matching native tags " + ",".join(person[prefix + "_floor_tags"]))
+    return list(dict.fromkeys(missing))
+
+
+def royal_research_targets(context: dict[str, Any]) -> list[str]:
+    """Loaded research alternatives for unmet native room requirement groups.
+
+    Unlocking any available member satisfies that group's availability gate;
+    these are possible research directions, not a mandatory combined sequence.
+    """
+    index = catalog_index(context.get("building_catalog") or [])
+    targets = set()
+    finished = set(context.get("finished_research") or [])
+    for person in royal_people(context):
+        for prefix in ("bedroom", "throne_room"):
+            if not person.get("requires_" + prefix) or not person.get("has_unmet_" + prefix + "_requirements"):
+                continue
+            groups = [r.get("any_of") or [] for r in person.get(prefix + "_required_things") or []]
+            if prefix == "bedroom":
+                groups.append(person.get("bedroom_required_bed_defs") or [])
+            if person.get(prefix + "_floor_tags"):
+                groups.append(person.get(prefix + "_compatible_floor_defs") or [])
+            for group in groups:
+                if any(_available(index, name, fallback=False) for name in group):
+                    continue
+                for name in group:
+                    targets.update(r for r in (index.get(name) or {}).get("research_prerequisites") or [] if r not in finished)
+    return sorted(targets)
+
+
+def royal_goal_needs(context: dict[str, Any]) -> dict[str, Any]:
+    rows = []
+    for person in royal_people(context):
+        for prefix in ("bedroom", "throne_room"):
+            if person.get("requires_" + prefix) and person.get("has_unmet_" + prefix + "_requirements"):
+                rows.append({"pawn": person.get("pawn_id"), "room": prefix,
+                             "area": person.get("minimum_" + prefix + "_area"),
+                             "impressiveness_pending": person.get("minimum_" + prefix + "_impressiveness"),
+                             "missing": royal_room_prerequisites(person, context, prefix)})
+    return {"rooms": rows, "research_alternatives": royal_research_targets(context)}
+
+
+def generate_royal_variants(program: str, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    bedroom = program == "royal_bedroom"
+    prefix = "bedroom" if bedroom else "throne_room"
+    index = catalog_index(context.get("building_catalog") or [])
+    material = str(context.get("material") or "WoodLog")
+    stock = context.get("item_counts") or {}
+    if not all(_available(index, name, fallback=False) for name in ("Wall", "Door")):
+        return {}
+    result = {}
+    for person in royal_people(context):
+        if not person.get("requires_" + prefix) or not person.get("has_unmet_" + prefix + "_requirements"):
+            continue
+        requirements = person.get(prefix + "_required_things") or []
+        bed_defs = person.get("bedroom_required_bed_defs") or [] if bedroom else []
+        required = []
+        unavailable = []
+        for requirement in requirements:
+            alternatives = requirement.get("any_of") or []
+            chosen = next((name for name in alternatives if _available(index, name, fallback=False)), None)
+            if chosen is None:
+                unavailable.append("one of " + ",".join(alternatives))
+            else:
+                required.extend([chosen] * max(1, int(requirement.get("count") or 1)))
+        if bedroom and not any(name in bed_defs for name in required):
+            bed = next((name for name in bed_defs if _available(index, name, fallback=False)), None)
+            if bed is None:
+                unavailable.append("required bed definition")
+            else:
+                required.insert(0, bed)
+        # Native metadata must identify at least the bed/throne; avoid building
+        # a decorative shell that cannot satisfy its stated structural purpose.
+        if not required or unavailable:
+            continue
+        compatible_floors = person.get(prefix + "_compatible_floor_defs") or []
+        floor_def = next((name for name in compatible_floors if _available(index, name, fallback=False)), None)
+        if person.get(prefix + "_floor_tags") and floor_def is None:
+            continue
+        minimum = max(1, int(person.get("minimum_" + prefix + "_area") or 0))
+        side = max(7, int(math.ceil(math.sqrt(minimum))),
+                   max(max(int(index[name].get("size_x") or 1), int(index[name].get("size_z") or 1)) + 4 for name in required))
+        for variant in range(3):
+            width, height = side + 2 + variant * 2, side + 2
+            items = _shell(width, height, material, str(context.get("entry_side") or "south"), width // 2)
+            occupied = {(i["rel_x"], i["rel_z"]) for i in items}
+            failed = False
+            for name in required:
+                row = index[name]
+                w, h = max(1, int(row.get("size_x") or 1)), max(1, int(row.get("size_z") or 1))
+                placed = False
+                locations = [(x, z) for z in range(2, height - h - 1) for x in range(2, width - w - 1)]
+                if name == "Column":
+                    # Native royal halls require roof-supporting columns. Put
+                    # these toward the center rather than along the outer wall.
+                    locations.sort(key=lambda p: abs(p[0] - width // 2) + abs(p[1] - height // 2))
+                for x, z in locations:
+                    footprint = {(a, b) for a in range(x, x + w) for b in range(z, z + h)}
+                    clearance = {(a, b) for a in range(x - 1, x + w + 1) for b in range(z - 1, z + h + 1)}
+                    if clearance & occupied:
+                        continue
+                    items.append(building(name, x + (w - 1) // 2, z + (h - 1) // 2,
+                                          stuff=material if row.get("cost_stuff_count") else None))
+                    occupied.update(footprint)
+                    placed = True
+                    break
+                if not placed:
+                    failed = True
+                    break
+            if failed:
+                continue
+            layout = resolve_layout_materials({**blueprint(items, width, height, _interior_floor(width, height, floor_def)), "roof": True}, index, stock)
+            if layout is None:
+                continue
+            key = f"{program}_{person.get('pawn_id')}_{variant + 1}"
+            pending = ["Native room impressiveness after construction", "Owner assignment after completed room",
+                       "Actual roof, temperature and lighting after construction"]
+            if not bedroom:
+                pending.append("Required braziers must actually be fueled and glowing")
+            result[key] = {"id": key, "program": program, "style": ("compact", "standard", "expanded")[variant],
+                "name": f"{PROGRAM_CATALOG[program]['label']} for {person.get('pawn_name') or person.get('pawn_id')}",
+                "target_pawn_id": person.get("pawn_id"), "width": width, "height": height, "layout": layout,
+                "pending_requirements": pending, "structural_area": (width - 2) * (height - 2),
+                "minimum_impressiveness": person.get("minimum_" + prefix + "_impressiveness"),
+                "summary": f"{width}×{height}; actual minimum area {minimum}; native required furniture {Counter(required)}; floor {floor_def or 'no native floor gate'}; impressiveness {person.get('minimum_' + prefix + '_impressiveness')} remains unverified until completed; assign to pawn {person.get('pawn_id')}; {pending}"}
+    return result
+
+
 def generate_program_variants(program: str, context: dict[str, Any], *, seed: int = 0) -> dict[str, dict[str, Any]]:
+    if program == "royal_bedroom" or (program == "throne_room" and any(
+            row.get("throne_room_required_things") for row in royal_people(context))):
+        return generate_royal_variants(program, context)
     if program in {"greenhouse_soil", "greenhouse_hydroponics"}:
         return generate_greenhouse_variants(program, context)
     catalog = context.get("building_catalog") or []
@@ -707,21 +865,29 @@ def program_options(context: dict[str, Any]) -> dict[str, str]:
         options["residence"] = f"Housing shortage: {private_rooms} private bedrooms for {len(colonists)} colonists; 24 generated house variants"
         if len(colonists) - private_rooms >= 3:
             options["residential_compound"] = "Several separate bedrooms plus a shared lit central room; faster than isolated houses"
+    royal_bedrooms = [row for row in royal_people(context) if row.get("requires_bedroom") and row.get("has_unmet_bedroom_requirements")]
+    if royal_bedrooms:
+        options["royal_bedroom"] = ("Actual royal bedroom requirements unmet: " + str([
+            {"pawn": row.get("pawn_name"), "area": row.get("minimum_bedroom_area"),
+             "requirements": row.get("bedroom_requirements"), "bed": row.get("bedroom_required_bed_defs"),
+             "floor": row.get("bedroom_floor_tags"), "impressiveness_pending": row.get("minimum_bedroom_impressiveness")}
+            | {"missing_prerequisites": royal_room_prerequisites(row, context, "bedroom")}
+            for row in royal_bedrooms]) + "; loaded furniture/floor research and materials required; room impressiveness and ownership need later native verification")
     if not any(name in counts for name in ("Table2x2c", "Table1x2c", "Table2x4c")):
         options["dining_recreation"] = "No proper shared dining hall; a pleasant high-use room gives broad mood value"
     if not any(int(counts.get(name) or 0) > 0 for name in ("FueledStove", "ElectricStove")):
         options["kitchen"] = "No stove; creates a clean lit cooking room and keeps butchery elsewhere"
     if medical_beds < max(2, len(colonists) // 3):
         options["hospital"] = f"Medical capacity {medical_beds}, current/potential patients {patient_count}; variants upgrade normal beds to hospital beds, monitor, clean floor and light when technology permits"
-    if any(row.get("requires_throne_room") and row.get("has_unmet_throne_room_requirements") for row in royalty.get("colonists", [])):
-        titles = ", ".join(str(row.get("title_label")) for row in royalty.get("colonists", []) if row.get("requires_throne_room"))
-        requirement_rows = [row for row in royalty.get("colonists", []) if row.get("requires_throne_room")]
+    if any(row.get("requires_throne_room") and row.get("has_unmet_throne_room_requirements") for row in royal_people(context)):
+        titles = ", ".join(str(row.get("title_label")) for row in royal_people(context) if row.get("requires_throne_room"))
+        requirement_rows = [row for row in royal_people(context) if row.get("requires_throne_room")]
         requirements = sorted({str(value) for row in requirement_rows for value in (row.get("throne_room_requirements") or [])})
         area = max((int(row.get("minimum_throne_room_area") or 0) for row in requirement_rows), default=0)
         impressiveness = max((float(row.get("minimum_throne_room_impressiveness") or 0) for row in requirement_rows), default=0)
         options["throne_room"] = (
             f"Royal requirement is unmet for {titles}; minimum area {area}, impressiveness {impressiveness}; "
-            f"requirements {requirements}; no beds or production benches are included"
+            f"requirements {requirements}; prerequisites {[royal_room_prerequisites(row, context, 'throne_room') for row in requirement_rows]}; no beds or production benches are included; room impressiveness/ownership/lighting remain pending"
         )
     if ideology.get("active"):
         options["temple"] = "Ideology is active; a dedicated floored ritual room avoids invalid mixed-room uses"

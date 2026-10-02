@@ -40,6 +40,12 @@ class Client:
 
 
 class SpecialistTests(unittest.TestCase):
+    def test_loading_older_save_restores_specialist_choices(self):
+        snap = snapshot()
+        issued = {'issued': {'specialists:specialists_mech_mode': 900000, 'specialists:specialists_suppress_entity': 900000}}
+        self.assertEqual(set(specialists.prepare(snap, issued)), {'specialists_mech_mode', 'specialists_suppress_entity'})
+        self.assertEqual(specialists.prepare(snap, {'issued': {'specialists:specialists_mech_mode': 49000, 'specialists:specialists_suppress_entity': 49000}}), [])
+
     def test_only_loaded_dlc_and_live_native_options_are_offered(self):
         snap = snapshot()
         self.assertEqual(set(specialists.prepare(snap, {})), {"specialists_mech_mode", "specialists_suppress_entity"})

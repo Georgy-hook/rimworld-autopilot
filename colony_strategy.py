@@ -436,6 +436,25 @@ ENDGAMES = {
     "mechhive": ("Мехулей и орбитальная кампания", "odyssey"),
 }
 
+# Model text is English, matching the installed decision checkpoint. Russian
+# presentation labels above remain available to the overlay and reports.
+ENDING_EFFECTS = {
+    "ship_escape": ("Build and launch a connected escape ship", "Reactor startup brings sustained raids; unboarded people are left behind",
+                    "Ship research, persona core, advanced materials, connected parts and occupied caskets"),
+    "ship_journey": ("Travel to the offered existing escape ship and launch it", "Long journey, exposed colony and reactor-defense raids",
+                     "Discovered ship site, native caravan supplies, healthy travellers and reactor readiness"),
+    "imperial_ascension": ("Host the High Stellarch and depart with the Empire", "Host death, mood failure and raids can fail the quest",
+                           "Earned title/honor, suitable rooms, hospitality supplies and the live ascent quest"),
+    "archonexus": ("Complete colony-sale cycles and reach the Archonexus", "Sale abandons most colony possessions; repeated rebuilding is required",
+                   "Live wealth, faction and study gates, explicit limited transfers, settlement and travel"),
+    "anomaly_void": ("Complete the monolith campaign and resolve the void", "Escalating entities, containment breaks and final awakening danger",
+                     "Native discoveries, study, containment, activation and final resolution choice"),
+    "mechhive": ("Reach and resolve the orbital mechhive campaign", "Orbital hazards, assaults, fuel shortages and lost passengers",
+                 "Loaded Odyssey, gravship facilities, fuel, discovered destinations and Cerebrex interaction"),
+    "enduring_colony": ("Continue indefinitely", "No finite ending is pursued", "Ongoing survival and maintenance"),
+}
+ENDGAMES["ship_journey"] = ("Путешествие к предложенному кораблю и запуск", None)
+
 DIPLOMACY = {
     "peaceful_trade": "Торговля и мир", "alliance_builder": "Союзы и благосклонность", "quest_contractors": "Квесты за награды",
     "humanitarian": "Спасение и помощь", "defensive": "Оборона без лишних войн", "isolationist": "Минимум внешних контактов",
@@ -536,7 +555,7 @@ def audit_directions(context: dict[str, Any]) -> dict[str, Any]:
 
 def domain_options(audit: dict[str, Any]) -> dict[str, str]:
     return {
-        domain: f"{DOMAIN_LABELS[domain]} — {count} доступных направлений"
+        domain: f"{domain.replace('_', ' ')}; {count} available development directions"
         for domain, count in (audit.get("domains") or {}).items() if count
     }
 
@@ -544,8 +563,8 @@ def domain_options(audit: dict[str, Any]) -> dict[str, str]:
 def direction_options(audit: dict[str, Any], domain: str) -> dict[str, str]:
     return {
         name: (
-            f"{row['label']}: {row['summary']} Кадровое/контентное соответствие {row['fit_score']}; "
-            f"механики: {', '.join(row.get('mechanics') or ())}"
+            f"{name.replace('_', ' ')}: {', '.join(row.get('mechanics') or ())}; "
+            f"workforce/content fit {row['fit_score']} (not a success probability)"
         )
         for name, row in (audit.get("available") or {}).items() if row.get("domain") == domain
     }
@@ -558,7 +577,30 @@ def _filter_axis(rows: dict[str, tuple[str, str | None]], flags: dict[str, bool]
 def _ask(agent: Any, state: dict[str, Any], question_id: str, instructions: str, criteria: dict[str, str]) -> tuple[str, dict[str, Any]]:
     if not criteria:
         return "", {"answers": {}}
-    return ask_laya_choice(agent, state, question_id, instructions, criteria)
+    chosen = state.get("chosen_so_far") or {}
+    current = state.get("current_course") or {}
+    # Put the intended ending before large income/catalogue observations.
+    # Previous prompts appended a full progression object and silently lost
+    # late choices to the encoder's 312-token state budget.
+    facts = {"endgame": chosen.get("endgame") or current.get("endgame") or "choose_now",
+             "direction": chosen.get("primary_direction") or current.get("primary_direction"),
+             "income": chosen.get("economy_product") or current.get("economy_product"),
+             "people": state.get("population"), "food": state.get("food"),
+             "sheltered_beds": state.get("sheltered_beds"), "income_blocked": state.get("income_blocked")}
+    effects, english = {}, {}
+    for key, label in criteria.items():
+        description = label if not any('\u0400' <= char <= '\u04ff' for char in label) else key.replace('_', ' ')
+        benefit, risk, cost = (ENDING_EFFECTS[key] if question_id == "doctrine_endgame" else
+            (description, "This focus can divert labor and resources from survival or the selected ending",
+             "Only actual feasible research, construction and work may execute this intention"))
+        english[key] = benefit
+        effects[key] = {"benefit": benefit, "risk": risk, "cost": cost,
+                        "inaction": "Retain the previous course; unresolved prerequisites remain",
+                        "uncertainty": "Strategy intention is not progress; future native gates and actual outcomes must be observed"}
+    selected, raw = ask_laya_choice(agent, {"decision_facts": facts, "option_effects": effects},
+                                   question_id, instructions, english)
+    raw["strategy_context"] = facts
+    return selected, raw
 
 
 def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -651,7 +693,7 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
         and name in DIRECT_INCOME_PLANS
     }
     products = {
-        name: (f"{description}; {economic_outlook({'economy_product': name}, context)['horizon']}; "
+        name: (f"{name.replace('_', ' ')}; {economic_outlook({'economy_product': name}, context)['horizon']}; "
                f"direct setup order available: {economic_outlook({'economy_product': name}, context)['direct_production_plan']}")
         for name, description in products.items()
     }

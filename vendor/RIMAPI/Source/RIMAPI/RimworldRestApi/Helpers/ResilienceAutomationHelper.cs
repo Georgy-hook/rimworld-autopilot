@@ -70,8 +70,7 @@ namespace RIMAPI.Helpers
         private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Where(h => h.Visible).Any(h => h.TendableNow() || h.IsCurrentlyLifeThreatening
             || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable c && c.Immunity < 1));
         private static bool Idle(Pawn p) => p.IsColonistPlayerControlled && !p.Dead && !p.Downed && !p.Drafted && !p.InMentalState
-            && p.CurJobDef != JobDefOf.TendPatient && p.CurJobDef != JobDefOf.Rescue && p.CurJobDef != JobDefOf.FeedPatient
-            && p.CurJobDef != JobDefOf.DoBill && p.CurJobDef?.defName != "Clean" && p.CurJobDef?.defName != "PrisonerInterrogateIdentity" && p.CurJobDef != JobDefOf.Ingest;
+            && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef?.defName != "Clean" && p.CurJobDef != JobDefOf.Ingest;
         private static bool Available(Pawn p) => Idle(p) && !NeedsCare(p);
         public static bool RoutineRouteSafe(Pawn worker, Thing target) => Safe(worker,target);
         // The native tend workgiver accepts Deadly; automation explicitly requires Some.
@@ -85,9 +84,12 @@ namespace RIMAPI.Helpers
             float temperature=target.Position.GetTemperature(worker.Map);
             if (!rescueExposure && (temperature < worker.GetStatValue(StatDefOf.ComfyTemperatureMin)-10f || temperature > worker.GetStatValue(StatDefOf.ComfyTemperatureMax)+10f)) return false;
             if (!rescueExposure && worker.Map.gameConditionManager.ActiveConditions.Any(c => c.def.defName == "ToxicFallout") && !target.Position.Roofed(worker.Map)) return false;
-            foreach (Pawn hostile in worker.Map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(worker)))
+            foreach (Thing hostile in worker.Map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(worker)).Cast<Thing>()
+                .Concat(worker.Map.listerBuildings.allBuildingsNonColonist.Where(CombatNativeHelper.ActiveStructure).Cast<Thing>()))
             {
-                float radius = Math.Max(20f, (hostile.equipment?.Primary?.def.Verbs?.FirstOrDefault()?.range ?? 0f) + 8f);
+                float range = hostile is Pawn enemy ? enemy.equipment?.Primary?.def.Verbs?.FirstOrDefault()?.range ?? 0f
+                    : (hostile as Building_Turret)?.AttackVerb?.EffectiveRange ?? 0f;
+                float radius = Math.Max(20f, range + 8f);
                 var a = worker.Position; var b = target.Position; var e = hostile.Position;
                 float dx = b.x - a.x, dz = b.z - a.z;
                 float fraction = Math.Max(0f, Math.Min(1f, ((e.x-a.x)*dx + (e.z-a.z)*dz)/Math.Max(1f, dx*dx+dz*dz)));
@@ -181,14 +183,14 @@ namespace RIMAPI.Helpers
                 foreach (var pair in Givers)
                 {
                     IEnumerable<Thing> targets = pair.Key == "clean"
-                        ? map.listerThings.AllThings.Where(t => t is Filth && careRooms.Contains(t.GetRoom()) && (t.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness) ?? 0f) < 0f).Take(80)
+                        ? map.listerThings.AllThings.Where(t => t is Filth && careRooms.Contains(t.GetRoom()) && (t.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness) ?? 0f) < 0f)
                         : patients.Cast<Thing>();
                     foreach (Thing target in targets) foreach (string giver in pair.Value)
                         if (NativeScanner(worker, target, pair.Key, giver) != null)
                             result.Options.Add(new ResilienceOptionDto { Kind=pair.Key, WorkerId=worker.thingIDNumber, TargetId=target.thingIDNumber,
                                 Giver=giver, Worker=worker.LabelShort, Target=target.LabelShort, MedicineSkill=worker.skills?.GetSkill(SkillDefOf.Medicine)?.Level ?? 0,RoomCleanliness=target.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness) });
                 }
-                foreach (Thing drug in map.listerThings.AllThings.Where(t => t.def.defName == "Penoxycyline").Take(10))
+                foreach (Thing drug in map.listerThings.AllThings.Where(t => t.def.defName == "Penoxycyline"))
                     if (Preventible(worker, drug)) result.Options.Add(new ResilienceOptionDto {Kind="prevent", WorkerId=worker.thingIDNumber,TargetId=drug.thingIDNumber,Worker=worker.LabelShort,Target=drug.LabelShort});
             }
             foreach (Pawn patient in patients.Where(p => p.IsColonistPlayerControlled && !p.Drafted && !p.InMentalState && NeedsCare(p)
