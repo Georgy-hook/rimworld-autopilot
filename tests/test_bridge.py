@@ -229,6 +229,35 @@ class BridgeTests(unittest.TestCase):
         decision = bridge.decide(None, snapshot, 0.6)
         self.assertEqual(decision["choice"], "prepare_undrafted")
 
+    def test_post_combat_draft_cannot_loop_without_a_live_threat(self):
+        snapshot = self.snapshot()
+        snapshot["combat"]["colonists"] = [
+            {"id": 10, "is_drafted": True, "is_downed": False},
+            {"id": 11, "is_drafted": False, "is_downed": True},
+        ]
+        snapshot["colonists"].append({"id": 11, "downed": True})
+        # Reproduce a model that used to prefer the noop indefinitely.
+        agent = mock.Mock()
+        agent.predict.side_effect = AssertionError("No genuine combat choice remains")
+        decision = bridge.decide(agent, snapshot, 0.0)
+        self.assertEqual(decision["choice"], "stand_down")
+        people = {row["id"]: row for row in decision["raw"]["visible_state"]["people"]}
+        self.assertTrue(people[10]["drafted"])
+        self.assertTrue(people[11]["downed"])
+        action = bridge.plan_action(snapshot, decision)
+        self.assertIn({"endpoint": "/api/v1/pawn/edit/status", "body": {
+            "pawn_id": 10, "is_drafted": False}}, action["commands"])
+        snapshot["combat"]["colonists"][0]["is_drafted"] = False
+        self.assertIn("colony_action", bridge.make_questions(snapshot))
+
+    def test_active_structure_still_requires_a_combat_decision(self):
+        snapshot = self.snapshot()
+        snapshot["combat"]["colonists"] = [{"id": 10, "is_drafted": True}]
+        snapshot["combat"]["hostile_buildings"] = [{"id": 90, "active_threat": True}]
+        questions = bridge.make_questions(snapshot)
+        self.assertIn("threat_action", questions)
+        self.assertNotIn("stand_down", questions["threat_action"]["criteria"])
+
     def test_staging_raid_keeps_active_drafted_line_and_combat_options(self):
         snapshot = self.snapshot()
         snapshot["map"]["enemies"] = 2

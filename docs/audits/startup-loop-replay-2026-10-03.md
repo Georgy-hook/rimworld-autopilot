@@ -82,3 +82,21 @@ network/reservation failures remain recoverable; their scoped delayed retries
 must not block unrelated work. Long-term strategy and native job completion still
 need the next controlled run of the saved colony. Do not describe that run as
 completed while it is paused.
+
+## Resume gate: post-combat draft loop
+
+During the user-authorized reload at 07:14 UTC, the saved game advanced from
+216457 to 217712 before the technical pause. Three founders remained alive;
+Garrett was downed with severe blood loss, Alyssa was injured and incapable of
+medicine, and Dawn was in a mental break. This is pre-existing colony damage.
+The repaired director repeatedly selected `remain_drafted` at zero hostiles,
+keeping the only drafted pawn and the orchestrator in the combat branch. The
+post-combat question still offered that unsupported noop, and its compact
+context read combat field names from normalized civilian rows (null flags).
+
+The no-threat handoff now offers only `stand_down`. Active hostile pawns and
+active structures still enter the tactical branch. Compact state joins native
+draft/downed flags by pawn ID. A sequence test verifies exit to normal decisions
+after observed undrafting, and a hostile-structure regression preserves combat.
+All **842 tests passed**. No native DLL change was required for this correction.
+This gate does not establish that the damaged colony will survive.

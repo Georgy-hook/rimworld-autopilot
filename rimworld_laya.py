@@ -641,6 +641,7 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
         resources = (snapshot.get("map") or {}).get("resources") or {}
         farm = snapshot.get("map") or {}
         preferences = laya_preferences.model_context(laya_preferences.load_preferences())
+        combat_people = {pawn.get("id"): pawn for pawn in snapshot["combat"].get("colonists", [])}
         def count_rows(value: Any) -> int:
             return len(value) if isinstance(value, (list, tuple, dict)) else int(first_number(value))
         return {
@@ -649,7 +650,8 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
             "drafted": sum(bool(pawn.get("is_drafted")) for pawn in snapshot["combat"].get("colonists", [])),
             "people": [{
                 "id": pawn.get("id"), "health": pawn.get("health"),
-                "downed": pawn.get("is_downed"), "drafted": pawn.get("is_drafted"),
+                "downed": combat_people.get(pawn.get("id"), {}).get("is_downed", pawn.get("downed", False)),
+                "drafted": combat_people.get(pawn.get("id"), {}).get("is_drafted", False),
                 "bleeding": pawn.get("bleeding_rate"),
                 "job": pawn.get("current_job"),
                 "work": {name: ((pawn.get("work_priorities") or {}).get(name) or {}).get("priority")
@@ -1019,9 +1021,8 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return {
             "post_combat_action": {
                 "type": "choice",
-                "instructions": "The combat API reports zero hostile pawns. Return colonists to normal work unless a verified current threat requires continued drafting.",
+                "instructions": "No live hostile pawn or active hostile structure remains. Release the combat draft so colonists can eat, rest, and receive care; then reconsider colony work from the next snapshot.",
                 "criteria": {
-                    "remain_drafted": "Keep the drafted state only if the current state contains concrete evidence of continuing danger.",
                     "stand_down": "Undraft colonists and resume normal colony work because the verified hostile count is zero.",
                 },
             }
