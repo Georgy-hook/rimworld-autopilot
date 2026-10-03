@@ -169,10 +169,15 @@ def helper_comparison(snapshot, plan, action):
             else:
                 relative += "tend speed unknown. "
         travel = f"straight-line distance ~{round(distance)} cells; route length unknown" if distance is not None else "travel distance unknown"
-        criteria[key] = (relative + f"{row.get('worker') or key}; medicine {skill:g}; {travel}; native route and reservation feasible")
-    context = ("Choose a controllable caregiver. Compare actual tend quality and speed before medicine skill: better quality improves treatment and reduces infection risk; "
+        criteria[key] = (f"Assign {row.get('worker') or key} to help this patient: " + relative
+                         + f"medicine {skill:g}; {travel}; native route and reservation feasible")
+    context = ("Choose which DOCTOR will treat the patient. Prefer higher treatment quality and speed at similar travel distance. "
+               "The options describe caregivers, not patients. Compare actual tend quality and speed before medicine skill: better quality improves treatment and reduces infection risk; "
                "faster tending reduces bleeding delay. When travel is similar, a poorer slower doctor offers weaker care. A much longer trip can miss the death deadline. "
                "Quality stats are expectations, not completed treatment. Existing care must finish.")
+    if action != "tend_colonist":
+        context = ("Choose an available caregiver to carry or feed this patient. Compare travel delay and native feasibility. "
+                   "Medical treatment quality does not measure carrying or feeding ability. Existing care must finish.")
     return context, criteria
 
 

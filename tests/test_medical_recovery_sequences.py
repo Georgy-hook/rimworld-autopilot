@@ -205,8 +205,9 @@ class MedicalRecoverySequences(unittest.TestCase):
         expected = care.helper_comparison(snapshot, plan, "tend_colonist")
         plan["helpers"] = dict(reversed(list(plan["helpers"].items())))
         self.assertEqual(care.helper_comparison(snapshot, plan, "tend_colonist"), expected)
-        self.assertTrue(expected[1]["301"].startswith("Highest available medicine skill"))
-        self.assertTrue(expected[1]["300"].startswith("Lower medicine skill"))
+        self.assertIn("Highest available medicine skill", expected[1]["301"])
+        self.assertIn("Lower medicine skill", expected[1]["300"])
+        self.assertTrue(expected[1]["300"].startswith("Assign Low skill to help this patient:"))
         self.assertNotIn("quality", care.helper_comparison(snapshot, plan, "feed_hungry_colonist")[1]["301"])
 
     def test_engine_quality_outweighs_skill_proxy_without_hiding_speed_tradeoff(self):

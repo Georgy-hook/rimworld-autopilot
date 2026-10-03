@@ -108,7 +108,7 @@ covered separately by module tests rather than that static inventory.
 
 Cached real-tokenizer audit: 16 module scenarios, 299 comparisons, maximum 308
 state tokens, complete state retained. The new medical comparison uses at most
-171 state tokens. An actual CUDA model probe initially selected the less urgent
+179 state tokens. An actual CUDA model probe initially selected the less urgent
 recorded patient despite complete numeric context. Explicit comparative delay
 consequences changed selection to Alyssa, with the earlier estimated bleedout.
 
