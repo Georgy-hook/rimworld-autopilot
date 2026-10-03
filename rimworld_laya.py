@@ -37,6 +37,7 @@ COMBAT_CHOICES = {
     "equip_melee_weapon",
     "draft_best_defender",
     "hold_and_observe",
+    "continue_safe_colony_work",
     "stand_down",
     "remain_drafted",
     "prepare_undrafted",
@@ -307,6 +308,16 @@ def active_immune_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
             and ((h.get("can_ever_kill") and h.get("immunity") is not None)
                  or "infection" in str(h.get("def_name") or "").lower())
             and (h.get("immunity") is None or first_number(h.get("immunity")) < 1)]
+
+
+def active_recovery_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Include lethal scalar diseases without an immunity race, such as lung rot."""
+    immune = active_immune_diseases(pawn)
+    return [h for h in pawn.get("health_conditions") or [] if isinstance(h, dict)
+            and (h in immune or (not h.get("permanent")
+                 and first_number(h.get("lethal_severity")) > 0
+                 and h.get("immunity") is None
+                 and h.get("def_name") not in {"BloodLoss", "Malnutrition"}))]
 
 
 def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) -> None:
@@ -1059,7 +1070,7 @@ def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] 
     for colonist in colonists:
         priorities = colonist.get("work_priorities") or {}
         priority = priorities.get(work)
-        if active_immune_diseases(colonist) and work not in {"Patient", "PatientBedRest"}:
+        if active_recovery_diseases(colonist) and work not in {"Patient", "PatientBedRest"}:
             continue
         if first_number(colonist.get("health")) < 0.75 or first_number(colonist.get("bleeding_rate")) > 0.0 or colonist.get("downed"):
             continue
@@ -1344,7 +1355,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
         eligible = [
             pawn for pawn in snapshot["combat"].get("colonists", [])
             if not pawn.get("is_dead") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
-            and pawn.get("can_fight", True) and first_number(pawn.get("moving"), 1) >= 0.65
+            and pawn.get("can_fight", True) and first_number(pawn.get("moving"), 1) > 0
         ]
         live_hostiles = [row for row in snapshot["combat"].get("hostiles", [])
                          if not row.get("is_dead") and not row.get("is_downed")]
@@ -1455,7 +1466,7 @@ def combat_reserve_commands(snapshot: dict[str, Any], active_ids: set[int]) -> l
             for pawn in omitted if pawn.get("is_drafted")
         ]
     mobile = [pawn for pawn in omitted if not pawn.get("is_downed")
-              and first_number(pawn.get("moving"), 1) >= 0.65
+              and first_number(pawn.get("moving"), 1) > 0
               and first_number(pawn.get("distance_to_nearest_opponent"), 9999) < 18]
     commands = []
     if mobile and target_id is not None:
@@ -1604,10 +1615,10 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             return {"kind": "noop", "description": "No active enemy remains to withdraw from"}
         selected = decision.get("selected_fighter_ids")
         withdrawing_ids = set(map(int, selected)) if selected is not None else {
-            int(pawn["id"]) for pawn in colonists if first_number(pawn.get("moving"), 1) >= 0.65
+            int(pawn["id"]) for pawn in colonists if first_number(pawn.get("moving"), 1) > 0
         }
         withdrawing = [pawn for pawn in colonists if int(pawn["id"]) in withdrawing_ids
-                       and first_number(pawn.get("moving"), 1) >= 0.65]
+                       and first_number(pawn.get("moving"), 1) > 0]
         covering = [pawn for pawn in colonists if int(pawn["id"]) not in withdrawing_ids]
         commands: list[dict[str, Any]] = []
 
@@ -1642,11 +1653,11 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                 order(active_tactic, ranged_cover)
             order("screen_melee", melee_cover)
         order("civilian_retreat", [pawn for pawn in covering if not pawn.get("weapon_def")
-                                   and first_number(pawn.get("moving"), 1) >= 0.65])
+                                   and first_number(pawn.get("moving"), 1) > 0])
         commands.extend({"endpoint": "/api/v1/pawn/edit/status", "body": {
             "pawn_id": pawn["id"], "is_drafted": False,
         }} for pawn in covering if not pawn.get("weapon_def") and pawn.get("is_drafted")
-                        and first_number(pawn.get("moving"), 1) < 0.65)
+                        and first_number(pawn.get("moving"), 1) <= 0)
         if resume_command:
             commands.append(resume_command)
         return {"kind": "commands" if commands else "noop",
@@ -1731,7 +1742,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                         and first_number(pawn.get("moving"), 1) >= (0.65 if choice in {"melee_assault", "melee_hold_line", "screen_melee"} else 0.8)
                         and (choice in {"melee_assault", "melee_hold_line", "screen_melee"} or first_number(pawn.get("armor_sharp")) >= 0.4)]
         elif choice == "civilian_retreat":
-            fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65
+            fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) > 0
                         and (not pawn.get("can_fight", True) or not pawn.get("weapon_def"))
                         and combat_planner.errand_exposed(snapshot, pawn.get("position"))]
         elif choice == "withdraw_and_regroup":
@@ -2000,13 +2011,29 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                        if pawn not in contact and pawn.get("has_ranged_weapon")]
             if not contact:
                 return {"kind": "noop", "description": "No fighter remains in melee contact"}
+            contact_targets = {}
+            for pawn in contact:
+                position = pawn.get("position") or {}
+                def distance_squared(hostile):
+                    other = hostile.get("position") or {}
+                    return ((first_number(other.get("x")) - first_number(position.get("x"))) ** 2
+                            + (first_number(other.get("z")) - first_number(position.get("z"))) ** 2)
+                nearby = [hostile for hostile in hostiles if hostile.get("position")
+                          and pawn.get("position") and distance_squared(hostile) <= 4]
+                if nearby:
+                    contact_targets[pawn["id"]] = min(nearby, key=distance_squared)
+            if not contact_targets:
+                return {"kind": "noop", "description": "No verified hostile remains in melee contact"}
+            target = next(iter(contact_targets.values()))
             commands = reserve_commands + [
                 {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": pawn["id"], "is_drafted": True}}
-                for pawn in contact
+                for pawn in contact if pawn["id"] in contact_targets and not pawn.get("is_drafted")
             ] + [
                 {"endpoint": "/api/v1/pawn/job", "body": {
-                    "pawn_id": pawn["id"], "job_def": "AttackMelee", "target_thing_id": target["id"],
-                }} for pawn in contact
+                    "pawn_id": pawn["id"], "job_def": "AttackMelee", "target_thing_id": contact_targets[pawn["id"]]["id"],
+                }} for pawn in contact if pawn["id"] in contact_targets and not (
+                    pawn.get("current_job") == "AttackMelee"
+                    and pawn.get("current_job_target_id") == contact_targets[pawn["id"]]["id"])
             ]
             if support:
                 commands.append({"endpoint": "/api/v1/combat/tactic", "body": {

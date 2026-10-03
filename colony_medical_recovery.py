@@ -109,10 +109,20 @@ def triage(patient):
     return blood, ticks
 
 
+def stable_tend_patient(patient):
+    """Residual blood loss is not ongoing bleeding; preserve active disease care."""
+    return float(patient.get("bleeding_rate") or 0) <= 0 and not any(
+        h.get("def_name") != "BloodLoss" and (h.get("life_threatening")
+            or (h.get("tendable_now") and (h.get("immunity") is not None
+                or float(h.get("lethal_severity") or 0) > 0)))
+        for h in patient.get("health_conditions") or [])
+
+
 def patient_summary(patient):
     blood, ticks = triage(patient)
     critical = [f"{h.get('def_name')} {float(h.get('severity') or 0):.3f}" for h in patient.get("health_conditions") or []
-                if h.get("def_name") in {"BloodLoss", "Malnutrition"} or h.get("life_threatening")]
+                if h.get("def_name") in {"BloodLoss", "Malnutrition"} or h.get("life_threatening")
+                or float(h.get("lethal_severity") or 0) > 0]
     return (f"{patient.get('name')}; " + (f"bleedout ~{round(ticks)} ticks; " if ticks is not None else "bleedout unknown; ")
             + ", ".join(critical[:4]) + f"; bleeding {patient.get('bleeding_rate')}; hunger {patient.get('hunger')}; rate/day estimate")
 
@@ -140,8 +150,49 @@ def patient_comparison(plans):
     return context, criteria
 
 
+def helper_frontier(snapshot, patient, helpers):
+    """Discard only known Pareto inferior idle doctors; keep unknown opportunity costs."""
+    import math
+    pawns = {str(p.get("id")): p for p in snapshot.get("colonists") or []}
+    for p in snapshot.get("combat", {}).get("colonists") or []:
+        pawns[str(p.get("id"))] = {**pawns.get(str(p.get("id")), {}), **p}
+    target = patient.get("position") or {}
+    vectors = {}
+    idle_jobs = {"wait", "wait_wander", "standing", "idle"}
+    def number(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    for key, row in helpers.items():
+        pawn = pawns.get(str(row.get("worker_id", row.get("id", key))), {})
+        pawn = {**pawn, **row}
+        job = str(pawn.get("current_job") or "").lower()
+        if (job not in idle_jobs or pawn.get("reassign_from_patient_id") is not None
+                or any(pawn.get(k) for k in ("dead", "is_dead", "downed", "is_downed", "is_drafted", "in_mental_state", "is_in_mental_state"))):
+            continue
+        values = [pawn.get("medical_tend_quality"), pawn.get("medical_tend_speed"), pawn.get("medicine_skill")]
+        origin = pawn.get("position") or {}
+        distance = pawn.get("travel_distance")
+        if not number(distance) and all(number(pos.get(c)) for pos in (target, origin) for c in ("x", "z")):
+            distance = sum((origin[c]-target[c])**2 for c in ("x", "z"))**.5
+        if not all(number(v) for v in [*values, distance]):
+            continue
+        vectors[key] = (values[0], values[1], -distance, values[2])
+    removed = {}
+    for key, vector in vectors.items():
+        dominators = [other for other, better in vectors.items() if other != key
+                      and all(a >= b for a,b in zip(better, vector))
+                      and any(a > b for a,b in zip(better, vector))]
+        if dominators:
+            removed[key] = {"dominated_by": sorted(dominators, key=str),
+                "reason": "Known idle doctor has no better tend quality, speed, distance or medicine, and is strictly worse in at least one."}
+    return {key: row for key,row in helpers.items() if key not in removed}, removed
+
+
 def helper_comparison(snapshot, plan, action):
     helpers = plan["helpers"]
+    if action == "tend_colonist":
+        helpers, excluded = helper_frontier(snapshot, plan["patient"], helpers)
+        plan["helper_frontier_exclusions"] = excluded
+        snapshot.setdefault("development", {}).setdefault("medical_helper_frontier_exclusions", {})[str(plan["patient"].get("id"))] = excluded
     medicine = {key: float(row.get("medicine_skill") or 0) for key, row in helpers.items()}
     highest = max(medicine.values(), default=0)
     quality = {key: row.get("medical_tend_quality") for key, row in helpers.items()}
@@ -175,6 +226,8 @@ def helper_comparison(snapshot, plan, action):
                "The options describe caregivers, not patients. Compare actual tend quality and speed before medicine skill: better quality improves treatment and reduces infection risk; "
                "faster tending reduces bleeding delay. When travel is similar, a poorer slower doctor offers weaker care. A much longer trip can miss the death deadline. "
                "Quality stats are expectations, not completed treatment. Existing care must finish.")
+    if action == "tend_colonist" and plan.get("helper_frontier_exclusions"):
+        context += " Known dominated idle helpers excluded: " + str(plan["helper_frontier_exclusions"])
     if action != "tend_colonist":
         context = ("Choose an available caregiver to carry or feed this patient. Compare travel delay and native feasibility. "
                    "Medical treatment quality does not measure carrying or feeding ability. Existing care must finish.")

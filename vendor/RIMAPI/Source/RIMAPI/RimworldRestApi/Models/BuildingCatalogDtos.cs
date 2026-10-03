@@ -13,6 +13,7 @@ namespace RIMAPI.Models
         public bool AvailableNow { get; set; }
         public List<ThingCostDto> CostList { get; set; }
         public int CostStuffCount { get; set; }
+        public Dictionary<string, List<ThingCostDto>> EffectiveCostsByStuff { get; set; }
         public List<string> StuffCategories { get; set; }
         public List<string> AllowedStuffDefs { get; set; }
         public string MetadataError { get; set; }

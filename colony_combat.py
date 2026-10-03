@@ -506,11 +506,11 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         (float(row.get("weapon_range") or 0) + 4.0 for row in hostiles if row.get("has_ranged_weapon")),
         default=0.0,
     )))
-    if any(float(row.get("moving", 1)) >= 0.65
+    if any(float(row.get("moving", 1)) > 0
            and opponent_distance(row, 9999) < retreat_distance
            for row in fighters):
         names.append("withdraw_and_regroup")
-    if not ranged and not armed_melee and any(float(row.get("moving", 1)) >= 0.65 for row in fighters):
+    if not ranged and not armed_melee and any(float(row.get("moving", 1)) > 0 for row in fighters):
         names.append("civilian_retreat")
     if len(ranged) >= 2:
         names.append("firing_line")
@@ -566,7 +566,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         if any(not ability.get("hostile") for ability in psycasts):
             names.append("psycast_support")
     if not names:
-        names = ["civilian_retreat"] if any(float(row.get("moving", 1)) >= 0.65 for row in fighters) else []
+        names = ["civilian_retreat"] if any(float(row.get("moving", 1)) > 0 for row in fighters) else []
     insect_contact = insects_only and any(
         opponent_distance(row, 9999) < 18 for row in fighters)
     if insect_contact and not armored_melee and len(armed_melee) < max(2, len(hostiles)):
@@ -614,6 +614,11 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
             if name == "intercept_kidnapper":
                 description += (" Pursue the carrier in long trap-free moves and fire whenever a shot opens; "
                                 "this exposes the pursuer and may leave the base undefended.")
+            if name in {"withdraw_and_regroup", "civilian_retreat"}:
+                slow = [row for row in fighters if 0 < float(row.get("moving", 1)) < 0.65]
+                if slow:
+                    description += (f" {len(slow)} wounded pawn(s) can still walk slowly; "
+                                    "the native route check decides reachability, and faster enemies may catch them.")
             if name in {"focus_fire", "hold_cover", "firing_line"} and any(
                 opponent_distance(row, 9999) <= 6 for row in ranged
             ):

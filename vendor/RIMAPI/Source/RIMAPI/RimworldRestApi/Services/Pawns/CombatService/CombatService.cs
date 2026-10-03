@@ -195,6 +195,8 @@ namespace RIMAPI.Services
                 Psycasts = PsychicAutomationHelper.GetPsycasts(pawn),
                 SocialSkill = pawn.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0,
                 MedicineSkill = pawn.skills?.GetSkill(SkillDefOf.Medicine)?.Level ?? 0,
+                MedicalTendQuality = pawn.GetStatValue(StatDefOf.MedicalTendQuality),
+                MedicalTendSpeed = pawn.GetStatValue(StatDefOf.MedicalTendSpeed),
                 ConstructionSkill = pawn.skills?.GetSkill(SkillDefOf.Construction)?.Level ?? 0,
                 AnimalsSkill = pawn.skills?.GetSkill(SkillDefOf.Animals)?.Level ?? 0,
                 IntellectualSkill = pawn.skills?.GetSkill(SkillDefOf.Intellectual)?.Level ?? 0,

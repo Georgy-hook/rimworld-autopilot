@@ -365,3 +365,10 @@ The user requested code fixes and a report while leaving RimWorld closed. No col
 - These are source/compile/behavioral-fixture checks, not positive game execution. Native model decision quality, actual operations, blight recovery, animal combat, greenhouse crops, runtime performance and the previous colony's survival blockers still need live validation. Startup NullReferenceException and reported short CPU spikes remain open.
 
 Detailed Russian audit: [Capabilities, 30 September](docs/playtests/Capabilities-2026-09-30.md).
+
+
+## Recovery run final outcome — 2026-10-03
+
+Nation of Kobutalora / Unhisda Nation, random tile 10268, Cassandra/Medium, dd28b1d: autonomous 08:30:45–09:19:29 UTC, ticks 1560–928750 (15.45 game days). Native Game Over: Yunxin BloodLoss, Dweeb PsychiteAddiction per native letter, Virgil LungRot; Barbara kidnapped. Zero colony population does not mean all former colonists died. Final save and logs preserved; game and runtime stopped.
+
+Integrated repairs cover clinical transition scheduling, guarded doctor reassignment, nonimmune lethal disease, actual sanitation jobs, shot/job continuity, weapon assignment churn, material-adjusted building costs and unaffordable bench recovery. Real-model replay exposed ordering bias and empty waiting; root attention facts, feasible overdue-shelter progress and a known-doctor Pareto frontier now bound these choices. 907 tests pass, native Release-1.6 build clean; API audit has no missing literal routes. Real CUDA replay selects construction in both option orders. These checks do not establish end-to-end survival or victory. [Detailed causal audit](docs/audits/recovery-root-causes-2026-10-03.md).

@@ -61,10 +61,16 @@ class RequaderCombatSequenceTests(unittest.TestCase):
             for now in range(100,108):
                 with patch('time.time',return_value=now):
                     bridge.run_cycle(client,StationaryAgent(),apply=True,confidence=0,log_path=Path(folder)/'log',combat_memory=memory,combat_signature=lambda _: 'stable')
-            self.assertEqual(2,len(client.posts))
+            # The wounded pawn can still walk. Once the attack is suppressed,
+            # this agent chooses the newly legal withdrawal; attack rejection
+            # must not suppress an escape order. Count the attempted tactics
+            # separately so the attack cooldown remains verified.
+            tactics = lambda: [kwargs['body']['tactic'] for _, kwargs in client.posts]
+            self.assertEqual(['stationary_fire'] * 2 + ['withdraw_and_regroup'] * 6, tactics())
             with patch('time.time',return_value=162):
                 bridge.run_cycle(client,StationaryAgent(),apply=True,confidence=0,log_path=Path(folder)/'log',combat_memory=memory,combat_signature=lambda _: 'stable')
-            self.assertEqual(3,len(client.posts))
+            self.assertEqual(3,tactics().count('stationary_fire'))
+            self.assertEqual(6,tactics().count('withdraw_and_regroup'))
             snap['combat']['hostiles'][0]['id']=5069
             snap['combat']['colonists'][0]['shootable_opponent_ids']=[5069]
             with patch('time.time',return_value=163):

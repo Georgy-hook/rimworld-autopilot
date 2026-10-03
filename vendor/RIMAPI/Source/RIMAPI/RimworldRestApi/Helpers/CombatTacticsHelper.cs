@@ -562,6 +562,11 @@ namespace RIMAPI.Helpers
                             float range = pawn.equipment?.Primary?.def?.Verbs?.FirstOrDefault()?.range ?? 0f;
                             if (CanShootTarget(pawn, pawn.Position, target))
                             {
+                                if (pawn.CurJob?.def == JobDefOf.AttackStatic && pawn.CurJob.targetA.Thing == target)
+                                {
+                                    result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                                    continue;
+                                }
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
                                 if (pawn.jobs.TryTakeOrderedJob(shot))
@@ -571,6 +576,11 @@ namespace RIMAPI.Helpers
                             IntVec3 firingCell;
                             if (TryFindFiringCell(pawn, target, out firingCell))
                             {
+                                if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell == firingCell)
+                                {
+                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                    continue;
+                                }
                                 Job move = JobMaker.MakeJob(JobDefOf.Goto, firingCell);
                                 move.playerForced = true;
                                 if (pawn.jobs.TryTakeOrderedJob(move))
@@ -585,6 +595,11 @@ namespace RIMAPI.Helpers
                             IntVec3 approach;
                             if (TryFindApproachCell(pawn, target, tactic, out approach))
                             {
+                                if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell == approach)
+                                {
+                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                    continue;
+                                }
                                 Job move = JobMaker.MakeJob(JobDefOf.Goto, approach);
                                 move.playerForced = true;
                                 if (pawn.jobs.TryTakeOrderedJob(move))
@@ -631,6 +646,11 @@ namespace RIMAPI.Helpers
                         if ((tactic == "withdraw_and_regroup" || tactic == "civilian_retreat")
                             && TryFindCoveredRetreatCell(pawn, nearestThreat, ref retreatPathAttempts, out IntVec3 coveredRetreat))
                         {
+                            if (pawn.CurJobDef == JobDefOf.Goto && pawn.CurJob.targetA.Cell == coveredRetreat)
+                            {
+                                result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                continue;
+                            }
                             Job regroup = JobMaker.MakeJob(JobDefOf.Goto, coveredRetreat);
                             regroup.playerForced = true;
                             if (pawn.jobs.TryTakeOrderedJob(regroup)) result.PositionedPawnIds.Add(pawn.thingIDNumber);
@@ -646,6 +666,11 @@ namespace RIMAPI.Helpers
                                 6f, tactic == "kite" ? 16f : tactic == "backstep_fire" ? 14f : float.MaxValue);
                         if (positionFound)
                         {
+                            if (pawn.CurJobDef == JobDefOf.Goto && pawn.CurJob.targetA.Cell == safe)
+                            {
+                                result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                continue;
+                            }
                             Job move = JobMaker.MakeJob(JobDefOf.Goto, safe);
                             move.playerForced = true;
                             if (pawn.jobs.TryTakeOrderedJob(move))

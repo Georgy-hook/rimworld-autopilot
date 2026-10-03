@@ -5,5 +5,6 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public int ProjectThingId { get; set; }
         public string ExpectedDefName { get; set; }
+        public string ReplacementStuffDefName { get; set; }
     }
 }

@@ -101,6 +101,33 @@ def decision_facts(state: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if value is not None and value != {}}
 
 
+def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | None = None) -> dict[str, Any]:
+    """Root comparisons get live needs before lossy, general context packing.
+
+    A shelter deficit used to survive fit_model_context but disappear from
+    decision_facts. The final action comparison consequently saw no shelter
+    deficit at all. Keep this small and ordered by immediate consequences.
+    """
+    dev = snapshot.get("development") or {}
+    people = snapshot.get("colonists") or []
+    resources = (snapshot.get("map") or {}).get("resources") or {}
+    sheltered = roofed_sleeping_places
+    facts = {
+        "threats": (snapshot.get("map") or {}).get("enemies", 0),
+        "downed": sum(bool(p.get("downed")) for p in people),
+        "people": len(people),
+        "unroofed_sleepers": max(0, len(people) - sheltered) if sheltered is not None else None,
+        "meals": resources.get("meals"),
+        "least_food_level": min((float(p["hunger"]) for p in people if p.get("hunger") is not None), default=1),
+        "pending_builds": len(dev.get("construction_projects") or []),
+        "building_now": sum(str(p.get("current_job") or "").lower().startswith(
+            ("construct", "build", "finishframe", "placeframe")) for p in people),
+        "outside_c": (dev.get("weather") or {}).get("temperature"),
+        "endgame": (dev.get("doctrine") or {}).get("endgame"),
+    }
+    return {key: value for key, value in facts.items() if value is not None}
+
+
 def outcome_summary(feedback: dict[str, Any]) -> str:
     if not feedback:
         return ""

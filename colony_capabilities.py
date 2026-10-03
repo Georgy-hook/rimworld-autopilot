@@ -51,6 +51,11 @@ def _prune(snapshot: dict[str, Any], memory: dict[str, Any]) -> None:
         if isinstance(key, str) and key in live and isinstance(value, dict) and type(value.get("map_id")) is int
         and value["map_id"] == map_id and type(value.get("tick")) is int
         and 0 <= value["tick"] <= tick and isinstance(value.get("guard"), str)}.items())[-512:])
+    assignments = memory.get("weapon_assignments") or {}
+    memory["weapon_assignments"] = dict(list({key: value for key, value in assignments.items()
+        if key in live and isinstance(value, dict) and value.get("map_id") == map_id
+        and type(value.get("tick")) is int and 0 <= value["tick"] <= tick
+        and isinstance(value.get("guard"), str)}.items())[-512:])
 
 
 def _scope(action: str, key: str) -> str:
@@ -201,7 +206,7 @@ def weapon_note(weapon: dict[str, Any]) -> str:
             f"condition {weapon.get('hit_points_percent')}")
 
 
-def weapon_tradeoff_note(current, alternative):
+def weapon_tradeoff_note(current, alternative, pawn=None):
     switch = ("loses ranged reach for melee; " if current.get("is_ranged") and not alternative.get("is_ranged") else
               "switches to ranged attacks; " if alternative.get("is_ranged") and not current.get("is_ranged") else "")
     differences = []
@@ -209,7 +214,41 @@ def weapon_tradeoff_note(current, alternative):
         left, right = current.get(field), alternative.get(field)
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             differences.append(f"{label} change {right-left:+.2f}")
-    return f"replaces {current.get('def_name') or 'unarmed'}; {switch}" + "; ".join(differences) + "; " + weapon_note(alternative)
+    origin, destination = (pawn or {}).get("position") or {}, alternative.get("position") or {}
+    travel = ((float(origin.get("x") or 0) - float(destination.get("x") or 0)) ** 2
+              + (float(origin.get("z") or 0) - float(destination.get("z") or 0)) ** 2) ** .5
+    cost = f"Fetch {travel:.0f} cells; interrupts work; replaces {current.get('def_name') or 'unarmed'}; "
+    return cost + switch + "; ".join(differences) + "; " + weapon_note(alternative)
+
+
+def _weapon_assignment_guard(snapshot, pawn):
+    """Ownership by this actor changes during Equip without changing its choices."""
+    fields = ("id", "def_name", "quality", "is_ranged", "is_weapon", "is_improvised", "range", "min_range",
+              "damage", "damage_def", "armor_penetration", "burst_shots", "warmup", "cooldown", "melee_dps",
+              "accuracy_touch", "accuracy_short", "accuracy_medium", "accuracy_long", "emp", "explosive", "incendiary")
+    inventory = {str(w["id"]): (0, tuple(w.get(k) for k in fields))
+                 for w in snapshot.get("combat", {}).get("available_weapons") or [] if w.get("id") is not None}
+    for owner in snapshot.get("combat", {}).get("colonists") or []:
+        weapon = owner.get("weapon_info") or {}
+        if weapon.get("id") is not None:
+            inventory[str(weapon["id"])] = (0 if owner.get("id") == pawn.get("id") else owner.get("id"),
+                                            tuple(weapon.get(k) for k in fields))
+    threats = sorted((str(h.get("kind_def")), str(h.get("weapon_def")), bool(h.get("is_mechanoid")),
+                      bool(h.get("is_insect")), float(h.get("armor_sharp") or 0) >= .5)
+                     for h in snapshot.get("combat", {}).get("hostiles") or []
+                     if not h.get("is_dead") and not h.get("is_downed"))
+    role = (pawn.get("shooting_skill"), pawn.get("melee_skill"), bool(pawn.get("has_shield_belt")),
+            pawn.get("can_fight"), tuple(float(pawn.get(k) or 0) < .65 for k in ("sight", "manipulation")),
+            (pawn.get("weapon_info") or {}).get("hit_points_percent") == 0,
+            pawn.get("combat_role"), (snapshot.get("doctrine") or {}).get("military"))
+    return repr((sorted(inventory.items()), role, threats))
+
+
+def _unarmed(pawn):
+    current = pawn.get("weapon_info") or {}
+    return (not pawn.get("weapon_def") and not current.get("def_name")
+            or current.get("is_improvised") is True or current.get("is_weapon") is False
+            or current.get("equippable") is False or current.get("hit_points_percent") == 0)
 
 
 def _weapon_guard(snapshot, plan):
@@ -266,7 +305,7 @@ def founder_weapon_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     plans = {}
     for key, plan in (dev.get("capability_plans", {}).get("improve_weapon_loadout") or {}).items():
         pawn = plan.get("pawn") or {}
-        if not pawn or pawn.get("has_ranged_weapon"):
+        if not pawn or not _unarmed(pawn) or pawn.get("current_job") == "Equip":
             continue
         weapons = {k: w for k, w in plan["weapons"].items() if w.get("is_ranged")}
         if weapons:
@@ -350,12 +389,32 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
             continue
         weapons = safe_weapons(snapshot, pawn)
         current = pawn.get("weapon_info") or {}
+        assignment = map_state["weapon_assignments"].get(str(pawn["id"]))
+        guard = _weapon_assignment_guard(snapshot, pawn)
+        if assignment:
+            if current.get("id") == assignment.get("target_id"):
+                if not assignment.get("confirmed"):
+                    assignment.update(confirmed=True, guard=guard)
+                if assignment["guard"] == guard:
+                    continue
+            elif assignment.get("confirmed"):
+                # A dropped/lost weapon needs a new choice even if the inventory is unchanged.
+                del map_state["weapon_assignments"][str(pawn["id"])]
+                assignment = None
+            elif assignment["guard"] == guard:
+                if int(snapshot["game"].get("tick") or 0) - assignment["tick"] < 15000:
+                    continue
+                # Retry the accepted assignment after native progress failed to appear.
+                # Do not turn a transport/job delay into a different weapon choice.
+                weapons = {key: value for key, value in weapons.items()
+                           if value.get("id") == assignment.get("target_id")}
         # Knowledge is complete; suppress repeated no-op exchanges for an equivalent gun.
         if weapons and (not pawn.get("weapon_def") or any(w.get("def_name") != pawn.get("weapon_def") or
                 weapon_score(pawn, w) > weapon_score(pawn, current) * 1.15 or
                 any(w.get(k) != current.get(k) for k in ("quality", "hit_points_percent", "damage", "armor_penetration", "melee_dps"))
                 for w in weapons.values())):
-            weapon_plans[str(pawn["id"])] = {"pawn": pawn, "weapons": weapons}
+            weapon_plans[str(pawn["id"])] = {"pawn": pawn, "weapons": weapons,
+                "previous_assignment": assignment, "assignment_guard": guard}
     if weapon_plans:
         for key, plan in list(weapon_plans.items()):
             deferred = map_state["weapon_deferred"].get(key)
@@ -479,10 +538,13 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
             return details, raw
         state = {"choice_context": {
             "fighter": {k: plans[key]["pawn"].get(k) for k in ("shooting_skill", "melee_skill", "distance_to_nearest_opponent", "weapon_def")},
+            "previous_assignment": {field: (plans[key].get("previous_assignment") or {}).get(field)
+                                    for field in ("target_id", "target_def", "previous_weapon_id",
+                                                  "previous_weapon_def", "confirmed")},
             "enemies": [{k: e.get(k) for k in ("kind_def", "armor_sharp", "is_mechanoid", "is_insect")}
                         for e in snapshot.get("combat", {}).get("hostiles") or [] if not e.get("is_dead")][:4]}, "colony": state}
-        if pick("weapon_item", "Choose a compatible weapon or keep current one. Compare range, quality, damage, accuracy and AP with pawn skills and enemies. Explosives risk friendly fire; EMP does not replace normal damage.", {
-                **{k: weapon_tradeoff_note(plans[key]["pawn"].get("weapon_info") or {}, w)
+        if pick("weapon_item", "Choose a compatible weapon or keep current one. Compare range, damage, accuracy and AP with pawn role and enemies, previous assignment and the walking/work cost of switching. Explosives risk friendly fire; EMP does not replace normal damage.", {
+                **{k: weapon_tradeoff_note(plans[key]["pawn"].get("weapon_info") or {}, w, plans[key]["pawn"])
                    for k, w in plans[key]["weapons"].items()},
                 "defer": "Keep current weapon: " + weapon_note(plans[key]["pawn"].get("weapon_info") or {})}) == "defer":
             details["weapon_defer"] = True
@@ -584,11 +646,30 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
         if selected.get("weapon_defer"):
             return {"applied": False, "reason": "laya_kept_current_loadouts", "selection": selected}
         plan = plans.get(str(selected.get("weapon_pawn")))
+        pawn = next((row for row in snapshot.get("combat", {}).get("colonists") or []
+                     if str(row.get("id")) == str(selected.get("weapon_pawn"))), None)
+        if pawn and str((pawn.get("weapon_info") or {}).get("id")) == str(selected.get("weapon_item")):
+            return {"applied": False, "reason": "weapon_already_equipped", "selection": selected}
+        if pawn and pawn.get("current_job") == "Equip":
+            return {"applied": False, "reason": "weapon_equip_in_progress", "selection": selected}
+        assignment = map_state.get("weapon_assignments", {}).get(str(selected.get("weapon_pawn")))
+        if pawn and assignment and assignment["guard"] == _weapon_assignment_guard(snapshot, pawn):
+            if assignment.get("confirmed") and (pawn.get("weapon_info") or {}).get("id") == assignment.get("target_id"):
+                return {"applied": False, "reason": "weapon_assignment_unchanged", "selection": selected}
+            if (not assignment.get("confirmed")
+                    and int(snapshot["game"].get("tick") or 0) - assignment["tick"] < 15000):
+                return {"applied": False, "reason": "weapon_assignment_pending", "selection": selected}
         weapon = plan and plan["weapons"].get(str(selected.get("weapon_item")))
         if not weapon:
             return {"applied": False, "reason": "No compatible weapon selected"}
         response = order("/api/v1/pawn/job", {"pawn_id": plan["pawn"]["id"], "job_def": "Equip", "target_thing_id": weapon["id"],
             "map_id": map_id, "allow_unforbid_equip": bool(weapon.get("is_forbidden"))})
+        if accepted(response):
+            map_state.setdefault("weapon_assignments", {})[str(plan["pawn"]["id"])] = {
+                "tick": int(snapshot["game"].get("tick") or 0), "map_id": map_id,
+                "target_id": weapon["id"], "previous_weapon_id": (plan["pawn"].get("weapon_info") or {}).get("id"),
+                "target_def": weapon.get("def_name"), "previous_weapon_def": plan["pawn"].get("weapon_def"),
+                "guard": _weapon_assignment_guard(snapshot, plan["pawn"]), "confirmed": False}
     if response is None:
         return {"applied": False, "reason": "No capability order prepared"}
     applied = accepted(response)

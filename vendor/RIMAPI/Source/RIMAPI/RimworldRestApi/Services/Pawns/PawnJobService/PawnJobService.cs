@@ -110,6 +110,22 @@ namespace RIMAPI.Services
                 {
                     job = JobMaker.MakeJob(jobDef, target);
                 }
+                // Ordered jobs need the same pickup counts as native workgivers.
+                // JobMaker's default -1 reached Toils_Ingest/Rescue in the failed
+                // run and logged invalid count warnings instead of a valid batch.
+                if (jobDef == JobDefOf.Ingest)
+                {
+                    Thing food = target.Thing;
+                    if (food == null || food.def.ingestible == null || !food.IngestibleNow)
+                        return ApiResult.Fail("ingest_target_not_edible");
+                    float nutrition = FoodUtility.GetNutrition(pawn, food, food.def);
+                    job.count = FoodUtility.WillIngestStackCountOf(pawn, food.def, nutrition);
+                    if (job.count <= 0) return ApiResult.Fail("ingest_no_food_required");
+                }
+                else if (jobDef == JobDefOf.Rescue)
+                {
+                    job.count = 1;
+                }
                 bool success = false;
                 try
                 {
@@ -191,7 +207,22 @@ namespace RIMAPI.Services
                 if (doctor.InMentalState || doctor.Drafted || doctor.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
                     || !doctor.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
                     return ApiResult.Fail("Selected doctor is not currently controllable for treatment");
-                if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
+                bool reassign = request.ReassignFromPatientId.HasValue;
+                if (reassign)
+                {
+                    Pawn oldPatient = doctor.CurJob?.targetA.Thing as Pawn;
+                    float rate = patient.health.hediffSet.BleedRateTotal;
+                    float blood = patient.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.BloodLoss)?.Severity ?? 0f;
+                    if (doctor.CurJobDef != JobDefOf.TendPatient || oldPatient == null
+                        || oldPatient.thingIDNumber != request.ReassignFromPatientId.Value || oldPatient == patient
+                        || oldPatient.health.hediffSet.BleedRateTotal > 0f
+                        || oldPatient.health.hediffSet.hediffs.Any(h => h.def != HediffDefOf.BloodLoss
+                            && (h.IsCurrentlyLifeThreatening || (h.TendableNow()
+                                && (h.TryGetComp<HediffComp_Immunizable>() != null || h.def.lethalSeverity > 0f))))
+                        || rate <= 0f || (1f-blood)*60000f/rate > 6000f)
+                        return ApiResult.Fail("Emergency reassignment requires a stable current tend patient and imminent untreated bleedout");
+                }
+                else if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
                     || doctor.CurJobDef == JobDefOf.FeedPatient)
                     return ApiResult.Fail("Selected doctor is already providing patient care");
                 if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))

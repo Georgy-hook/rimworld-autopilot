@@ -112,6 +112,39 @@ namespace RIMAPI.Controllers
                 await context.SendJsonResponse(ApiResult.Fail("Matching player construction project not found"));
                 return;
             }
+            if (!string.IsNullOrWhiteSpace(body.ReplacementStuffDefName))
+            {
+                ThingDef target = project.def.entityDefToBuild as ThingDef;
+                ThingDef stuff = DefDatabase<ThingDef>.GetNamedSilentFail(body.ReplacementStuffDefName);
+                if (target == null || stuff == null || !target.MadeFromStuff
+                    || !GenStuff.AllowedStuffsFor(target).Contains(stuff) || project.Stuff == stuff)
+                {
+                    await context.SendJsonResponse(ApiResult.Fail("Compatible different replacement material required"));
+                    return;
+                }
+                var placement = GenConstruct.CanPlaceBlueprintAt(target, project.Position, project.Rotation,
+                    map, false, project, null, stuff);
+                var costs = target.CostListAdjusted(stuff);
+                var reserved = map.listerThings.AllThings.Where(t => t != project && t.Faction == Faction.OfPlayer
+                    && (t is Blueprint || t is Frame)).OfType<IConstructible>().ToList();
+                bool budget = costs.All(cost => map.listerThings.AllThings.Where(t => t.def == cost.thingDef
+                    && !t.IsForbidden(Faction.OfPlayer) && !t.Position.Fogged(map)).Sum(t => t.stackCount)
+                    - reserved.Sum(t => System.Math.Max(0, t.ThingCountNeeded(cost.thingDef))) >= cost.count);
+                if (!placement.Accepted || !budget)
+                {
+                    await context.SendJsonResponse(ApiResult.Fail("Replacement placement or unreserved budget unavailable; original retained"));
+                    return;
+                }
+                var cell = project.Position;
+                var rotation = project.Rotation;
+                // The request is dispatched on RimApiServerProcess's main thread.
+                // Validate before cancellation; no yielded work between these mutations.
+                project.Destroy(DestroyMode.Cancel);
+                var replacement = GenConstruct.PlaceBlueprintForBuild(target, cell, map, rotation, Faction.OfPlayer, stuff);
+                await context.SendJsonResponse(ApiResult<object>.Ok(new { replaced_project_id = body.ProjectThingId,
+                    replacement_project_id = replacement?.thingIDNumber, completion = "unverified" }));
+                return;
+            }
             project.Destroy(DestroyMode.Cancel);
             await context.SendJsonResponse(ApiResult.Ok());
         }

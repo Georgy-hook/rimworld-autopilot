@@ -5,6 +5,8 @@ from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 
 DESCRIPTIONS = {
+    'resilience_shelter': 'Move a mobile colonist currently breathing rot stink to a verified clear completed bed away from corpse sources and rest there. The native bed rest job must reach the bed before exposure ends.',
+    'resilience_dispose_corpse': 'Carry one corpse away from occupied living areas with a verified native hauling or burial job and completed safe destination. Short corpse pickup exposure risks the hauler; removing the source reduces rot stink exposure. Watch the corpse move before considering disposal complete.',
     'resilience_tend': 'Schedule normal treatment with a feasible doctor and medicine selected by the game. Compare patient immunity/severity, treatment expiry and scarce medicine.',
     'resilience_rescue': 'Carry a downed patient to an available appropriate bed. Compare short rescuer exposure to fallout, gas, heat or cold against leaving the victim there; hostile routes remain excluded. Rescue is not treatment.',
     'resilience_feed': 'Feed a dependent patient using a normal doctor job; food and caregiver time are consumed.',
@@ -78,7 +80,7 @@ def _recent(record: dict, tick: int, delay: int) -> bool:
 
 def _active_targets(context):
     return {(row.get('kind'), row.get('target_id')) for row in context.get('active_orders') or []
-            if isinstance(row, dict) and row.get('kind') in {'feed', 'rescue'}}
+            if isinstance(row, dict) and row.get('kind') in {'feed', 'rescue', 'tend'}}
 
 
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
@@ -97,11 +99,12 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         map_state.pop('resilience_memory', None)
     options = {a: {} for a in ACTIONS}
     active = _active_targets(context)
+    active_hauls = {row.get('target_id') for row in context.get('active_orders') or [] if row.get('kind') == 'haul'}
     for row in context.get('options') or []:
         action = 'resilience_' + str(row.get('kind'))
         if action not in options:
             continue
-        if (row.get('kind'), row.get('target_id')) in active:
+        if (row.get('kind'), row.get('target_id')) in active or (row.get('kind') == 'dispose_corpse' and row.get('target_id') in active_hauls):
             continue
         subject = action + ':' + _subject(row)
         deferred = (memory.get('deferred') or {}).get(subject, {})
@@ -112,6 +115,7 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         key = ':'.join(str(row.get(k, '')) for k in ('worker_id', 'target_id', 'giver'))
         options[action][key] = row
     context['plans'] = options
+    snapshot['development']['sanitation_urgent'] = bool(options['resilience_dispose_corpse'] or options['resilience_shelter'])
     return [a for a, rows in options.items() if rows]
 
 def assess(action: str, snapshot: dict) -> dict:
@@ -144,6 +148,12 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         elif row['kind'] == 'temperature':
             clinical = f"Device {row['target_id']} target={row.get('giver')}C"
             exposure = f"Room={row.get('current_temperature')}C existing_target={row.get('current_target_temperature')}C power={row.get('power_on')}; insulation required"
+        elif row['kind'] == 'shelter':
+            clinical = f"{patient.get('name',row['target_id'])} currently in rot stink; rest in verified clear bed {row.get('giver')}"
+            exposure = 'Gas exposure persists during travel; clear bed and no nearby corpses checked; movement not yet completed'
+        elif row['kind'] == 'dispose_corpse':
+            clinical = f"Corpse {row.get('target', row['target_id'])} near living area; native completed destination verified"
+            exposure = 'Short pickup exposure; source removal reduces rot stink and lung rot risk; delivery remains pending'
         elif row['kind'] == 'clean':
             clinical = f"Filth {row['target_id']} cleanliness={row.get('room_cleanliness')}"
             exposure = 'Dirty room infection/food poison; not incident disease'
@@ -199,6 +209,7 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     try:
         fresh = collect(client, snapshot)
         if ((payload.get('kind'), payload.get('target_id')) in _active_targets(fresh)
+                or (payload.get('kind') == 'dispose_corpse' and any(row.get('kind') == 'haul' and row.get('target_id') == payload.get('target_id') for row in fresh.get('active_orders') or []))
                 or 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or [])):
             failed()
             return {'applied': False, 'reason': 'selection_no_longer_feasible'}

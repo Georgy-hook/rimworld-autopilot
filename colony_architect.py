@@ -755,6 +755,33 @@ def generate_program_variants(program: str, context: dict[str, Any], *, seed: in
     return result
 
 
+def effective_building_cost(building_def: dict[str, Any], material: str = "") -> dict[str, int]:
+    """Native adjusted costs include difficulty and stuff VolumePerUnit."""
+    native = building_def.get("effective_costs_by_stuff") or {}
+    rows = native.get(material) if isinstance(native, dict) else None
+    result: Counter[str] = Counter()
+    for row in rows if isinstance(rows, list) else building_def.get("cost_list") or []:
+        if row.get("thing_def"):
+            result[str(row["thing_def"])] += max(0, int(row.get("count") or 0))
+    if material and not isinstance(rows, list):
+        result[material] += max(0, int(building_def.get("cost_stuff_count") or 0))
+    return dict(result)
+
+
+def unreserved_construction_stock(development: dict[str, Any]) -> dict[str, int]:
+    """Projects report remaining requirements; frame-held materials are excluded."""
+    stock = {name: max(0, int(count or 0)) for name, count in (development.get("item_counts") or {}).items()}
+    seen = set()
+    for project in development.get("construction_projects") or []:
+        identity = project.get("thing_id")
+        if identity is not None and identity in seen: continue
+        if identity is not None: seen.add(identity)
+        for row in project.get("materials_needed") or []:
+            name = row.get("def_name")
+            if name: stock[name] = max(0, stock.get(name, 0) - max(0, int(row.get("required_count") or 0)))
+    return stock
+
+
 def estimated_stuff_cost(layout: dict[str, Any], building_catalog: list[dict[str, Any]]) -> dict[str, int]:
     """Estimate stuff, fixed ingredients and known floors before offering a plan."""
     index = catalog_index(building_catalog)
@@ -764,13 +791,10 @@ def estimated_stuff_cost(layout: dict[str, Any], building_catalog: list[dict[str
         definition = str(item.get("def_name") or "")
         catalog_row = index.get(definition) or {}
         material = str(item.get("stuff_def_name") or "")
-        if material:
-            amount = int(catalog_row.get("cost_stuff_count") or fallback.get(definition, 0))
-            cost[material] += max(0, amount)
-        for ingredient in catalog_row.get("cost_list") or []:
-            resource = str(ingredient.get("thing_def") or "")
-            if resource:
-                cost[resource] += max(0, int(ingredient.get("count") or 0))
+        if not catalog_row and material:
+            cost[material] += fallback.get(definition, 0)
+        else:
+            cost.update(effective_building_cost(catalog_row, material))
     floor_costs = {
         "WoodPlankFloor": {"WoodLog": 3},
         "MetalTile": {"Steel": 7},
@@ -1001,7 +1025,8 @@ def select_building_stuff(
     candidates = [preferred, "WoodLog", "Steel", "BlocksSandstone", "BlocksGranite", "BlocksLimestone", "BlocksSlate", "BlocksMarble", "Plasteel",
                   *sorted(item_counts, key=lambda name: -int(item_counts.get(name) or 0))]
     for name in dict.fromkeys(value for value in candidates if value):
-        if compatible(name) and int(item_counts.get(name) or 0) >= amount + reserve:
+        if (compatible(name) and all(int(item_counts.get(resource) or 0) >= count + (reserve if resource == name else 0)
+                                     for resource, count in effective_building_cost(building_def, name).items())):
             return name
     return None
 
@@ -1012,7 +1037,7 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
     The full catalog remains in the snapshot. Laya chooses a category, then an
     exact def; no hand-maintained list can silently omit a new DLC or mod bench.
     """
-    stock = development.get("item_counts") or {}
+    stock = unreserved_construction_stock(development)
     counts = development.get("building_counts") or {}
     options: dict[str, dict[str, dict[str, Any]]] = {}
     for row in development.get("building_catalog") or []:
@@ -1029,10 +1054,11 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
         materials: dict[str, str] = {}
         if stuff_count:
             for name in stock:
-                if int(stock.get(name) or 0) < stuff_count + fixed.get(name, 0):
+                costs = effective_building_cost(row, name)
+                if any(int(stock.get(resource) or 0) < count for resource, count in costs.items()):
                     continue
-                if select_building_stuff(row, {name: int(stock[name])}, name) == name:
-                    materials[name] = f"{stuff_count} {name}; stock {int(stock[name])}"
+                if select_building_stuff(row, stock, name) == name:
+                    materials[name] = f"{costs.get(name, 0)} {name}; full cost {costs}; unreserved stock {int(stock[name])}"
             if not materials:
                 continue
         name = str(row["def_name"])
@@ -1047,6 +1073,7 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
             "size_z": max(1, int(row.get("size_z") or 1)),
             "cost_list": dict(fixed),
             "cost_stuff_count": stuff_count,
+            "effective_costs_by_stuff": row.get("effective_costs_by_stuff") or {},
             "materials": materials,
             "requires_power": bool(row.get("requires_power")),
             "is_power_generator": bool(row.get("is_power_generator")),
@@ -1368,3 +1395,58 @@ def execute_legacy_hospital(client, snapshot, memory, layout, origin, terrain_re
         project.pop("failure_retry", None)
         return result
     return _project_failure(project, tick, result)
+
+
+def research_bench_repair_options(development: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    catalog = catalog_index(development.get("building_catalog") or [])
+    projects = development.get("construction_projects") or []
+    options = {}
+    stock = development.get("item_counts") or {}
+    for project in projects:
+        name = str(project.get("def_name") or "")
+        if name not in {"SimpleResearchBench", "HiTechResearchBench"} or not project.get("thing_id") or not project.get("position"):
+            continue
+        if not any(int(row.get("required_count") or 0) > int(stock.get(row.get("def_name")) or 0)
+                   for row in project.get("materials_needed") or []):
+            continue
+        row = catalog.get(name)
+        if not row or not row.get("available_now"): continue
+        remaining = {**development, "construction_projects": [other for other in projects if other.get("thing_id") != project["thing_id"]]}
+        plans = catalog_construction_options(remaining)
+        plan = next((group[name] for group in plans.values() if name in group), None)
+        if not plan: continue
+        for material, description in plan["materials"].items():
+            if material == project.get("stuff_def_name"): continue
+            key = f"{project['thing_id']}|{material}"
+            options[key] = {"project": copy.deepcopy(project), "material": material, "plan": plan,
+                "summary": f"Cancel only unfinished {name} #{project['thing_id']} at {project['position']}; "
+                           f"replace there with {description}. Refund/lost work is uncertain; existing bench not usable."}
+    return options
+
+
+def execute_research_bench_repair(client, snapshot, key, post_observed):
+    map_id = snapshot["map"]["id"]
+    projects = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
+    stock = Counter()
+    for thing in client.get("/api/v1/map/things", map_id=map_id):
+        if not thing.get("is_forbidden") and not thing.get("fogged") and not thing.get("is_fogged"):
+            stock[str(thing.get("def_name"))] += max(0, int(thing.get("stack_count") or 0))
+    fresh = {"construction_projects": projects, "item_counts": dict(stock),
+             "building_catalog": client.get("/api/v1/buildings/catalog")}
+    plan = research_bench_repair_options(fresh).get(key)
+    if not plan: return {"applied": False, "reason": "research_bench_repair_stale"}
+    project = plan["project"]
+    response = client.post("/api/v1/builder/projects/cancel", body={"map_id": map_id,
+        "project_thing_id": project["thing_id"], "expected_def_name": project["def_name"],
+        "replacement_stuff_def_name": plan["material"]})
+    observed = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
+    if any(row.get("thing_id") == project["thing_id"] for row in observed):
+        return {"applied": False, "reason": "research_bench_cancel_unobserved", "response": response}
+    replacement = next((row for row in observed if row.get("def_name") == project["def_name"]
+                        and row.get("stuff_def_name") == plan["material"]
+                        and row.get("position") == project["position"]
+                        and int(row.get("rotation") or 0) == int(project.get("rotation") or 0)), None)
+    return {"applied": replacement is not None, "reason": "research_bench_replacement_observed" if replacement else "research_bench_replacement_unobserved",
+            "response": response, "replaced_project_id": project["thing_id"],
+            "replacement_project_id": replacement.get("thing_id") if replacement else None,
+            "material": plan["material"], "completion": "unverified"}

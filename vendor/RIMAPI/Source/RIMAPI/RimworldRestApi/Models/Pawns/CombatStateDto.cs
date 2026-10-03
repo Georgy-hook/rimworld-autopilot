@@ -78,6 +78,8 @@ namespace RIMAPI.Models
         public List<PsycastDto> Psycasts { get; set; } = new List<PsycastDto>();
         public int SocialSkill { get; set; }
         public int MedicineSkill { get; set; }
+        public float MedicalTendQuality { get; set; }
+        public float MedicalTendSpeed { get; set; }
         public int ConstructionSkill { get; set; }
         public int AnimalsSkill { get; set; }
         public int IntellectualSkill { get; set; }

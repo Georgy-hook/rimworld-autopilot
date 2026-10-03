@@ -42,6 +42,11 @@ namespace RIMAPI.Helpers
                                 Count = cost.count,
                             }).ToList() ?? new List<ThingCostDto>(),
                         CostStuffCount = def.costStuffCount,
+                        EffectiveCostsByStuff = def.MadeFromStuff && Current.Game != null
+                            ? GenStuff.AllowedStuffsFor(def).ToDictionary(stuff => stuff.defName,
+                                stuff => def.CostListAdjusted(stuff).Select(cost => new ThingCostDto
+                                { ThingDef = cost.thingDef.defName, Count = cost.count }).ToList())
+                            : new Dictionary<string, List<ThingCostDto>>(),
                         StuffCategories = def.stuffCategories?
                             .Where(category => category != null)
                             .Select(category => category.defName).ToList() ?? new List<string>(),
