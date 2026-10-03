@@ -23,6 +23,12 @@ namespace RIMAPI.Helpers
             return new CombatWeaponDto {
                 Id = thing?.thingIDNumber ?? 0, DefName = def.defName, Label = thing?.LabelShortCap ?? def.label,
                 Description = def.description, IsRanged = def.IsRangedWeapon,
+                IsWeapon = def.IsWeapon,
+                // Native IsWeapon also includes resources with melee tools.
+                // Category/tags distinguish improvised items without changing
+                // the general catalog or excluding modded tagged weapons.
+                IsImprovised = def.IsWeapon && !def.IsRangedWeapon
+                    && !def.IsWithinCategory(ThingCategoryDefOf.Weapons) && def.weaponTags.NullOrEmpty(),
                 Equippable = def.equipmentType == EquipmentType.Primary,
                 IsForbidden = thing?.IsForbidden(Faction.OfPlayer) ?? false,
                 MarketValue = thing?.MarketValue ?? def.BaseMarketValue,

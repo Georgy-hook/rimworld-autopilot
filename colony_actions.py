@@ -1,6 +1,7 @@
 """Legacy action vocabulary; execution and observations live in domain modules."""
 
 ACTION_DESCRIPTIONS = {
+    "prepare_patient_bed": "Place a verified safe temporary sleeping spot for a dependent patient with no reachable completed bed. Rescue and feeding are separate subsequent steps; placement alone does not feed or treat them.",
     "repair_architecture": "Restore missing parts of one observed partial building at its original site. Keep its selected material, orientation and doors; compare remaining cost and labor against urgent work. Occupied conflicts require a new decision, and no demolition is included.",
     "plan_architecture": "Choose a needed building program first, then let Laya select one procedurally generated, resource- and technology-aware layout. Housing alone provides 24 varied designs without storing 24 rigid blueprints.",
     "build_catalog_building": "Choose any currently unlocked and affordable building from RimWorld's live catalog, including DLC and modded definitions. Laya selects its category, exact building and compatible material; the game checks the site before an order is placed.",
@@ -145,6 +146,7 @@ ACTION_LABELS = {
     "equip_colonists": "вооружить колонистов",
     "rescue_downed_colonist": "спасти упавшего колониста",
     "rescue_neutral_arrival": "спасти раненого гостя",
+    "prepare_patient_bed": "подготовить безопасное место для пациента",
     "tend_colonist": "лечить раненого колониста",
     "create_food_stockpile": "пищевой склад",
     "build_sleeping_spots": "спальные места",
@@ -260,6 +262,7 @@ ACTION_LABELS = {
 }
 
 ACTION_LABELS_EN = {
+    "prepare_patient_bed": "Prepare a patient sleeping spot",
     "plan_architecture": "Design a building", "unforbid_supplies": "Unforbid supplies",
     "build_catalog_building": "Choose a catalog building",
     "connect_power_consumer": "Connect a powered device",

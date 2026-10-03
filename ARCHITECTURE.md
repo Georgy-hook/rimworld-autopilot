@@ -10,6 +10,7 @@ The 0.0.7 candidate uses deterministic application code to project state and def
 | `colony_modules.py` | Seven registered domains and their collect/prepare/choose/execute/assess interface |
 | `colony_{production,society,progression,specialists,sustenance,resilience,affordances}.py` | Domain observations, typed options, fresh command validation |
 | `colony_retry.py` | Shared JSON-safe failure clocks; per-option policy stays in domain modules |
+| `colony_medical_recovery.py` | Native patient/helper eligibility, temporary-bed prerequisites, rescue/feed recovery focus and compact triage facts for the director |
 | `colony_sessions.py` | Pending native dialogs and world continuations |
 | `colony_expeditions.py` | Shared trade, raid and rescue preview, consequence cards and exact-plan confirmation |
 | Other `colony_*.py` | Construction, combat, strategy, capabilities, events and supporting policy; see module contracts for ownership |
@@ -84,7 +85,7 @@ Combat follows its own hierarchy:
 ```text
 verified hostile state
   -> feasible tactical templates
-  -> exact healthy roster
+  -> exact eligible roster (stationary shots retain injured but capable shooters)
   -> exact caster/psycast only for a psychic tactic
   -> RIMAPI live-map positioning and path validation
 ```

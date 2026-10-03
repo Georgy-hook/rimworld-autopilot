@@ -2,7 +2,8 @@
 
 The observer never orders pawns or changes Laya's decisions. Its only game
 writes are camera moves, zoom, an English death caption, and pacing at 3x
-outside a home fire, critical bleeding, dangerous disease, or an attack on a downed colonist,
+outside a home fire, critical bleeding, dangerous disease, starvation of a patient,
+or an attack on a downed colonist,
 when it slows to 1x.
 """
 
@@ -127,6 +128,23 @@ def _pause_if_colony_ended(api: Any, game: dict[str, Any], map_id: int) -> bool:
     return True
 
 
+def _critical_starvation(rows: Any) -> bool:
+    """Stopping bleeding does not make an unfed, immobile patient safe at 3x."""
+    for row in rows if isinstance(rows, list) else []:
+        details = row.get("detailes") or row
+        medical = details.get("medical_info") or details.get("colonist_medical_info") or {}
+        if medical.get("is_dead"):
+            continue
+        for condition in medical.get("hediffs") or []:
+            if str(condition.get("def_name") or "") != "Malnutrition":
+                continue
+            severity = float(condition.get("severity") or 0)
+            if condition.get("is_currently_life_threatening") or severity >= 0.5 or (
+                    medical.get("is_downed") and severity > 0):
+                return True
+    return False
+
+
 def _cause_text(raw: str | None, fallback: str | None = None) -> str:
     cause = str(raw or "").strip()
     if not cause or cause.lower() == "unknown":
@@ -134,7 +152,7 @@ def _cause_text(raw: str | None, fallback: str | None = None) -> str:
                 if fallback else "not reported by the game")
     labels = {
         "Bullet": "gunshot wounds", "Cut": "blade wounds", "Blunt": "blunt-force trauma",
-        "Flame": "fire", "Starvation": "starvation", "BloodLoss": "blood loss",
+        "Flame": "fire", "Starvation": "starvation", "Malnutrition": "malnutrition", "BloodLoss": "blood loss",
     }
     return labels.get(cause, re.sub(r"(?<=[a-z])(?=[A-Z])", " ", cause).replace("_", " ").lower())
 
@@ -142,12 +160,12 @@ def _cause_text(raw: str | None, fallback: str | None = None) -> str:
 def _critical_condition(conditions: list[str]) -> str | None:
     """Show a relevant last observation without calling an old scar the cause."""
     names = [str(condition) for condition in conditions]
-    for marker in ("bloodloss", "blood loss", "malnutrition", "infection", "heatstroke",
-                   "hypothermia", "toxic", "plague", "flu", "malaria", "disease"):
-        match = next((name for name in names if marker in name.lower()), None)
-        if match:
-            return match
-    return None
+    markers = ("bloodloss", "blood loss", "malnutrition", "infection", "heatstroke",
+               "hypothermia", "toxic", "plague", "flu", "malaria", "disease")
+    # Combat DTO strings have no severity. Do not rank residual blood loss above
+    # concurrent starvation and accidentally imply that it caused the death.
+    relevant = dict.fromkeys(name for name in names if any(marker in name.lower() for marker in markers))
+    return "; ".join(relevant)[:240] or None
 
 
 def parse_sse_event(event_type: str, data: str) -> dict[str, Any] | None:
@@ -166,8 +184,11 @@ def parse_sse_event(event_type: str, data: str) -> dict[str, Any] | None:
         pawn_id = int(pawn["id"])
     except (ValueError, TypeError):
         return None
-    return {"id": pawn_id, "name": str(pawn.get("name") or "Colonist"),
-            "cause": str(payload.get("cause") or "Unknown"), "ticks": payload.get("ticks")}
+    event = {"id": pawn_id, "name": str(pawn.get("name") or "Colonist"),
+             "cause": str(payload.get("cause") or "Unknown"), "ticks": payload.get("ticks")}
+    if payload.get("cause_source"):
+        event["cause_source"] = payload["cause_source"]
+    return event
 
 
 @dataclass
@@ -334,6 +355,10 @@ class ObserverPlanner:
             self.shown_deaths.add(int(event["id"]))
             caption = f"{event.get('name') or 'Colonist'} died\nCause: {_cause_text(event.get('cause'), event.get('fallback'))}"
             actions.extend(self._start("death", now, DEATH_SECONDS, position=event.get("position"), caption=caption))
+            # Keep structured evidence in observer.jsonl; captions alone lose
+            # the pawn ID, native tick and exact/unknown cause distinction.
+            actions[-1]["death"] = {key: event.get(key) for key in
+                ("id", "name", "cause", "cause_source", "ticks", "fallback")}
             return actions
 
         fighters = [pawn for pawn in colonists if _fighting(pawn, hostiles)]
@@ -414,9 +439,9 @@ class ObserverPlanner:
     def pacing_actions(self, game: dict[str, Any], now: float, *, home_fire: bool = False,
                        critical_bleeding: bool = False,
                        downed_under_attack: bool = False,
-                       critical_disease: bool = False) -> list[dict[str, Any]]:
+                       critical_disease: bool = False, critical_starvation: bool = False) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
-        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED
+        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED
         changed = target != self.last_requested_speed
         if game.get("is_paused"):
             if not changed and now - self.last_unpause < SPEED_RETRY_SECONDS:
@@ -550,6 +575,7 @@ def main() -> None:
     next_window_scan = 0.0
     next_medical_scan = 0.0
     critical_disease = False
+    critical_starvation = False
     outbox: queue.Queue[dict[str, Any]] = queue.Queue()
     DeathEventReader(args.api_url, outbox, stop).start()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -591,7 +617,9 @@ def main() -> None:
                                         and float(pawn.get("bleeding_rate") or 0) >= 1.5
                                         for pawn in combat.get("colonists") or [])
                 if now >= next_medical_scan:
-                    critical_disease = _critical_disease(api.request("/api/v2/colonists/detailed"))
+                    medical_rows = api.request("/api/v2/colonists/detailed")
+                    critical_disease = _critical_disease(medical_rows)
+                    critical_starvation = _critical_starvation(medical_rows)
                     next_medical_scan = now + MEDICAL_SCAN_SECONDS
                 downed_under_attack = _downed_under_attack(
                     combat.get("colonists") or [], combat.get("hostiles") or [])
@@ -612,7 +640,8 @@ def main() -> None:
                 actions = planner.pacing_actions(game, now, home_fire=home_fire,
                                                  critical_bleeding=critical_bleeding,
                                                  downed_under_attack=downed_under_attack,
-                                                 critical_disease=critical_disease) + actions
+                                                 critical_disease=critical_disease,
+                                                 critical_starvation=critical_starvation) + actions
                 if now >= next_window_scan:
                     windows = api.request("/api/v1/ui/windows") or []
                     actions.extend(window_closer.step(windows, now))
@@ -621,8 +650,9 @@ def main() -> None:
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
-                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease else TARGET_GAME_SPEED,
+                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED,
                           "critical_disease": critical_disease,
+                          "critical_starvation": critical_starvation,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}
                 # Mark the death spotlight before announcing it so Laya's HUD

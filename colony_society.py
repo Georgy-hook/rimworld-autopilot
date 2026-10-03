@@ -25,6 +25,7 @@ LABELS = {"society_medical_care": "допуск лекарств пациент�
 ACTIONS = set(DESCRIPTIONS)
 DOMAINS = {"society_medical_care": "care", "society_prisoner_policy": "economy_diplomacy", "society_free_time": "work_orders"}
 DOMAINS.update({a: 'care' for a in ACTIONS if a not in DOMAINS})
+DOMAINS.update({a: 'work_orders' for a in ('society_drug_policy', 'society_drug_entry')})
 LABELS.update({a: a.removeprefix('society_') for a in ACTIONS if a not in LABELS})
 CARE_JOBS = {"BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessonreceiving","TendPatient", "Rescue", "FeedPatient", "DoBill", "Deathrest", "Breastfeed", "BottlefeedBaby", "BringBabyToSafety", "Lessongiving", "PrisonerInterrogateIdentity"}
 NATIVE_FIELDS = ('kind', 'pawn_id', 'worker_id', 'target_id', 'letter_id', 'value')
@@ -68,6 +69,46 @@ def _clinical(row):
                  tuple(p.get('timetable') or []), p.get('medical_care'), p.get('prisoner_mode')))
 
 
+def drug_policy_relevant(person):
+    drugs = person.get('drugs') or {}
+    if (person.get('genes') or {}).get('dependencies'):
+        return True
+    conditions = drugs.get('conditions') or []
+    if any(any(term in str(h.get('def_name', '')).lower()
+               for term in ('addiction', 'dependency', 'withdrawal', 'luciferium', 'overdose')) for h in conditions):
+        return True
+    beliefs = {str(b).split(':', 1)[0] for b in person.get('beliefs') or []}
+    entries = drugs.get('entries') or []
+    recreational = any(e.get('allowed_joy') or e.get('scheduled') for e in entries)
+    if beliefs & {'DrugUse_Prohibited', 'DrugUse_Abhorrent', 'DrugUse_MedicalOnly'} and recreational:
+        return True
+    if 'DrugUse_Essential' in beliefs and not recreational:
+        return True
+    return False
+
+
+def elective_drug_policy(snapshot):
+    return not any(drug_policy_relevant(p) for p in
+                   snapshot.get('development', {}).get('society', {}).get('people') or [])
+
+
+def _drug_guard(action, person, context):
+    drugs = person.get('drugs') or {}
+    fields = ('drug', 'allowed_addiction', 'allowed_joy', 'scheduled', 'days', 'mood_below', 'joy_below', 'inventory')
+    policy_fields = ('drug', 'addiction', 'joy', 'scheduled', 'days', 'mood_below', 'joy_below', 'inventory')
+    entries = sorted((tuple(e.get(k) for k in fields), float(e.get('stock') or 0) > 0,
+                      e.get('scheduled_allowed')) for e in drugs.get('entries') or [])
+    conditions = sorted((str(h.get('def_name')), int(float(h.get('severity') or 0) * 4))
+                        for h in drugs.get('conditions') or [])
+    dependencies = sorted(str(g.get('chemical')) for g in (person.get('genes') or {}).get('dependencies') or [])
+    beliefs = sorted(str(b).split(':', 1)[0] for b in person.get('beliefs') or [] if str(b).startswith('DrugUse_'))
+    policies = sorted((str(p.get('id')), sorted(tuple(e.get(k) for k in policy_fields) for e in p.get('entries') or []))
+                      for p in context.get('drug_policies') or [])
+    offers = sorted(str(o.get('value')) for o in context.get('native_options') or []
+                    if 'society_' + str(o.get('kind')) == action and o.get('pawn_id') == person.get('pawn_id'))
+    return repr((drugs.get('policy_id'), entries, conditions, dependencies, beliefs, policies, offers))
+
+
 def _recent(record, tick, delay):
     return retry_recent(record, tick, delay)
 
@@ -102,6 +143,21 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             plans[action][key] = {**option, 'native': True, 'person': people.get(option.get('pawn_id'), {})}
     tick = int(snapshot.get("game", {}).get("tick") or 0)
     memory = map_state.get('society_memory') or {}
+    if not isinstance(memory, dict):
+        memory = {}
+        map_state.pop('society_memory', None)
+    semantic = memory.get('drug_deferred') or {}
+    if not isinstance(semantic, dict):
+        semantic = {}
+        memory['drug_deferred'] = semantic
+    live_people = {str(p.get('pawn_id')) for p in context.get('people') or []}
+    for subject, record in list(semantic.items()):
+        if (not isinstance(subject, str) or not subject.startswith(('society_drug_policy:', 'society_drug_entry:'))
+                or not isinstance(record, dict) or type(record.get('map_id')) is not int
+                or record['map_id'] != snapshot.get('map', {}).get('id')
+                or type(record.get('tick')) is not int or not 0 <= record['tick'] <= tick
+                or subject.split(':')[-1] not in live_people or not isinstance(record.get('state'), str)):
+            del semantic[subject]
     for bucket in ('issued', 'deferred', 'failed'):
         records = memory.get(bucket) or {}
         for key, record in list(records.items()):
@@ -115,6 +171,13 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         for key, row in list(rows.items()):
             subject = _subject(action, row)
             deferred = (memory.get('deferred') or {}).get(subject, {})
+            if action in {'society_drug_policy', 'society_drug_entry'}:
+                old = semantic.get(subject)
+                if old and old['state'] == _drug_guard(action, row.get('person') or {}, context):
+                    del rows[key]
+                    continue
+                if old:
+                    del semantic[subject]
             if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
                     or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == _clinical(row))
                     or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
@@ -263,10 +326,15 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     tick = int(snapshot.get('game', {}).get('tick') or 0)
     memory = map_state.setdefault('society_memory', {})
     if selected.get("defer"):
-        for row in (snapshot.get('development', {}).get('society', {}).get('options', {}).get(action) or {}).values():
+        context = snapshot.get('development', {}).get('society', {})
+        for row in (context.get('options', {}).get(action) or {}).values():
             if 'deferred_subjects' in selected and _subject(action, row) not in selected['deferred_subjects']:
                 continue
-            memory.setdefault('deferred', {})[_subject(action, row)] = {'tick': tick, 'state': _clinical(row)}
+            if action in {'society_drug_policy', 'society_drug_entry'}:
+                memory.setdefault('drug_deferred', {})[_subject(action, row)] = {
+                    'tick': tick, 'map_id': snapshot['map']['id'], 'state': _drug_guard(action, row.get('person') or {}, context)}
+            else:
+                memory.setdefault('deferred', {})[_subject(action, row)] = {'tick': tick, 'state': _clinical(row)}
         return {"applied": False, "reason": "laya_deferred"}
     live = collect(client, snapshot)
     fresh = {"map": snapshot["map"], "development": {"society": live}}

@@ -22,6 +22,8 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Requader founder losses and postmortem, 2026-10-03](audits/requader-postmortem-2026-10-03.md):
+  user-ended outcome, medical/development/combat failures and offline repair limits.
 - [Startup loop incident and sequence verification, 2026-10-03](audits/startup-loop-replay-2026-10-03.md):
   actual first-run failure, corrected contracts, model replay and launch gates.
 

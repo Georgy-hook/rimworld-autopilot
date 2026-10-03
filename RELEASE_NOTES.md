@@ -31,7 +31,16 @@ published installer or a claim of demonstrated autonomous victory. See the
   and execution plans. Added repeated-cycle fixtures, native active-job context,
   exact-target retry histories and nonmodal scheduler fallthrough. See the
   [2026-10-03 incident and verification](docs/audits/startup-loop-replay-2026-10-03.md);
-  the saved colony remains paused pending the next runtime validation.
+  the subsequent colony outcome is recorded in the playtest journal.
+- Following Requader's founder losses, added a verified temporary-bed, rescue and
+  feeding chain, controllable caregiver checks, blood-loss urgency context and
+  malnutrition emergency pacing. Optional weapon/drug deferrals now survive
+  unrelated state drift; observed starter construction enables an eligible builder.
+- Injured shooters retain verified stationary shots, traveling medical jobs are
+  distinguished from bedside care, and retreat can seek a covering ally through
+  a checked path. Native death events preserve the exact culprit where supplied.
+  These repairs have offline verification; no new colony was launched. See the
+  [Requader postmortem](docs/audits/requader-postmortem-2026-10-03.md).
 
 # 0.0.6 — construction coverage, fire response and colony survival
 

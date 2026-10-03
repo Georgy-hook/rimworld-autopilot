@@ -1,5 +1,23 @@
 # Resilience: patients and environmental survival
 
+## Bedside recovery after Requader (2026-10-03)
+
+`colony_medical_recovery.py` supplies the director's patient and helper choices
+from native Resilience options. A hungry downed human or animal without a usable
+bed can produce a temporary-bed prerequisite. Native bed search, reservations,
+route and actual food eligibility remain separate facts. The builder verifies a
+real site and placement; subsequent snapshots enable rescue and feeding. A spot
+alone does not rescue or feed anyone. Active jobs and bounded pending placement
+prevent repeated orders. Exact current-bed identity distinguishes occupied beds.
+
+Uncontrollable caregivers are rejected before selection and again natively.
+Emergency care may interrupt cleaning, while ongoing patient care is protected.
+Malnutrition remains urgent after bleeding stops. Triage includes blood already
+lost and an explicitly approximate constant-rate bleedout estimate, preserving
+other feasible patients. Native accepted jobs are scheduled, not cured patients.
+Permanent-tend conditions do not query the invalid treatment-overlap property.
+The [postmortem](../audits/requader-postmortem-2026-10-03.md) records verification limits.
+
 The module observes all spawned player colonists, prisoners and player animals, not just gunshot victims. Every visible hediff is described by its installed definition, affected part, severity, lethality threshold, bleeding, life threat, current tendability, immunity, current immunity gain, severity component rates, tend quality, treatment expiry and next treatment time. Thus infection, influenza, plague, malaria, sleeping sickness, gut worms, muscle parasites, food poisoning, toxic buildup, heatstroke, hypothermia, anesthesia, pain, pregnancy, blood loss and DLC health effects retain their different causes and recovery rules. Severity component rates are observations, not guaranteed time-to-death forecasts.
 
 Eleven real choices have live native feasibility checks and a Laya defer alternative:

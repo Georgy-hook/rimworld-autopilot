@@ -979,7 +979,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             )
         if not criteria:
             criteria = {
-                "hold_and_observe": "Keep civilians undrafted while monitoring the threat.",
+                "hold_and_observe": "No controllable fighter can currently execute a verified defense order; urgent care or reinforcements are required.",
             }
             if drafted:
                 criteria["prepare_undrafted"] = "Undraft exhausted or defenseless colonists so they can seek safety."
@@ -1661,9 +1661,10 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                     if not pawn.get("is_dead") and not pawn.get("is_downed")
                     and not pawn.get("is_in_mental_state") and pawn.get("can_fight", True)
                     and pawn.get("id") not in protected
-                    and pawn.get("has_ranged_weapon")
-                    and first_number(pawn.get("manipulation"), 1) >= 0.65
-                    and first_number(pawn.get("sight"), 1) >= 0.65]
+                    and combat_planner.ranged_capable(pawn)
+                    and first_number(pawn.get("moving"), 1) >= .65
+                    and first_number(pawn.get("manipulation"), 1) >= .65
+                    and first_number(pawn.get("sight"), 1) >= .65]
         active_ids = {int(pawn["id"]) for pawn in shooters}
         melee_commands, active_ids = melee_support_commands(snapshot, decision, active_ids, target_id)
         commands = combat_reserve_commands(snapshot, active_ids)
@@ -1678,6 +1679,25 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         return {"kind": "commands" if commands else "noop",
                 "description": f"Individual melee roles for {len(decision.get('melee_roles') or {})} fighter(s)",
                 "commands": commands}
+    if choice == "stationary_fire":
+        protected = combat_planner.protected_emergency_care_ids(snapshot)
+        hostiles = combat_planner.live_hostiles(snapshot)
+        commands = []
+        for pawn in snapshot['combat'].get('colonists') or []:
+            if (pawn.get('id') in protected or not combat_planner.ranged_capable(pawn)
+                    or not isinstance(pawn.get('shootable_opponent_ids'), list)): continue
+            visible = pawn.get('shootable_opponent_ids')
+            targets = [target for target in hostiles if not target.get('is_building')
+                       and (target.get('id') in visible if visible is not None else combat_planner.has_clear_shot(pawn, [target]))]
+            if not targets: continue
+            origin = pawn.get('position') or {}
+            target = min(targets, key=lambda row: (first_number((row.get('position') or {}).get('x')) - first_number(origin.get('x'))) ** 2
+                         + (first_number((row.get('position') or {}).get('z')) - first_number(origin.get('z'))) ** 2)
+            commands.append({'endpoint': '/api/v1/combat/tactic', 'body': {'map_id': snapshot['map']['id'],
+                'tactic': 'stationary_fire', 'fighter_ids': [int(pawn['id'])], 'target_pawn_id': int(target['id'])}})
+        if commands and resume_command: commands.append(resume_command)
+        return {'kind': 'commands', 'description': 'Fire without changing position', 'commands': commands} if commands else {
+            'kind': 'noop', 'description': 'No verified stationary shot remains'}
     if choice in combat_planner.TACTICS:
         protected = combat_planner.protected_emergency_care_ids(snapshot)
         choke_door_id = combat_planner.insect_choke_door(snapshot) if choice == "infestation_choke" else None
@@ -1701,7 +1721,9 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
         melee_tactics = {"melee_assault", "melee_hold_line", "screen_melee", "melee_block", "door_defense", "infestation_choke", "rush_ranged"}
         if choice in ranged_tactics:
-            fighters = [pawn for pawn in fighters if pawn.get("has_ranged_weapon") and first_number(pawn.get("manipulation"), 1) >= 0.65 and first_number(pawn.get("sight"), 1) >= 0.65]
+            fighters = [pawn for pawn in fighters if combat_planner.ranged_capable(pawn)
+                        and first_number(pawn.get('manipulation'), 1) >= .65 and first_number(pawn.get('sight'), 1) >= .65
+                        and first_number(pawn.get('moving'), 1) >= .65]
             if choice == "counter_snipe":
                 fighters = [pawn for pawn in fighters if first_number(pawn.get("weapon_range")) >= 30]
         elif choice in melee_tactics:
@@ -1766,9 +1788,10 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                                 if not pawn.get("is_dead") and not pawn.get("is_downed")
                                 and not pawn.get("is_in_mental_state") and pawn.get("can_fight", True)
                                 and pawn.get("id") not in protected
-                                and pawn.get("has_ranged_weapon")
-                                and first_number(pawn.get("manipulation"), 1) >= 0.65
-                                and first_number(pawn.get("sight"), 1) >= 0.65]
+                                and combat_planner.ranged_capable(pawn)
+                                and first_number(pawn.get("moving"), 1) >= .65
+                                and first_number(pawn.get("manipulation"), 1) >= .65
+                                and first_number(pawn.get("sight"), 1) >= .65]
             if covering_shooters and target_id is not None:
                 groups = [("focus_fire", covering_shooters)]
                 if choice == "infestation_choke":
@@ -2401,11 +2424,16 @@ def run_cycle(
         _combat_retry_prepare(snapshot, combat_memory, signature)
     decision = decide(agent, snapshot, confidence)
     action = plan_action(snapshot, decision)
+    if decision.get('choice') == 'hold_and_observe' and not combat_planner.available_tactics(snapshot) and combat_planner.live_hostiles(snapshot):
+        action = {'kind': 'noop', 'description': 'No controllable fighter can execute a verified defense order',
+                  'combat_unavailable': True, 'reason': 'no_controllable_fighter'}
     if combat_memory is not None and signature is not None:
         action = _combat_retry_filter_action(snapshot, decision, action)
     result = {"applied": False, "reason": "preview mode"}
     if apply:
         result = apply_action(client, action)
+        if action.get('combat_unavailable'):
+            result.update(combat_unavailable=True, blocked=True, reason=action['reason'])
         if combat_memory is not None and signature is not None:
             _combat_retry_record(combat_memory, signature, decision, action, result)
     record = {

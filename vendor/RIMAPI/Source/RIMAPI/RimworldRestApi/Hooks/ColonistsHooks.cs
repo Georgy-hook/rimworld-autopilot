@@ -270,7 +270,9 @@ namespace RimworldRestApi.Hooks
                             isColonist = __instance.IsColonist,
                             faction = __instance.Faction?.Name ?? "Unknown",
                         },
-                        cause = dinfo?.Def?.defName ?? "Unknown",
+                        cause = exactCulprit?.def?.defName ?? dinfo?.Def?.defName ?? "Unknown",
+                        cause_source = exactCulprit?.def != null ? "exact_culprit"
+                            : dinfo?.Def != null ? "damage_info" : "unknown",
                         ticks = Find.TickManager.TicksGame,
                     }
                 );

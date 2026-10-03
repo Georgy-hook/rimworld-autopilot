@@ -19,6 +19,8 @@ namespace RIMAPI.Models
     }
     public class ResilienceOptionDto
     {
+        public string PrerequisiteReason { get; set; }
+        public bool FoodFeasible { get; set; }
         public string Kind { get; set; }
         public int WorkerId { get; set; }
         public int TargetId { get; set; }
@@ -26,6 +28,8 @@ namespace RIMAPI.Models
         public string Worker { get; set; }
         public string Target { get; set; }
         public int MedicineSkill { get; set; }
+        public float? MedicalTendQuality { get; set; }
+        public float? MedicalTendSpeed { get; set; }
         public float? RoomCleanliness { get; set; }
         public float? CurrentTemperature { get; set; }
         public float? CurrentTargetTemperature { get; set; }

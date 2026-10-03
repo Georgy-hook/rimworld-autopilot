@@ -42,7 +42,7 @@ namespace RIMAPI.Helpers
                 }
 
                 if (!PositioningTactics.Contains(tactic) && !new[] { "melee_assault", "rush_ranged", "melee_hold_line", "lure_enemy",
-                    "preemptive_strike", "screen_melee", "guard_shooters", "psycast_control", "psycast_support" }.Contains(tactic))
+                    "preemptive_strike", "stationary_fire", "screen_melee", "guard_shooters", "psycast_control", "psycast_support" }.Contains(tactic))
                     return ApiResult<CombatTacticResponseDto>.Fail("Unknown combat tactic; no fighters drafted.");
                 List<Pawn> fighters = map.mapPawns.FreeColonistsSpawned
                     .Where(p => request.FighterIds.Contains(p.thingIDNumber) && !p.Dead && !p.Downed
@@ -58,6 +58,7 @@ namespace RIMAPI.Helpers
                         .FirstOrDefault();
                 if (target == null && tactic != "psycast_support" && tactic != "psycast_control")
                     return ApiResult<CombatTacticResponseDto>.Fail("No living active hostile target remains; no fighters drafted.");
+                int retreatPathAttempts = 0; // Shared by every selected fighter in this order.
                 var result = new CombatTacticResponseDto
                 {
                     Tactic = tactic,
@@ -187,6 +188,29 @@ namespace RIMAPI.Helpers
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
 
+                if (tactic == "stationary_fire")
+                {
+                    foreach (Pawn pawn in fighters)
+                    {
+                        Verb verb = pawn.equipment?.Primary?.TryGetComp<CompEquippable>()?.PrimaryVerb;
+                        if (!IsRanged(pawn) || pawn.WorkTagIsDisabled(WorkTags.Violent)
+                            || verb == null || !verb.Available() || !CanShootTarget(pawn, pawn.Position, target))
+                        {
+                            result.Notes.Add($"No current-position shot is available for {pawn.LabelShortCap}; no movement ordered.");
+                            continue;
+                        }
+                        // Repeated accepted defense must preserve an in-progress warmup.
+                        if (pawn.CurJob?.def == JobDefOf.AttackStatic && pawn.CurJob.targetA.Thing == target)
+                        {
+                            result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                            continue;
+                        }
+                        Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
+                        shot.playerForced = true;
+                        if (pawn.jobs.TryTakeOrderedJob(shot)) result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                    }
+                    return ApiResult<CombatTacticResponseDto>.Ok(result);
+                }
                 if (tactic == "preemptive_strike")
                 {
                     foreach (Pawn pawn in fighters)
@@ -604,6 +628,14 @@ namespace RIMAPI.Helpers
                                 pawn.jobs.StopAll();
                             continue;
                         }
+                        if ((tactic == "withdraw_and_regroup" || tactic == "civilian_retreat")
+                            && TryFindCoveredRetreatCell(pawn, nearestThreat, ref retreatPathAttempts, out IntVec3 coveredRetreat))
+                        {
+                            Job regroup = JobMaker.MakeJob(JobDefOf.Goto, coveredRetreat);
+                            regroup.playerForced = true;
+                            if (pawn.jobs.TryTakeOrderedJob(regroup)) result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                            continue;
+                        }
                         IntVec3 desired = DesiredCell(pawn, nearestThreat, defense, tactic, i, ordered.Count);
                         IntVec3 safe;
                         bool choke = tactic == "melee_block" || tactic == "door_defense" || tactic == "infestation_choke";
@@ -793,6 +825,59 @@ namespace RIMAPI.Helpers
             return new IntVec3(baseCell.x + dx * depth + sideX * centered * spacing, 0, baseCell.z + dz * depth + sideZ * centered * spacing);
         }
 
+        private static bool RetreatRouteSafe(Pawn pawn, PawnPath path)
+        {
+            List<Pawn> threats = pawn.Map.mapPawns.AllPawnsSpawned
+                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToList();
+            // Allow a first step out of existing contact and bends in a narrow
+            // escape route. Never route through a live threat or friendly trap.
+            return path.Found && path.NodesReversed.All(node => !HasFriendlyTrap(node, pawn.Map)
+                && !node.ContainsStaticFire(pawn.Map)
+                && threats.All(threat => node != threat.Position && node.DistanceToSquared(threat.Position)
+                    >= (node.DistanceToSquared(pawn.Position) <= 4
+                        ? Math.Min(4, pawn.Position.DistanceToSquared(threat.Position)) : 4)));
+        }
+
+        private static bool TryFindCoveredRetreatCell(Pawn pawn, Pawn threat, ref int pathAttempts, out IntVec3 result)
+        {
+            Map map = pawn.Map;
+            List<Pawn> covering = map.mapPawns.FreeColonistsSpawned
+                .Where(shooter => shooter != pawn && !shooter.Dead && !shooter.Downed && !shooter.InMentalState
+                    && !shooter.WorkTagIsDisabled(WorkTags.Violent) && IsRanged(shooter)
+                    && !CombatNativeHelper.Protected(shooter)
+                    && shooter.equipment.Primary.TryGetComp<CompEquippable>()?.PrimaryVerb?.Available() == true
+                    && CanShootTarget(shooter, shooter.Position, threat))
+                .OrderBy(shooter => shooter.Position.DistanceToSquared(pawn.Position)).Take(3).ToList();
+            foreach (Pawn shooter in covering)
+            {
+                IEnumerable<IntVec3> candidates = GenRadial.RadialCellsAround(pawn.Position, 8f, false)
+                    .Where(cell => cell.InBounds(map) && cell.Standable(map) && !cell.Fogged(map)
+                        && !cell.ContainsStaticFire(map) && !HasFriendlyTrap(cell, map)
+                        && !cell.GetThingList(map).OfType<Pawn>().Any()
+                        && cell.InHorDistOf(shooter.Position, 8f)
+                        && cell.DistanceToSquared(shooter.Position) + 4 < pawn.Position.DistanceToSquared(shooter.Position)
+                        && cell.DistanceToSquared(threat.Position) >= 36)
+                    .OrderBy(cell => cell.DistanceToSquared(shooter.Position))
+                    .ThenByDescending(cell => cell.DistanceToSquared(threat.Position));
+                foreach (IntVec3 cell in candidates)
+                {
+                    if (++pathAttempts > 16)
+                    {
+                        result = IntVec3.Invalid;
+                        return false;
+                    }
+                    PawnPath path = map.pathFinder.FindPathNow(pawn.Position, cell, pawn, null, PathEndMode.OnCell);
+                    bool safe = RetreatRouteSafe(pawn, path);
+                    path.ReleaseToPool();
+                    if (!safe) continue;
+                    result = cell;
+                    return true;
+                }
+            }
+            result = IntVec3.Invalid;
+            return false;
+        }
+
         private static bool TryFindGuardRegroupCell(Pawn pawn, Pawn shooter, Pawn threat, out IntVec3 result)
         {
             Map map = pawn.Map;
@@ -845,6 +930,8 @@ namespace RIMAPI.Helpers
                     continue;
                 PawnPath path = map.pathFinder.FindPathNow(pawn.Position, cell, pawn, null, PathEndMode.OnCell);
                 bool valid = path.Found && path.NodesReversed.All(node => !HasFriendlyTrap(node, map));
+                if (tactic == "withdraw_and_regroup" || tactic == "civilian_retreat")
+                    valid = valid && RetreatRouteSafe(pawn, path);
                 path.ReleaseToPool();
                 if (!valid) continue;
                 result = cell;

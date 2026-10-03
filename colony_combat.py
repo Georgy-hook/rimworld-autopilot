@@ -28,13 +28,50 @@ def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             if not row.get("is_dead") and not row.get("is_downed") and row.get("active_threat", True)]
 
 
+def care_at_bedside(row: dict[str, Any], snapshot: dict[str, Any]) -> bool | None:
+    """A queued medical job may still be walking across the map."""
+    if isinstance(row.get('care_at_bedside'), bool):
+        return row['care_at_bedside']
+    target = row.get('care_target_position')
+    patient_id = row.get('care_target_id')
+    if patient_id is None:
+        feeding = str(row.get('current_job') or '').casefold() in {'feedpatient', 'bottlefeedbaby'}
+        patient_id = row.get('current_job_target_id_b' if feeding else 'current_job_target_id')
+        if not feeding: target = target or row.get('current_job_target_position')
+    if not isinstance(target, dict):
+        target_row = next((p for p in snapshot.get('combat', {}).get('colonists', [])
+                           if p.get('id') == patient_id), {})
+        target = target_row.get('position')
+    origin = _cell(row); destination = _cell({'position': target}) if isinstance(target, dict) else None
+    if origin is None or destination is None:
+        return None  # Older snapshots without actual target facts retain protection.
+    return (origin[0] - destination[0]) ** 2 + (origin[1] - destination[1]) ** 2 <= 4
+
+
 def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
-    """Protect active treatment, rescue and dependent feeding from distant combat."""
-    colonists = (snapshot.get("combat") or {}).get("colonists") or []
-    return {int(row["id"]) for row in colonists
-            if row.get("id") is not None and not row.get("is_dead") and not row.get("is_downed")
-            and (str(row.get("current_job") or "").lower() in {"tendpatient", "rescue", "feedpatient", "dobill", "deathrest", "breastfeed", "bottlefeedbaby", "breastfeedcarrytomom", "bringbabytosafety", "bringbabytosafetyunforced", "carrytomomafterbirth", "babysuckle", "babyplay", "playstatic", "playwalking", "playtoys", "lessongiving", "lessonreceiving", "prisonerinterrogateidentity"})
-            and opponent_distance(row, 0) > 4}
+    """Protect safe bedside care; an exposed traveling doctor can defend."""
+    care_jobs = {'tendpatient', 'rescue', 'feedpatient', 'dobill', 'deathrest', 'breastfeed',
+                 'bottlefeedbaby', 'breastfeedcarrytomom', 'bringbabytosafety', 'bringbabytosafetyunforced',
+                 'carrytomomafterbirth', 'babysuckle', 'babyplay', 'playstatic', 'playwalking', 'playtoys',
+                 'lessongiving', 'lessonreceiving', 'prisonerinterrogateidentity'}
+    protected = set()
+    for row in (snapshot.get('combat') or {}).get('colonists') or []:
+        if (row.get('id') is None or row.get('is_dead') or row.get('is_downed')
+                or str(row.get('current_job') or '').lower() not in care_jobs or opponent_distance(row, 0) <= 4):
+            continue
+        bedside = care_at_bedside(row, snapshot)
+        if bedside is False and errand_exposed(snapshot, row.get('position')):
+            continue
+        protected.add(int(row['id']))
+    return protected
+
+
+def ranged_capable(row: dict[str, Any]) -> bool:
+    """Low capacity reduces accuracy; native weapon availability decides legality."""
+    if not row.get('has_ranged_weapon') or not row.get('can_fight', True): return False
+    if row.get('is_dead') or row.get('is_downed') or row.get('is_in_mental_state'): return False
+    if isinstance(row.get('ranged_attack_available'), bool): return row['ranged_attack_available']
+    return float(row.get('manipulation', 1)) > 0 and float(row.get('sight', 1)) > 0
 
 
 def is_kidnapper(row: dict[str, Any]) -> bool:
@@ -99,6 +136,11 @@ def errand_exposed(snapshot: dict[str, Any], destination: dict[str, Any] | None,
 # a friendly trap.  Keeping the catalogue here lets the model compare tactics
 # without making the low-level safety code part of its prompt.
 TACTICS: dict[str, dict[str, Any]] = {
+    "stationary_fire": {
+        "label": "Fire from the current position",
+        "description": "Shoot a native verified target without approaching or relocating; a wounded shooter risks remaining exposed.",
+        "tags": {"ranged", "defense"},
+    },
     "hold_cover": {
         "label": "Hold strong cover",
         "description": "Use nearby walls, barricades, sandbags or shelves and make the enemy cross open ground.",
@@ -307,6 +349,12 @@ def hostile_is_preparing(row: dict[str, Any]) -> bool:
         return False
     if job == "goto" or any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
         return False
+    animal = row.get('is_animal') is True or (row.get('is_animal') is None and
+        str(row.get('kind_def') or '').casefold() in {'rat', 'yorkshireterrier', 'squirrel', 'hare', 'tortoise', 'iguana', 'raccoon'})
+    if row.get('is_in_mental_state') and row.get('is_hostile'):
+        return False
+    if animal:
+        return False
     hive_guard = "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
     return hive_guard or any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
         token in lord_toil for token in ("stage", "siege")
@@ -422,7 +470,10 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     hostile_text = [_text(row) for row in hostiles]
     hostile_jobs = " ".join(hostile_text)
     defenses = _defense_types(snapshot)
-    ranged = [row for row in fighters if row.get("has_ranged_weapon") and float(row.get("manipulation", 1)) >= 0.65 and float(row.get("sight", 1)) >= 0.65]
+    stationary = [row for row in fighters if ranged_capable(row)
+                  and isinstance(row.get("shootable_opponent_ids"), list) and has_clear_shot(row, hostiles)]
+    ranged = [row for row in fighters if ranged_capable(row) and float(row.get('manipulation', 1)) >= .65
+              and float(row.get('sight', 1)) >= .65 and float(row.get('moving', 1)) >= .65]
     armed_melee = [row for row in fighters if row.get("weapon_def") and not row.get("has_ranged_weapon")
                    and float(row.get("moving", 1)) >= 0.65]
     melee = [row for row in armed_melee if int(row.get("melee_skill") or 0) >= 5
@@ -442,6 +493,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
                          and opponent_distance(row, 9999) <= 18]
     contact = [row for row in ranged if opponent_distance(row, 9999) <= 2]
     names: list[str] = ["hold_cover"] if ranged and len(contact) < len(ranged) else []
+    if any(row not in ranged for row in stationary): names.append("stationary_fire")
     if armed_melee:
         names += ["melee_assault", "melee_hold_line"]
         if len(armed_melee) >= 2:

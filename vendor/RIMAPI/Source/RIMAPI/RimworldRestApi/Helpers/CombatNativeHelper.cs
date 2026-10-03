@@ -12,9 +12,45 @@ namespace RIMAPI.Helpers
     {
         private static readonly HashSet<string> Care=new HashSet<string>{"TendPatient","Rescue","FeedPatient","DoBill","Deathrest","Breastfeed","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafety","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessongiving","Lessonreceiving","PrisonerInterrogateIdentity"};
         public static bool HasCareJob(Pawn pawn) => Care.Contains(pawn.CurJobDef?.defName ?? "");
-        public static bool Protected(Pawn pawn) => HasCareJob(pawn)
-            && !pawn.Map.mapPawns.AllPawnsSpawned.Any(e=>!e.Dead && !e.Downed && e.HostileTo(Faction.OfPlayer) && e.Position.InHorDistOf(pawn.Position,4f))
-            && !pawn.Map.listerBuildings.allBuildingsNonColonist.Any(b=>b is Building_Turret && b.HostileTo(Faction.OfPlayer) && b.Position.InHorDistOf(pawn.Position,4f));
+        public static Thing CareTarget(Pawn pawn)
+        {
+            Job job = pawn.CurJob;
+            if (job == null || !HasCareJob(pawn)) return null;
+            if (job.def == JobDefOf.FeedPatient) return job.targetB.Thing;
+            string name = job.def.defName;
+            if (name.IndexOf("Baby", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("Breastfeed", StringComparison.OrdinalIgnoreCase) >= 0)
+                return pawn.carryTracker?.CarriedThing as Pawn ?? job.targetA.Thing as Pawn
+                    ?? job.targetB.Thing as Pawn ?? job.targetC.Thing as Pawn;
+            return job.targetA.Thing;
+        }
+        public static bool CareAtBedside(Pawn pawn)
+        {
+            if (!HasCareJob(pawn)) return false;
+            if (pawn.carryTracker?.CarriedThing is Pawn) return true;
+            Thing target = CareTarget(pawn);
+            if (target != null && target.Spawned && target.Map == pawn.Map)
+                return pawn.Position.InHorDistOf(target.Position, 2f);
+            return (pawn.CurJobDef?.defName ?? "") == "Deathrest";
+        }
+        public static bool Protected(Pawn pawn)
+        {
+            if (!HasCareJob(pawn)) return false;
+            List<Pawn> threats = pawn.Map.mapPawns.AllPawnsSpawned
+                .Where(e => !e.Dead && !e.Downed && e.HostileTo(Faction.OfPlayer)).ToList();
+            if (threats.Any(e => e.Position.InHorDistOf(pawn.Position, 4f))) return false;
+            if (pawn.Map.listerBuildings.allBuildingsNonColonist.Any(b => ActiveStructure(b)
+                && b.Position.InHorDistOf(pawn.Position, 4f))) return false;
+            // A TendPatient job can still be traveling to a remote patient. Let
+            // an exposed traveling doctor defend; keep actual bedside care.
+            if (!CareAtBedside(pawn) && (threats.Any(e => e.Position.InHorDistOf(pawn.Position,
+                Math.Max(22f, Math.Min(55f, (e.equipment?.Primary?.def?.Verbs?.FirstOrDefault()?.range ?? 0f) + 8f))))
+                || pawn.Map.listerBuildings.allBuildingsNonColonist.Any(b => ActiveStructure(b)
+                    && b.Position.InHorDistOf(pawn.Position,
+                        Math.Max(22f, Math.Min(55f, (b.def.Verbs?.FirstOrDefault()?.range ?? 0f) + 8f))))))
+                return false;
+            return true;
+        }
         public static bool Kidnapper(Pawn pawn) => pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer
             && (pawn.CurJobDef?.defName.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0 || pawn.GetLord()?.LordJob?.GetType().Name.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0);
         public static bool ActiveStructure(Thing thing) => thing is Building_Turret turret && !thing.Destroyed && thing.HostileTo(Faction.OfPlayer)

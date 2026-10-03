@@ -1,0 +1,1387 @@
+{
+  "fixture_source": {
+    "file": "final-ended-by-user-20261003-snapshot.json",
+    "captured_at": "2026-10-03T07:36:37.957873+00:00",
+    "note": "Selected fields of actual final Nanda state; native classification fields absent in captured API."
+  },
+  "game": {
+    "tick": 494099,
+    "wealth": 15651.6875,
+    "colonist_count": 1,
+    "storyteller": "Cassandra",
+    "is_paused": true,
+    "date": "9th of Aprimay, 5500, 11h"
+  },
+  "map": {
+    "id": 0,
+    "resources": {
+      "food": 31,
+      "meals": 31,
+      "raw_food": 0,
+      "nutrition": 27.9,
+      "nutrition_rotting_soon": 0.0,
+      "medicine": 38,
+      "weapons": 10
+    },
+    "enemies": 0
+  },
+  "colonists": [
+    {
+      "id": 22839,
+      "name": "Nanda",
+      "health": 1.0,
+      "downed": false,
+      "current_job": "Clean",
+      "is_drafted": null,
+      "in_mental_state": false,
+      "work_priorities": {
+        "Cooking": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Construction": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Growing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "priority": 0,
+          "disabled": false
+        },
+        "PlantCutting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Smithing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Tailoring": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Art": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Crafting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "BasicWorker": {
+          "priority": 1,
+          "disabled": false
+        },
+        "Hunting": {
+          "priority": 1,
+          "disabled": false
+        },
+        "Firefighter": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Patient": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Doctor": {
+          "priority": 3,
+          "disabled": false
+        },
+        "PatientBedRest": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Warden": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Handling": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Hauling": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Cleaning": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Research": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Childcare": {
+          "priority": 3,
+          "disabled": false
+        },
+        "DarkStudy": {
+          "priority": 3,
+          "disabled": false
+        }
+      },
+      "skills": {
+        "Shooting": {
+          "level": 11,
+          "passion": 1,
+          "disabled": false
+        },
+        "Melee": {
+          "level": 12,
+          "passion": 2,
+          "disabled": false
+        },
+        "Construction": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Plants": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Animals": {
+          "level": 4,
+          "passion": 1,
+          "disabled": false
+        },
+        "Crafting": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Artistic": {
+          "level": 2,
+          "passion": 1,
+          "disabled": false
+        },
+        "Medicine": {
+          "level": 2,
+          "passion": 0,
+          "disabled": false
+        },
+        "Social": {
+          "level": 8,
+          "passion": 1,
+          "disabled": false
+        },
+        "Intellectual": {
+          "level": 4,
+          "passion": 1,
+          "disabled": false
+        }
+      },
+      "health_conditions": []
+    }
+  ],
+  "animals": [],
+  "combat": {
+    "colonists": [
+      {
+        "id": 22839,
+        "name": "Nanda",
+        "is_dead": false,
+        "is_downed": false,
+        "is_in_mental_state": false,
+        "is_drafted": false,
+        "position": {
+          "x": 122,
+          "y": 0,
+          "z": 153
+        },
+        "shooting_skill": 11,
+        "melee_skill": 12,
+        "weapon_def": "Gun_BoltActionRifle",
+        "weapon_info": {
+          "id": 5062,
+          "def_name": "Gun_BoltActionRifle",
+          "label": "Bolt-action rifle (normal 89%)",
+          "is_ranged": true,
+          "is_forbidden": false,
+          "market_value": 250.0,
+          "position": {
+            "x": 217,
+            "y": 0,
+            "z": 142
+          },
+          "range": 36.9,
+          "min_range": 0.0,
+          "damage": 18.0,
+          "damage_def": "Bullet",
+          "armor_penetration": 0.269999981,
+          "burst_shots": 1,
+          "warmup": 1.7,
+          "cooldown": 1.5,
+          "accuracy_touch": 0.65,
+          "accuracy_short": 0.8,
+          "accuracy_medium": 0.9,
+          "accuracy_long": 0.8,
+          "melee_dps": 4.5,
+          "quality": 2,
+          "equippable": true,
+          "explosive": false,
+          "incendiary": false,
+          "emp": false,
+          "single_use": false,
+          "description": "An ancient pattern bolt-action rifle. With its long range, and low fire rate, it is unlikely to drive animals to revenge, which makes it a favorite weapon for hunting.",
+          "hit_points_percent": 0.89
+        },
+        "has_shield_belt": false,
+        "has_ranged_weapon": true,
+        "current_job": "Clean",
+        "can_fight": true,
+        "moving": 1.0,
+        "sight": 1.0,
+        "manipulation": 1.0
+      }
+    ],
+    "hostiles": [],
+    "available_weapons": [
+      {
+        "id": 5064,
+        "def_name": "MeleeWeapon_Knife",
+        "label": "Plasteel knife (normal 89%)",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 275.0,
+        "position": {
+          "x": 145,
+          "y": 0,
+          "z": 105
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 8.975647,
+        "quality": 2,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          22839
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "One of mankind's oldest manufactured objects. The knife has taken many forms, but the concept has always remained the same: A handle for holding and a sharp edge for cutting.",
+        "hit_points_percent": 0.8857143
+      },
+      {
+        "id": 22847,
+        "def_name": "Gun_Revolver",
+        "label": "Revolver (good 80%)",
+        "is_ranged": true,
+        "is_forbidden": false,
+        "market_value": 141.041672,
+        "position": {
+          "x": 212,
+          "y": 0,
+          "z": 139
+        },
+        "range": 25.9,
+        "min_range": 0.0,
+        "damage": 12.0,
+        "damage_def": "Bullet",
+        "armor_penetration": 0.179999992,
+        "burst_shots": 1,
+        "warmup": 0.3,
+        "cooldown": 1.6,
+        "accuracy_touch": 0.880000055,
+        "accuracy_short": 0.825000048,
+        "accuracy_medium": 0.605,
+        "accuracy_long": 0.440000027,
+        "melee_dps": 4.95000029,
+        "quality": 3,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          22839
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "An ancient pattern double-action revolver. It's not very powerful, but has a decent range for a pistol and is quick on the draw.",
+        "hit_points_percent": 0.8
+      },
+      {
+        "id": 5085,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 132,
+          "y": 0,
+          "z": 120
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          22839
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 0.9266667
+      }
+    ]
+  },
+  "development": {
+    "building_counts": {
+      "SleepingSpot": 1,
+      "ButcherSpot": 1
+    },
+    "buildings": [
+      {
+        "id": 23523,
+        "def": "SleepingSpot",
+        "label": "sleeping spot",
+        "position": {
+          "x": 147,
+          "y": 0,
+          "z": 125
+        },
+        "rotation": 0,
+        "size": {
+          "x": 1,
+          "y": 0,
+          "z": 2
+        },
+        "requires_power": false,
+        "power_on": false,
+        "type": "Building_Bed",
+        "medical": false,
+        "for_prisoners": false,
+        "requires_fuel": false,
+        "auto_refuel": false
+      },
+      {
+        "id": 23927,
+        "def": "ButcherSpot",
+        "label": "butcher spot",
+        "position": {
+          "x": 165,
+          "y": 0,
+          "z": 124
+        },
+        "rotation": 0,
+        "size": {
+          "x": 1,
+          "y": 0,
+          "z": 1
+        },
+        "requires_power": false,
+        "power_on": false,
+        "type": "Building_WorkTable",
+        "medical": false,
+        "for_prisoners": false,
+        "requires_fuel": false,
+        "auto_refuel": false
+      }
+    ],
+    "rooms": [],
+    "construction_projects": [],
+    "weather": {
+      "weather": "Clear",
+      "temperature": 28.0477753,
+      "growth_season_now": true,
+      "day_of_year": 9,
+      "quadrum": "Aprimay",
+      "current_twelfth": "Second",
+      "next_twelfth_average_temperatures": [
+        29.5703411,
+        32.50272,
+        34.09462,
+        33.9194946
+      ]
+    },
+    "item_counts": {
+      "WoodLog": 300
+    },
+    "plant_catalog": {
+      "biome": "AridShrubland",
+      "day_of_year": 9,
+      "plants": [
+        {
+          "def_name": "Plant_Rice",
+          "label": "rice plant",
+          "description": "A short, fast-growing crop that yields small edible grains. Its great nutritional output and ease of cultivation has made it the economic core of many great civilizations. While rice grows quickly, it is sensitive to soil fertility and will not fare well in poor soil.",
+          "category": "food",
+          "harvested_thing": "RawRice",
+          "harvest_yield": 6.0,
+          "product_nutrition": 0.05,
+          "human_edible_product": true,
+          "grow_days": 3.0,
+          "calendar_days_at_normal_fertility": 5.4545455,
+          "fertility_min": 0.7,
+          "fertility_sensitivity": 1.0,
+          "min_growth_temperature": 0.0,
+          "max_growth_temperature": 58.0,
+          "grow_min_glow": 0.51,
+          "dies_to_light": false,
+          "requires_permanent_darkness": false,
+          "dies_if_leafless": true,
+          "blightable": true,
+          "pollution": "CleanOnly",
+          "minimum_skill": 0,
+          "sowable": true,
+          "native_in_biome": false,
+          "biome_allowed": true,
+          "research_unlocked": true,
+          "sow_tags": [
+            "Ground",
+            "Hydroponic"
+          ],
+          "research_prerequisites": []
+        }
+      ],
+      "growers": [
+        {
+          "id": "new_ground",
+          "kind": "new_ground",
+          "allow_sow": true,
+          "roofed": false,
+          "powered": true,
+          "plant_count": 6,
+          "cell_count": 49,
+          "blighted_count": 0,
+          "point_a": {
+            "x": 148,
+            "y": 0,
+            "z": 161
+          },
+          "point_b": {
+            "x": 154,
+            "y": 0,
+            "z": 167
+          },
+          "options": [
+            {
+              "def_name": "Plant_Rice",
+              "legal_cells": 47,
+              "temperate_cells": 47,
+              "light_suitable_cells": 47,
+              "fertility": 1.0,
+              "temperature": 28.0130234,
+              "calendar_days_to_harvest_estimate": 5.4545455,
+              "outdoor_warm_days_estimate": 57.0,
+              "safe_sowing_now": true,
+              "reason": "estimated_viable; cold snaps, heat, light and pollution can still stop growth"
+            }
+          ]
+        }
+      ]
+    },
+    "plants": [],
+    "augmentation_context": {},
+    "society": {
+      "people": [
+        {
+          "pawn_id": 22839,
+          "name": "Nanda",
+          "needs": [
+            {
+              "def_name": "Mood",
+              "level": 0.8078125,
+              "description": "Mood represents how happy or stressed someone is. If mood gets too low, the person may suffer a mental break. Depending on how low their mood is, someone who has a mental break may have a minor breaks like hiding in their room for a day, or a major break like going on a murder spree."
+            },
+            {
+              "def_name": "Food",
+              "level": 0.583999157,
+              "description": "Food is the amount of nutrition a creature has consumed recently. If it is at zero, a creature will become increasingly malnourished and eventually die."
+            },
+            {
+              "def_name": "Rest",
+              "level": 0.6698741,
+              "description": "Sleep is how much time a creature has spent sleeping recently. If it is at zero, a creature will eventually fall asleep on the spot."
+            },
+            {
+              "def_name": "Joy",
+              "level": 0.324771464,
+              "description": "Recreation is the need to have fun. Repeating the same kind of activity makes it less fun, so variety is necessary."
+            },
+            {
+              "def_name": "Beauty",
+              "level": 0.38020584,
+              "description": "Beauty reflects how visually pleasing a person has found their surroundings recently. Beautiful things like art improve beauty when viewed, while ugly things like filth and rough stone surfaces reduce it."
+            },
+            {
+              "def_name": "Comfort",
+              "level": 0.06639946,
+              "description": "Comfort is gained by sitting in or sleeping on comfortable furniture. It is acquired while laying in bed, sitting in a chair while working, or other times."
+            },
+            {
+              "def_name": "Outdoors",
+              "level": 1.0,
+              "description": "Outdoors expresses the need not to be cooped up inside. It is harmed by long periods inside, especially underground. It improves when someone spends time under the sky, especially outdoors. It's not about the size of the rooms, but the need to be outside from time to time. Lack of outdoors time is a significant challenge for people who dwell in underground bases."
+            },
+            {
+              "def_name": "DrugDesire",
+              "level": 0.5,
+              "description": "Chemical expresses the desire to ingest drugs. When above a certain level it will create good mood, but when below a certain level it will create increasingly bad mood."
+            },
+            {
+              "def_name": "RoomSize",
+              "level": 1.0
+            }
+          ],
+          "drugs": {
+            "policy_id": 1,
+            "policy": "Social drugs",
+            "traits": [
+              "DislikesWomen"
+            ],
+            "conditions": [],
+            "entries": [
+              {
+                "drug": "Beer",
+                "allowed_addiction": false,
+                "allowed_joy": true,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "SmokeleafJoint",
+                "allowed_addiction": false,
+                "allowed_joy": true,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "Ambrosia",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "Yayo",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "Flake",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "PsychiteTea",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "GoJuice",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "WakeUp",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 10,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "Penoxycyline",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "Luciferium",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "VoidsightSerum",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "MetalbloodSerum",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "JuggernautSerum",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              },
+              {
+                "drug": "MindNumbSerum",
+                "allowed_addiction": true,
+                "allowed_joy": false,
+                "scheduled": false,
+                "days": 1.0,
+                "mood_below": 1.0,
+                "joy_below": 1.0,
+                "inventory": 0,
+                "stock": 0,
+                "scheduled_allowed": false
+              }
+            ]
+          },
+          "genes": {
+            "dependencies": []
+          },
+          "beliefs": [],
+          "current_job": "Clean"
+        }
+      ],
+      "native_options": [
+        {
+          "kind": "drug_policy",
+          "pawn_id": 22839,
+          "worker_id": 0,
+          "target_id": 0,
+          "letter_id": 0,
+          "value": "2",
+          "label": "Nanda: No drugs",
+          "effects": {
+            "benefit": "No drugs: Beer: addiction=True joy=False schedule=off,SmokeleafJoint: addiction=True joy=False schedule=off,Ambrosia: addiction=True joy=False schedule=off,Yayo: addiction=True joy=False schedule=off,Flake: addiction=True joy=False schedule=off,PsychiteTea: addiction=True joy=False schedule=off,GoJuice: addiction=True joy=False schedule=off,WakeUp: addiction=True joy=False schedule=off,Penoxycyline: addiction=True joy=False schedule=off,Luciferium: addiction=True joy=False schedule=off,VoidsightSerum: addiction=True joy=False schedule=off,MetalbloodSerum: addiction=True joy=False schedule=off,JuggernautSerum: addiction=True joy=False schedule=off,MindNumbSerum: addiction=True joy=False schedule=off",
+            "risk": "Visible dependency/addiction=; withdrawal/overdose/ideology",
+            "cost": "Dose stock/inventory=",
+            "inaction": "Current Social drugs permissions continue",
+            "uncertainty": "Traits may ignore restrictions; scheduled jobs may lack supplies"
+          }
+        },
+        {
+          "kind": "drug_policy",
+          "pawn_id": 22839,
+          "worker_id": 0,
+          "target_id": 0,
+          "letter_id": 0,
+          "value": "3",
+          "label": "Nanda: Unrestricted",
+          "effects": {
+            "benefit": "Unrestricted: Beer: addiction=True joy=True schedule=off,SmokeleafJoint: addiction=True joy=True schedule=off,Ambrosia: addiction=True joy=True schedule=off,Yayo: addiction=True joy=True schedule=off,Flake: addiction=True joy=True schedule=off,PsychiteTea: addiction=True joy=True schedule=off,GoJuice: addiction=True joy=True schedule=off,WakeUp: addiction=True joy=True schedule=off,Penoxycyline: addiction=True joy=False schedule=off,Luciferium: addiction=True joy=False schedule=off,VoidsightSerum: addiction=True joy=False schedule=off,MetalbloodSerum: addiction=True joy=False schedule=off,JuggernautSerum: addiction=True joy=False schedule=off,MindNumbSerum: addiction=True joy=False schedule=off",
+            "risk": "Visible dependency/addiction=; withdrawal/overdose/ideology",
+            "cost": "Dose stock/inventory=",
+            "inaction": "Current Social drugs permissions continue",
+            "uncertainty": "Traits may ignore restrictions; scheduled jobs may lack supplies"
+          }
+        },
+        {
+          "kind": "drug_policy",
+          "pawn_id": 22839,
+          "worker_id": 0,
+          "target_id": 0,
+          "letter_id": 0,
+          "value": "4",
+          "label": "Nanda: One drink per day",
+          "effects": {
+            "benefit": "One drink per day: Beer: addiction=False joy=True schedule=1.0,SmokeleafJoint: addiction=False joy=True schedule=off,Ambrosia: addiction=True joy=False schedule=off,Yayo: addiction=True joy=False schedule=off,Flake: addiction=True joy=False schedule=off,PsychiteTea: addiction=True joy=False schedule=off,GoJuice: addiction=True joy=False schedule=off,WakeUp: addiction=True joy=False schedule=off,Penoxycyline: addiction=True joy=False schedule=off,Luciferium: addiction=True joy=False schedule=off,VoidsightSerum: addiction=True joy=False schedule=off,MetalbloodSerum: addiction=True joy=False schedule=off,JuggernautSerum: addiction=True joy=False schedule=off,MindNumbSerum: addiction=True joy=False schedule=off",
+            "risk": "Visible dependency/addiction=; withdrawal/overdose/ideology",
+            "cost": "Dose stock/inventory=Beer:0 carry=1",
+            "inaction": "Current Social drugs permissions continue",
+            "uncertainty": "Traits may ignore restrictions; scheduled jobs may lack supplies"
+          }
+        }
+      ],
+      "drug_policies": [
+        {
+          "id": 1,
+          "label": "Social drugs",
+          "entries": [
+            {
+              "drug": "Beer",
+              "addiction": false,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "SmokeleafJoint",
+              "addiction": false,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Ambrosia",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Yayo",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Flake",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "PsychiteTea",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "GoJuice",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "WakeUp",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Penoxycyline",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Luciferium",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "VoidsightSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MetalbloodSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "JuggernautSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MindNumbSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "label": "No drugs",
+          "entries": [
+            {
+              "drug": "Beer",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "SmokeleafJoint",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Ambrosia",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Yayo",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Flake",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "PsychiteTea",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "GoJuice",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "WakeUp",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Penoxycyline",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Luciferium",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "VoidsightSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MetalbloodSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "JuggernautSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MindNumbSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "label": "Unrestricted",
+          "entries": [
+            {
+              "drug": "Beer",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "SmokeleafJoint",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Ambrosia",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Yayo",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Flake",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "PsychiteTea",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "GoJuice",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "WakeUp",
+              "addiction": true,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Penoxycyline",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Luciferium",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "VoidsightSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MetalbloodSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "JuggernautSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MindNumbSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "label": "One drink per day",
+          "entries": [
+            {
+              "drug": "Beer",
+              "addiction": false,
+              "joy": true,
+              "scheduled": true,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 1
+            },
+            {
+              "drug": "SmokeleafJoint",
+              "addiction": false,
+              "joy": true,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Ambrosia",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Yayo",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Flake",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "PsychiteTea",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "GoJuice",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "WakeUp",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Penoxycyline",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "Luciferium",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "VoidsightSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MetalbloodSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "JuggernautSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            },
+            {
+              "drug": "MindNumbSerum",
+              "addiction": true,
+              "joy": false,
+              "scheduled": false,
+              "days": 1.0,
+              "mood_below": 1.0,
+              "joy_below": 1.0,
+              "inventory": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

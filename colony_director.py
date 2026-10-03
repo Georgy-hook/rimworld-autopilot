@@ -22,8 +22,10 @@ from colony_retry import failure_record, recent as retry_recent
 import colony_strategy as strategy
 import colony_capabilities as capabilities
 import colony_modules
+import colony_society
 import colony_reasoning
 import colony_outcomes
+import colony_medical_recovery as medical_recovery
 import colony_sessions
 import colony_shipbuilding
 from colony_actions import ACTION_DESCRIPTIONS, ACTION_LABELS, ACTION_LABELS_EN
@@ -162,6 +164,32 @@ def starter_base_blueprint(colonist_count: int, *, cold: bool = False,
         items.append(building("Bed", 1 + 2 * index, 2, stuff="WoodLog"))
     items.append(building("TorchLamp", 3, 5))
     return blueprint(items, 7, 7)
+
+
+def pending_starter_plan(map_state: dict[str, Any], map_id: int) -> dict[str, Any] | None:
+    """Validate the original partially observed starter layout after reload."""
+    plan = map_state.get("pending_starter_base")
+    if not isinstance(plan, dict):
+        map_state.pop("pending_starter_base", None)
+        return None
+    origin, layout = plan.get("origin"), plan.get("layout")
+    valid = (type(plan.get("map_id")) is int and plan["map_id"] == map_id
+             and type(plan.get("cold")) is bool and isinstance(origin, dict)
+             and all(type(origin.get(axis)) is int and 0 <= origin[axis] <= 10000 for axis in ("x", "z"))
+             and isinstance(layout, dict))
+    if valid:
+        rows = layout.get("buildings")
+        valid = (type(layout.get("width")) is int and type(layout.get("height")) is int
+                 and isinstance(rows, list) and 1 <= len(rows) <= 40
+                 and all(isinstance(row, dict) and all(type(row.get(axis)) is int
+                         and 0 <= row[axis] < layout[dimension] for axis, dimension in
+                         (("rel_x", "width"), ("rel_z", "height"))) for row in rows)
+                 and any(layout == starter_base_blueprint(count, cold=plan["cold"], wall_stuff=stuff)
+                         for count in (1, 2, 3) for stuff in ("WoodLog", "Steel")))
+    if not valid:
+        map_state.pop("pending_starter_base", None)
+        return None
+    return plan
 
 
 def starter_outdoor_c(dev: dict[str, Any]) -> float:
@@ -2317,6 +2345,13 @@ def patient_in_completed_bed(pawn: dict[str, Any], snapshot: dict[str, Any],
     """A paralyzed recruit already lying in a bed does not need repeated rescue."""
     # A downed pawn can have LayDown targeting an assigned bed while lying far
     # outside it. The intended job target is not proof of completed rescue.
+    native = next((row for row in snapshot.get("development", {}).get("resilience", {}).get("patients") or []
+                   if str(row.get("pawn_id")) == str(pawn.get("id"))), {})
+    if isinstance(native.get("in_bed"), bool):
+        if not native["in_bed"]:
+            return False
+        if native.get("current_bed_id") is not None:
+            return any(str(b.get("id")) == str(native["current_bed_id"]) for b in beds)
     position = pawn.get("position") or {}
     return bool(position) and any(
         (row.get("position") or {}).get("x") == position.get("x")
@@ -2335,10 +2370,7 @@ def rescue_order_safe(pawn: dict[str, Any], snapshot: dict[str, Any],
         return False
     if not pawn.get("tendable_now") or not beds:
         return True
-    doctors = [row for row in snapshot.get("colonists") or []
-               if int(row.get("id") or 0) != patient_id and not row.get("downed")
-               and bridge.first_number((row.get("capacities") or {}).get("moving"), 1) >= 0.5
-               and not ((row.get("work_priorities") or {}).get("Doctor") or {}).get("disabled")]
+    doctors = medical_recovery.helpers(snapshot, patient_id, doctor=True)
     if not doctors:
         return True
     bleeding = bridge.first_number(pawn.get("bleeding_rate"))
@@ -2553,7 +2585,7 @@ def colonist_is_idle(colonist: dict[str, Any]) -> bool:
 
 def requires_builder_now(action: str) -> bool:
     """Hide orders that can only add unbuildable blueprints without a builder."""
-    if action in {"build_sleeping_spots", "build_animal_spots", "build_butcher_spot"}:
+    if action in {"build_sleeping_spots", "build_animal_spots", "build_butcher_spot", "prepare_patient_bed"}:
         return False  # Free spots are placed immediately without a builder.
     if action.startswith(("build_", "finish_", "floor_", "install_")):
         return True
@@ -2594,6 +2626,7 @@ PROTECTED_CARE_JOBS = {name.casefold() for name in (
 
 
 IMMEDIATE_CARE_ACTIONS = {"rescue_downed_colonist", "rescue_downed_animal", "tend_colonist",
+    "prepare_patient_bed",
     "feed_hungry_colonist", "feed_hungry_animal", "eat_available_meal", "care_for_injured_animal",
     "prioritize_rescue", "prioritize_doctor", "prepare_emergency_medical_bed",
     "resilience_rescue", "resilience_tend", "resilience_feed", "resilience_rest", "resilience_roof_guard",
@@ -4106,17 +4139,18 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         for project in dev.get("construction_projects") or []
     )
     existing_starter_house = nearby_shell >= 6
+    pending_starter = pending_starter_plan(map_state, snapshot["map"]["id"])
     cold_start = starter_outdoor_c(dev) <= 5
     starter_materials_ready = not cold_start or (
         int(item_counts.get("WoodLog") or 0) >= 130
         or (int(item_counts.get("Steel") or 0) >= 110
             and int(item_counts.get("WoodLog") or 0) >= 20)
     )
-    if (can_work("Construction") and starter_materials_ready
-            and map_state.get("starter_site_verified", True)
+    if (can_work("Construction") and (starter_materials_ready or pending_starter)
+            and (pending_starter or map_state.get("starter_site_verified", True))
             and "starter_base" not in map_state["issued"]
-            and not existing_starter_house
-            and sleeping_place_counts(dev)[1] != len(snapshot["colonists"])):
+            and (pending_starter or (not existing_starter_house
+                 and sleeping_place_counts(dev)[1] != len(snapshot["colonists"])))):
         one_time.append("build_starter_base")
     tables = dev["work_tables"]
     food_tables = [row for row in tables if str(row.get("thing_def") or "") in {
@@ -5381,9 +5415,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         for c in snapshot["colonists"]
     )
     if medical_emergency:
-        available_rescuers = [colonist for colonist in snapshot["colonists"]
-                              if not colonist.get("downed") and bridge.first_number(colonist.get("health"), 1) >= 0.5
-                              and bridge.first_number((colonist.get("capacities") or {}).get("moving"), 1) >= 0.6]
+        available_rescuers = medical_recovery.helpers(snapshot, 0)
         untreated = [colonist for colonist in snapshot["colonists"]
                      if colonist.get("tendable_now") or bridge.first_number(colonist.get("bleeding_rate")) > 0.05]
         completed_beds = [building for building in dev.get("buildings") or []
@@ -5633,7 +5665,16 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     # colonists need time to sleep/eat. It must not dominate an idle emergency.
     if not actionable or (not urgent and not idle_workers):
         actionable.append("hold_survival")
-    return actionable, details
+    recovery_plans = medical_recovery.build_options(client, snapshot, map_state)
+    if (dev.get("resilience") or {}).get("available") is True:
+        for action in ("tend_colonist", "rescue_downed_colonist", "feed_hungry_colonist"):
+            actionable = [a for a in actionable if a != action]
+            if recovery_plans[action]:
+                actionable.append(action)
+    if recovery_plans["prepare_patient_bed"]:
+        actionable.append("prepare_patient_bed")
+    actionable = medical_recovery.focus(snapshot, actionable)
+    return list(dict.fromkeys(actionable)), details
 
 
 def defer_discretionary_work_until_shelter(
@@ -5658,6 +5699,8 @@ def defer_discretionary_work_until_shelter(
         return actions
     active_threat = bool((snapshot.get("map") or {}).get("enemies"))
     def deferred(action: str) -> bool:
+        if action in {"society_drug_policy", "society_drug_entry"}:
+            return colony_society.elective_drug_policy(snapshot)
         if action.startswith("income_") or action.startswith(("trade_to:", "raid_to:")):
             return True
         if action in {
@@ -6011,6 +6054,8 @@ def enforce_model_state_budget(state: dict[str, Any], max_characters: int = 1200
 
 
 def action_domain(name: str) -> str:
+    if name == "prepare_patient_bed":
+        return "care"
     module = colony_modules.owner(name)
     if module is not None:
         return module.DOMAINS[name]
@@ -6693,6 +6738,21 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
     elif choice in capabilities.ACTIONS:
         parsed, raw_details = capabilities.choose(agent, state, choice, snapshot)
         merged_answers.update(raw_details.get("answers", {}))
+    elif choice in {"prepare_patient_bed", "tend_colonist", "rescue_downed_colonist", "feed_hungry_colonist"} and (
+            snapshot.get("development", {}).get("medical_action_options", {}).get(choice)):
+        plans = snapshot["development"]["medical_action_options"][choice]
+        patient_context, patient_criteria = medical_recovery.patient_comparison(plans)
+        patient_id, patient_raw = ask_laya_choice(agent, state, "medical_patient",
+            patient_context, patient_criteria, detailed=True)
+        helper_context, helper_criteria = medical_recovery.helper_comparison(snapshot, plans[patient_id], choice)
+        helper_id, helper_raw = ask_laya_choice(agent, state, "care_helper",
+            helper_context, helper_criteria, detailed=True)
+        parsed.update(medical_patient=int(patient_id), care_helper=int(helper_id))
+        if choice == "feed_hungry_colonist":
+            parsed.update(hungry_colonist_id=int(patient_id), hungry_colonist_name=plans[patient_id]["patient"].get("name"))
+        raw_details = {"steps": [patient_raw, helper_raw]}
+        merged_answers.update(patient_raw.get("answers", {}))
+        merged_answers.update(helper_raw.get("answers", {}))
     elif choice == "set_work_priority":
         work, work_raw = ask_laya_choice(agent, state, "work_type",
             "Choose a live profession whose priority should change now.",
@@ -7557,6 +7617,37 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
 
     if colony_modules.owner(choice) is not None:
         return colony_modules.execute(client, snapshot, map_state, choice, details)
+    if choice == "prepare_patient_bed":
+        return medical_recovery.prepare_bed(client, snapshot, map_state, details, post_observed_blueprint)
+    if choice in {"tend_colonist", "rescue_downed_colonist", "feed_hungry_colonist"} and (
+            snapshot.get("development", {}).get("medical_action_options", {}).get(choice)):
+        plans = snapshot["development"]["medical_action_options"][choice]
+        pid, worker = str(details.get("medical_patient") or ""), str(details.get("care_helper") or "")
+        plan = plans.get(pid)
+        native = (plan or {}).get("helpers", {}).get(worker)
+        if native is None:
+            return {"applied": False, "reason": "No exact verified patient and helper selected"}
+        fresh = client.get("/api/v1/resilience/context", map_id=map_id)
+        if pid in medical_recovery.active_patients({"development": {}}, fresh) or not any(
+                all(row.get(k) == native.get(k) for k in ("kind", "worker_id", "target_id", "giver"))
+                for row in fresh.get("options") or []):
+            return {"applied": False, "reason": "Patient care selection is no longer feasible"}
+        try:
+            result = client.post("/api/v1/resilience/order", body={"map_id": map_id,
+                **{k: native[k] for k in ("kind", "worker_id", "target_id", "giver") if k in native}})
+        except bridge.RimApiError:
+            result = None
+        if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):
+            try:
+                observed = client.get("/api/v1/resilience/context", map_id=map_id)
+            except bridge.RimApiError:
+                observed = {}
+            if any(all(row.get(k) == native.get(k) for k in ("kind", "worker_id", "target_id"))
+                   for row in observed.get("active_orders") or []):
+                return {"applied": True, "readback_verified": True, "completion": "unverified",
+                        "patient_id": int(pid), "helper_id": int(worker)}
+            return {"applied": False, "outcome_unknown": True, "reason": "Patient care acknowledgment is unknown"}
+        return {**result, "patient_id": int(pid), "helper_id": int(worker), "completion": "unverified"}
     if choice in capabilities.ACTIONS:
         result = capabilities.execute(client, snapshot, map_state, choice, details)
         if choice == "create_growing_zone" and result.get("applied"):
@@ -8713,31 +8804,63 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
     if choice == "build_starter_base":
         use_heated_shelter = starter_outdoor_c(snapshot["development"]) <= 5
         stock = snapshot["development"].get("item_counts") or {}
-        if use_heated_shelter and not (
+        if use_heated_shelter and not pending_starter_plan(map_state, map_id) and not (
             int(stock.get("WoodLog") or 0) >= 130
             or (int(stock.get("Steel") or 0) >= 110 and int(stock.get("WoodLog") or 0) >= 20)
         ):
             return {"applied": False, "reason": "Not enough wood or steel for a heated shelter"}
         wall_stuff = "WoodLog" if int(stock.get("WoodLog") or 0) >= 130 else "Steel"
-        result = post_blueprint(client, map_id, anchor, starter_base_blueprint(
-            len(snapshot["colonists"]), cold=use_heated_shelter, wall_stuff=wall_stuff))
-        issued["starter_base"] = tick
-        if use_heated_shelter and not (isinstance(result, dict) and result.get("success") is False):
+        layout = starter_base_blueprint(len(snapshot["colonists"]), cold=use_heated_shelter, wall_stuff=wall_stuff)
+        pending = pending_starter_plan(map_state, map_id)
+        if pending:
+            anchor, layout, use_heated_shelter = pending["origin"], pending["layout"], pending["cold"]
+        result = post_observed_blueprint(client, map_id, anchor, layout)
+        native_response = result.get("response")
+        if isinstance(native_response, dict):
+            result = {**native_response, **result}
+        result["success"] = result["applied"] is True
+        try:
+            projects_raw = client.get("/api/v1/builder/projects", map_id=map_id)
+            projects = projects_raw.get("projects") or [] if isinstance(projects_raw, dict) else []
+            built = client.get("/api/v1/map/buildings", map_id=map_id)
+        except bridge.RimApiError:
+            projects, built = [], []
+        expected = {(row["def_name"], anchor["x"] + row["rel_x"], anchor["z"] + row["rel_z"])
+                    for row in layout["buildings"]}
+        real_projects = {(row.get("def_name"), (row.get("position") or {}).get("x"),
+                          (row.get("position") or {}).get("z")) for row in projects if isinstance(row, dict)}
+        matching_projects = expected & real_projects
+        real_built = {(row.get("def_name") or row.get("def"), (row.get("position") or {}).get("x"),
+                       (row.get("position") or {}).get("z"))
+                      for row in (built if isinstance(built, list) else []) if isinstance(row, dict)}
+        matching_cells = expected & (real_projects | real_built)
+        result["observed_starter_projects"] = len(matching_projects)
+        if result["applied"]:
+            issued["starter_base"] = tick
+            map_state.pop("pending_starter_base", None)
+        elif matching_cells:
+            map_state["pending_starter_base"] = {"map_id": map_id, "origin": copy.deepcopy(anchor),
+                                                 "layout": copy.deepcopy(layout), "cold": use_heated_shelter}
+        if matching_projects:
             staffing = []
             for pawn in snapshot["colonists"]:
                 construction = (pawn.get("work_priorities") or {}).get("Construction") or {}
-                if pawn.get("downed") or construction.get("disabled"):
+                if (pawn.get("downed") or pawn.get("in_mental_state") or pawn.get("is_drafted")
+                        or pawn.get("current_job") in capabilities.CARE_JOBS or construction.get("disabled")
+                        or bridge.active_immune_diseases(pawn)):
                     continue
                 pawn_id = int(pawn["id"])
                 doctor_change = free_cold_shelter_builder(
                     client, {**snapshot, "development": {**snapshot["development"],
-                            "cold_start_focus": "assign_builder"}}, pawn_id)
+                            "cold_start_focus": "assign_builder"}}, pawn_id) if use_heated_shelter else None
                 if int(construction.get("priority") or 0) != 1:
                     staffing.append(prioritize(client, snapshot, "Construction", pawn_id))
                 if doctor_change is not None:
                     staffing.append(doctor_change)
-            issued["priority:Construction"] = tick
-            if isinstance(result, dict):
+            if any(row.get("applied") is True for row in staffing):
+                issued["priority:Construction"] = tick
+            result["shelter_staffing"] = staffing
+            if use_heated_shelter:
                 result["cold_shelter_staffing"] = staffing
         return result
     if choice == "build_campfire":
@@ -9328,12 +9451,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         ))
         if choice == "rescue_downed_colonist" and not rescue_order_safe(patient, snapshot, completed_beds):
             return {"applied": False, "reason": "Field treatment is in progress or safer than a long carry"}
-        helpers = [pawn for pawn in snapshot["colonists"] if pawn["id"] != patient["id"]
-                   and not pawn.get("downed") and bridge.first_number(pawn.get("health"), 1) >= 0.5
-                   and bridge.first_number((pawn.get("capacities") or {}).get("moving"), 1) >= 0.6]
-        if choice == "tend_colonist":
-            helpers = [pawn for pawn in helpers if isinstance((pawn.get("work_priorities") or {}).get("Doctor"), dict)
-                       and not pawn["work_priorities"]["Doctor"].get("disabled")]
+        helpers = medical_recovery.helpers(snapshot, patient["id"], doctor=choice == "tend_colonist")
         if not helpers:
             return {"applied": False, "reason": "No mobile helper is available"}
         patient_pos = patient.get("position") or {}
@@ -9346,7 +9464,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             response = client.post("/api/v1/pawn/medical/tend", body={
                 "patient_pawn_id": int(patient["id"]), "doctor_pawn_id": int(helper["id"]),
             })
-            issued["direct_tend"] = tick
+            if bridge.command_acceptance({"endpoint": "/api/v1/pawn/medical/tend"}, response) is True:
+                issued[f"direct_tend:{patient['id']}"] = tick
         else:
             beds = completed_beds
             if not beds:
@@ -9361,8 +9480,11 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 "pawn_id": int(helper["id"]), "job_def": "Rescue", "target_thing_id": int(patient["id"]),
                 "target_thing_id_b": int(bed["id"]),
             })
-            issued["direct_rescue"] = tick
-        return {"applied": True, "patient": patient.get("name"), "helper": helper.get("name"), "response": response}
+            if bridge.command_acceptance({"endpoint": "/api/v1/pawn/job"}, response) is True:
+                issued[f"direct_rescue:{patient['id']}"] = tick
+        return {"applied": bridge.command_acceptance({"endpoint": "/api/v1/pawn/medical/tend" if choice == "tend_colonist" else "/api/v1/pawn/job"}, response) is True,
+                "patient": patient.get("name"), "helper": helper.get("name"), "response": response,
+                "completion": "unverified"}
     if choice == "prioritize_doctor":
         result = prioritize(client, snapshot, "Doctor")
         issued["priority:Doctor"] = tick
@@ -9512,7 +9634,10 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     # Existing colonies may have an older, already issued house at their saved
     # anchor. Never move all future building plans away from that house while
     # migrating to the stricter site check; it applies to new houses only.
-    existing_house_plan = "starter_base" in (map_state.get("issued") or {})
+    pending_starter = pending_starter_plan(map_state, snapshot["map"]["id"])
+    if pending_starter:
+        map_state["anchor"] = copy.deepcopy(pending_starter["origin"])
+    existing_house_plan = "starter_base" in (map_state.get("issued") or {}) or bool(pending_starter)
     if existing_house_plan and "anchor" in map_state:
         map_state.setdefault("starter_site_verified", True)
     if ("anchor" not in map_state or "growing_anchor" not in map_state
@@ -10929,7 +11054,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
     patients = sorted(
         [pawn for pawn in colonists if pawn.get("tendable_now")
          and not pawn.get("is_dead") and int(pawn["id"]) not in active_patients],
-        key=lambda pawn: (-bridge.first_number(pawn.get("bleeding_rate")),
+        key=lambda pawn: (medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1]
+                          if medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1] is not None else float("inf"),
+                          -bridge.first_number(pawn.get("bleeding_rate")),
                           bridge.first_number(pawn.get("health"), 1)),
     )[:5]
     options: dict[str, dict[str, Any]] = {}
@@ -11029,7 +11156,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
                         if patient_pos and doctor_pos else "")
             options[key] = {"patient_id": patient_id, "doctor_id": int(doctor["id"]), "kind": "tend",
                             "self_tend": False,
+                            "estimated_bleedout_ticks": medical_recovery.triage({**patient, "health_conditions": conditions})[1],
                             "summary": (disease_care_summary(capabilities.get(patient_id) or {}) + " "
+                                        + medical_recovery.patient_summary({**patient, "health_conditions": conditions}) + " "
                                         + f"Doctor {doctor.get('name')} medicine {doctor.get('medicine_skill', 0)}{distance}; "
                                         f"tend {patient.get('name')};{infection_note} bleed {bleeding:.2f}, "
                                         f"health {bridge.first_number(patient.get('health')):.2f}. "
@@ -11052,20 +11181,13 @@ def post_combat_care_options(snapshot: dict[str, Any],
                                         + f"Self-tend {patient.get('name')} medicine {patient.get('medicine_skill', 0)};"
                                         f"{infection_note} bleed {bleeding:.2f}, health {bridge.first_number(patient.get('health')):.2f}. "
                                          "Risk poor care versus waiting for another doctor. " + infection_risk)}
-    # Give the most seriously bleeding downed patient the next doctor before
-    # stable injuries or a long rescue consume that decision window.
-    urgent = next((pawn for pawn in patients if pawn.get("is_downed")
-                   and bridge.first_number(pawn.get("bleeding_rate")) >= 1.5), None)
-    if urgent is not None:
-        urgent_tends = {name: row for name, row in options.items()
-                        if row.get("kind") == "tend" and row.get("patient_id") == int(urgent["id"])}
-        if urgent_tends:
-            return urgent_tends
     critical_illness_ids = {int(p["id"]) for p in patients if severe_disease_patient(snapshot, int(p["id"]))}
     critical_illness_tends = {name: row for name, row in options.items()
                              if row.get("kind") == "tend" and row.get("patient_id") in critical_illness_ids}
-    if critical_illness_tends:
-        return critical_illness_tends
+    if critical_illness_tends or any(p.get("is_downed") and bridge.first_number(p.get("bleeding_rate")) >= 1.5 for p in patients):
+        tends = {name: row for name, row in options.items() if row.get("kind") == "tend"}
+        if tends:
+            return tends
     sheltered_ids = {int(bed_id) for room in (snapshot.get("development") or {}).get("rooms") or []
                      if not room.get("touches_map_edge") and not room.get("is_prison_cell")
                      and not room_is_ancient_danger(room) and int(room.get("open_roof_count") or 0) == 0

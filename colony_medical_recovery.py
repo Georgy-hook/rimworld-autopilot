@@ -1,0 +1,228 @@
+"""Observed bedside recovery prerequisites, independent of elective colony work."""
+import rimworld_laya as bridge
+from colony_retry import failure_record, recent
+
+CARE_JOBS = {"tendpatient", "rescue", "feedpatient"}
+
+
+def helpers(snapshot, patient_id, doctor=False):
+    combat = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
+    rows = []
+    for pawn in snapshot.get("colonists") or []:
+        live = combat.get(str(pawn.get("id"))) or {}
+        if (str(pawn.get("id")) == str(patient_id) or pawn.get("downed") or pawn.get("dead")
+                or pawn.get("in_mental_state") or live.get("is_in_mental_state")
+                or pawn.get("is_drafted") or live.get("is_drafted")
+                or float(pawn.get("health", 1)) < .5
+                or float((pawn.get("capacities") or {}).get("moving", 1)) < .5
+                or float((pawn.get("capacities") or {}).get("manipulation", 1)) <= 0
+                or str(pawn.get("current_job") or live.get("current_job") or "").lower() in CARE_JOBS):
+            continue
+        work = (pawn.get("work_priorities") or {}).get("Doctor")
+        if doctor and (not isinstance(work, dict) or work.get("disabled")):
+            continue
+        rows.append(pawn)
+    return rows
+
+
+def active_patients(snapshot, context=None):
+    context = context if context is not None else snapshot.get("development", {}).get("resilience", {})
+    targets = {str(row.get("target_id")) for row in context.get("active_orders") or []
+               if row.get("kind") in {"rescue", "feed", "tend"}}
+    for row in snapshot.get("combat", {}).get("colonists") or []:
+        job = str(row.get("current_job") or "").lower()
+        target = row.get("care_target_id") or (row.get("current_job_target_id_b") if job == "feedpatient" else row.get("current_job_target_id"))
+        if job in CARE_JOBS and target:
+            targets.add(str(target))
+    return targets
+
+
+def build_options(client, snapshot, map_state):
+    dev = snapshot["development"]
+    context = dev.get("resilience") or {}
+    active = active_patients(snapshot, context)
+    patients = {str(p.get("id")): p for p in [*snapshot.get("colonists", []), *snapshot.get("animals", [])]}
+    actions = {a: {} for a in ("prepare_patient_bed", "rescue_downed_colonist", "tend_colonist", "feed_hungry_colonist")}
+    mapping = {"rescue": "rescue_downed_colonist", "tend": "tend_colonist", "feed": "feed_hungry_colonist",
+               "bed_prerequisite": "prepare_patient_bed"}
+    pending = map_state.get("patient_spot_pending")
+    if not isinstance(pending, dict):
+        pending = {}
+    map_state["patient_spot_pending"] = pending
+    for pid in list(pending):
+        record = pending[pid]
+        if (pid not in patients or not isinstance(record, dict) or not isinstance(record.get("position"), dict)
+                or not all(isinstance(record["position"].get(k), (int, float)) for k in ("x", "z"))
+                or record.get("def_name") not in {"SleepingSpot", "AnimalSleepingSpot"}):
+            pending.pop(pid, None)
+            continue
+        present = any(b.get("def") == record["def_name"] and
+                      (b.get("position") or {}).get("x") == record["position"]["x"] and
+                      (b.get("position") or {}).get("z") == record["position"]["z"]
+                      for b in dev.get("buildings") or [])
+        if present or not recent(record, int(snapshot["game"].get("tick") or 0), 180):
+            pending.pop(pid, None)
+    dev["patient_spot_waiting"] = [pid for pid in pending if any(str(row.get("target_id")) == pid
+        and row.get("food_feasible") is True for row in context.get("options") or [])]
+    for row in context.get("options") or []:
+        action = mapping.get(row.get("kind"))
+        pid = str(row.get("target_id"))
+        patient = patients.get(pid)
+        if action is None or patient is None or pid in active:
+            continue
+        eligible = {str(p["id"]): p for p in helpers(snapshot, pid, doctor=action in {"tend_colonist", "feed_hungry_colonist"})}
+        worker = eligible.get(str(row.get("worker_id")))
+        if worker is None:
+            continue
+        if action != "prepare_patient_bed" and pid not in {str(p.get("id")) for p in snapshot.get("colonists", [])}:
+            continue  # Existing animal actions use their native animal-specific workgivers.
+        if action == "prepare_patient_bed":
+            if client is None or pid in pending:
+                continue
+            if pid not in actions[action]:
+                try:
+                    checked = client.post("/api/v1/builder/site-options", body={"map_id": snapshot["map"]["id"],
+                        "def_name": row["giver"], "near": patient["position"], "radius": 3, "limit": 12})
+                except bridge.RimApiError as error:
+                    dev.setdefault("patient_recovery_blockers", []).append(str(error))
+                    continue
+                sites = [site for site in checked.get("sites") or []
+                         if site.get("position") and not bridge.combat_planner.errand_exposed(snapshot, site["position"])]
+                if not sites:
+                    dev.setdefault("patient_recovery_blockers", []).append(f"{patient.get('name')}: no safe verified temporary bed site")
+                    continue
+                site = min(sites, key=lambda s: (s["position"]["x"]-patient["position"]["x"])**2
+                           + (s["position"]["z"]-patient["position"]["z"])**2)
+                actions[action][pid] = {"patient": patient, "helpers": {}, "site": site,
+                                        "def_name": row["giver"]}
+        plan = actions[action].setdefault(pid, {"patient": patient, "helpers": {}})
+        plan["helpers"][str(worker["id"])] = row
+    dev["medical_action_options"] = actions
+    return actions
+
+
+def triage(patient):
+    conditions = patient.get("health_conditions") or []
+    blood = next((float(h.get("severity") or 0) for h in conditions if h.get("def_name") == "BloodLoss"), None)
+    rate = float(patient.get("bleeding_rate") or 0)
+    ticks = max(0, (1-blood)*60000/rate) if blood is not None and rate > 0 else None
+    return blood, ticks
+
+
+def patient_summary(patient):
+    blood, ticks = triage(patient)
+    critical = [f"{h.get('def_name')} {float(h.get('severity') or 0):.3f}" for h in patient.get("health_conditions") or []
+                if h.get("def_name") in {"BloodLoss", "Malnutrition"} or h.get("life_threatening")]
+    return (f"{patient.get('name')}; " + (f"bleedout ~{round(ticks)} ticks; " if ticks is not None else "bleedout unknown; ")
+            + ", ".join(critical[:4]) + f"; bleeding {patient.get('bleeding_rate')}; hunger {patient.get('hunger')}; rate/day estimate")
+
+
+def patient_comparison(plans):
+    """State relative deadlines explicitly; an unknown loss is never zero loss."""
+    estimates = {pid: triage(plan["patient"])[1] for pid, plan in plans.items()}
+    known = [ticks for ticks in estimates.values() if ticks is not None]
+    earliest = min(known) if known else None
+    criteria = {}
+    for pid in sorted(plans, key=str):
+        ticks = estimates[pid]
+        others = [value for other, value in estimates.items() if other != pid and value is not None]
+        if ticks is None:
+            consequence = "Death deadline unknown; cannot assume safe to delay. "
+        elif others and ticks < min(others):
+            consequence = "Shortest estimated survival; delaying this patient risks death first. "
+        elif earliest is not None and ticks > earliest:
+            consequence = "More estimated time than the earliest-death patient; treating this one first delays someone closer to death. "
+        else:
+            consequence = "Earliest estimated death deadline among known estimates; time-sensitive treatment. "
+        criteria[pid] = consequence + patient_summary(plans[pid]["patient"])
+    context = ("Choose the next patient to prevent imminent death. Existing BloodLoss and remaining survival time matter more than bleeding rate alone. "
+               "Ordering care for one patient delays the others. Estimates assume unchanged bleeding; consider life-threatening illness and starvation too.")
+    return context, criteria
+
+
+def helper_comparison(snapshot, plan, action):
+    helpers = plan["helpers"]
+    medicine = {key: float(row.get("medicine_skill") or 0) for key, row in helpers.items()}
+    highest = max(medicine.values(), default=0)
+    quality = {key: row.get("medical_tend_quality") for key, row in helpers.items()}
+    speed = {key: row.get("medical_tend_speed") for key, row in helpers.items()}
+    known_quality = [value for value in quality.values() if isinstance(value, (int, float))]
+    known_speed = [value for value in speed.values() if isinstance(value, (int, float))]
+    colonists = {str(p.get("id")): p for p in snapshot.get("colonists") or []}
+    target = plan["patient"].get("position") or {}
+    criteria = {}
+    for key in sorted(helpers, key=str):
+        row = helpers[key]
+        origin = (colonists.get(key) or {}).get("position") or {}
+        distance = (sum((float(origin[c])-float(target[c]))**2 for c in ("x", "z"))**.5
+                    if all(c in origin and c in target for c in ("x", "z")) else None)
+        skill = medicine[key]
+        relative = ("Highest available medicine skill; stronger expected treatment quality. " if skill == highest
+                    else "Lower medicine skill than another feasible doctor; weaker expected treatment quality. ") if action == "tend_colonist" else ""
+        if action == "tend_colonist" and isinstance(quality[key], (int, float)):
+            q = quality[key]
+            relative = f"Tend quality stat {q:.0%}; "
+            relative += ("highest available expected quality; " if q == max(known_quality) else "poorer expected quality than another doctor; ")
+            if isinstance(speed[key], (int, float)):
+                s = speed[key]
+                relative += f"tend speed {s:.0%}, " + ("fastest available. " if s == max(known_speed) else "slower than another doctor. ")
+            else:
+                relative += "tend speed unknown. "
+        travel = f"straight-line distance ~{round(distance)} cells; route length unknown" if distance is not None else "travel distance unknown"
+        criteria[key] = (relative + f"{row.get('worker') or key}; medicine {skill:g}; {travel}; native route and reservation feasible")
+    context = ("Choose a controllable caregiver. Compare actual tend quality and speed before medicine skill: better quality improves treatment and reduces infection risk; "
+               "faster tending reduces bleeding delay. When travel is similar, a poorer slower doctor offers weaker care. A much longer trip can miss the death deadline. "
+               "Quality stats are expectations, not completed treatment. Existing care must finish.")
+    return context, criteria
+
+
+def focus(snapshot, actions):
+    dev = snapshot["development"]
+    plans = dev.get("medical_action_options") or {}
+    food = float((snapshot.get("map", {}).get("resources") or {}).get("food") or 0) > 0
+    hungry = {str(p.get("id")) for p in [*snapshot.get("colonists", []), *snapshot.get("animals", [])]
+              if p.get("downed") and float(p.get("hunger", p.get("food_level", 1))) < .35}
+    recovery = {action for action in ("prepare_patient_bed", "rescue_downed_colonist", "feed_hungry_colonist")
+                if any(pid in hungry and any(row.get("food_feasible") is True for row in plan["helpers"].values())
+                       for pid, plan in (plans.get(action) or {}).items()) and action in actions}
+    waiting = hungry.intersection(dev.get("patient_spot_waiting") or [])
+    active = hungry.intersection(active_patients(snapshot))
+    if not food or not (recovery or waiting or active):
+        return actions
+    dev["patient_recovery_focus"] = sorted(recovery)
+    urgent = recovery | {"resilience_tend", "tend_colonist", "care_for_injured_animal", "feed_hungry_animal",
+                         "rescue_downed_animal", "open_blocked_food_path", "resilience_rescue", "resilience_feed",
+                         "prioritize_firefighting", "resilience_temperature", "hold_survival"}
+    filtered = [action for action in actions if action in urgent]
+    return filtered or ["hold_survival"]
+
+
+def prepare_bed(client, snapshot, map_state, details, place):
+    pid = str(details.get("medical_patient") or "")
+    worker = str(details.get("care_helper") or "")
+    plan = (snapshot["development"].get("medical_action_options", {}).get("prepare_patient_bed") or {}).get(pid)
+    if plan is None or worker not in plan["helpers"]:
+        return {"applied": False, "reason": "No verified patient bed and helper selected"}
+    fresh = client.get("/api/v1/resilience/context", map_id=snapshot["map"]["id"])
+    if pid in active_patients({"development": {}}, fresh) or not any(
+            row.get("kind") == "bed_prerequisite" and str(row.get("target_id")) == pid
+            and str(row.get("worker_id")) == worker for row in fresh.get("options") or []):
+        return {"applied": False, "reason": "Bed prerequisite is no longer feasible"}
+    site = plan["site"]
+    checked = client.post("/api/v1/builder/site-options", body={"map_id": snapshot["map"]["id"],
+        "def_name": plan["def_name"], "near": site["position"], "radius": 1, "limit": 12})
+    verified = next((s for s in checked.get("sites") or [] if
+        s["position"]["x"] == site["position"]["x"] and s["position"]["z"] == site["position"]["z"]), None)
+    if verified is None:
+        return {"applied": False, "reason": "Selected temporary bed site is no longer placeable"}
+    layout = {"width": 1, "height": 1, "floors": [], "buildings": [{"def_name": plan["def_name"],
+              "rel_x": 0, "rel_z": 0, "rotation": int(verified.get("rotation") or 0)}]}
+    result = place(client, snapshot["map"]["id"], site["position"], layout)
+    if result.get("applied"):
+        map_state.setdefault("patient_spot_pending", {}).pop(pid, None)
+    elif isinstance(result.get("response"), dict) and result["response"].get("success") is True:
+        map_state.setdefault("patient_spot_pending", {})[pid] = {
+            **failure_record(int(snapshot["game"].get("tick") or 0), seconds=15),
+            "position": site["position"], "def_name": plan["def_name"]}
+        result["pending"] = True
+    return {**result, "patient_id": int(pid), "helper_id": int(worker), "site": site["position"]}

@@ -102,6 +102,45 @@ class StreamObserverTests(unittest.TestCase):
         self.assertIn("Cause: not reported by the game", actions[-1]["text"])
         self.assertNotIn("Bite:Arm", actions[-1]["text"])
 
+    def test_unknown_death_does_not_hide_starvation_behind_residual_blood_loss(self):
+        planner = observer.ObserverPlanner()
+        planner.step(state([pawn(1, conditions=["BloodLoss:whole body", "Malnutrition:whole body"])]), [], 0)
+        corpse = {"def_name": "Corpse_Human", "label": "Corpse of Colonist 1"}
+        actions = planner.step(state([], tick=1001, corpses=[corpse]), [], 1)
+        caption = actions[-1]
+        self.assertIn("not reported by the game", caption["text"])
+        self.assertIn("BloodLoss", caption["text"])
+        self.assertIn("Malnutrition", caption["text"])
+        self.assertEqual(caption["death"]["cause"], "Unknown")
+
+    def test_exact_native_culprit_survives_sse_and_observer_logging(self):
+        event = observer.parse_sse_event("pawn_killed", json.dumps({
+            "pawn": {"id": 1, "name": "Colonist 1", "isColonist": True},
+            "cause": "Malnutrition", "cause_source": "exact_culprit", "ticks": 1001}))
+        planner = observer.ObserverPlanner()
+        planner.step(state(), [], 0)
+        actions = planner.step(state([pawn(2)], tick=1001), [event], 1)
+        self.assertIn("Cause: malnutrition", actions[-1]["text"])
+        self.assertEqual(actions[-1]["death"]["ticks"], 1001)
+        self.assertEqual(actions[-1]["death"]["cause_source"], "exact_culprit")
+
+    def test_post_treatment_starvation_keeps_emergency_speed_until_fed(self):
+        medical = {"is_downed": True, "is_dead": False, "hediffs": [
+            {"def_name": "BloodLoss", "severity": 0.15},
+            {"def_name": "Malnutrition", "severity": 0.2}]}
+        rows = [{"detailes": {"medical_info": medical}}]
+        planner = observer.ObserverPlanner()
+        self.assertTrue(observer._critical_starvation(rows))
+        self.assertEqual(planner.pacing_actions(state()["game"], 0,
+            critical_starvation=observer._critical_starvation(rows)), [{"kind": "ensure_speed", "speed": 1}])
+        medical["hediffs"].pop()
+        self.assertFalse(observer._critical_starvation(rows))
+        self.assertEqual(planner.pacing_actions(state()["game"], 1,
+            critical_starvation=observer._critical_starvation(rows)), [{"kind": "ensure_speed", "speed": 3}])
+        medical["is_dead"] = True
+        medical["hediffs"].append({"def_name": "Malnutrition", "severity": 1})
+        self.assertFalse(observer._critical_starvation(rows))
+
     def test_corpse_appearing_on_a_later_poll_still_gets_a_death_shot(self):
         planner = observer.ObserverPlanner()
         planner.step(state(), [], 0)

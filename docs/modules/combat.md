@@ -2,6 +2,22 @@
 
 Version: installed RimWorld 1.6.4871; Core, Royalty, Ideology, Biotech, Anomaly; Odyssey inactive. Offline tests validate planning, not battlefield outcomes. No game or model session was launched.
 
+## Requader follow-up, 2026-10-03
+
+Injured ranged pawns retain `stationary_fire` when actual native weapon
+availability and shootable target IDs verify a shot. It never issues movement;
+moving tactics retain capacity checks. Repeated same-target `AttackStatic` keeps
+the ongoing warmup. An uncontrollable roster reports blocked defense.
+
+Care observations expose actual patient identity and position; FeedPatient uses
+target B. Safe bedside care is protected, while exposed traveling caregivers can
+defend. Covered retreat can move toward a real shooter with a verified shot,
+checking path nodes for fire, traps and live threats. The nearest three covering
+shooters share a maximum sixteen extra path attempts per order across fighters.
+The original checked fallback remains. Passive animals do not become staged
+human raids. Offline repeated-cycle and native compile checks pass; no battlefield
+outcome is claimed. See the [postmortem](../audits/requader-postmortem-2026-10-03.md).
+
 | Threat/mechanic | Existing support | Remaining limitations |
 |---|---|---|
 | Human assault, ranged/melee contact | Native jobs, cover/range, retreat, cooperative melee | Cover templates cannot guarantee a safe route or successful fight. |

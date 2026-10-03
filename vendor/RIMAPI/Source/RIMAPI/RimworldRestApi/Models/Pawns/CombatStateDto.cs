@@ -41,6 +41,12 @@ namespace RIMAPI.Models
         public string CurrentJob { get; set; }
         public int? CurrentJobTargetId { get; set; }
         public int? CurrentJobTargetIdB { get; set; }
+        public PositionDto CurrentJobTargetPosition { get; set; }
+        public bool CareAtBedside { get; set; }
+        public int? CareTargetId { get; set; }
+        public PositionDto CareTargetPosition { get; set; }
+        public bool RangedAttackAvailable { get; set; }
+        public bool IsAnimal { get; set; }
         public string LordJobType { get; set; }
         public string LordToilName { get; set; }
         public float DistanceToNearestOpponent { get; set; }
@@ -91,6 +97,8 @@ namespace RIMAPI.Models
         public string DefName { get; set; }
         public string Label { get; set; }
         public bool IsRanged { get; set; }
+        public bool? IsWeapon { get; set; }
+        public bool? IsImprovised { get; set; }
         public bool IsForbidden { get; set; }
         public float MarketValue { get; set; }
         public PositionDto Position { get; set; }

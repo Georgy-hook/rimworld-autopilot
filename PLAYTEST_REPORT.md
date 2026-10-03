@@ -2,7 +2,7 @@
 
 Current candidate: **0.0.7**. Historical tests below retain their own revision and version context.
 
-This log tracks real, unattended runs. “Cause” is the last condition reported by the game API, not a medically certain cause of death. Wall-clock runtime excludes intentional development pauses when noted.
+This log tracks real runs and explicitly identified technical replays. Death records distinguish native causes, final-save conditions and uncertain observer captions. Wall-clock runtime excludes intentional development pauses when noted.
 
 ## 3 October 2026 — Requader startup loop, paused
 
@@ -34,7 +34,26 @@ This log tracks real, unattended runs. “Cause” is the last condition reporte
   order at 07:21:21, but her subsequent job remained `Insult`; treatment was not
   verified. This executor/result discrepancy remains open.
 - At 07:23:16 UTC, tick 225391, Alyssa was downed and Dawn mobile but bleeding.
-  Two survivors remained. Hourly observation continues; no colony outcome yet.
+  Nanda subsequently joined and began real treatment. The final outcome follows.
+
+### Requader final outcome — user ended the run, 3 October
+
+- Garrett died at tick 222769 and Alyssa at 233664, both with BloodLoss severity
+  1 in the final save. Dawn died at 347665 with Malnutrition 1 and residual
+  BloodLoss 0.09963. First observed deaths: 07:22:31, 07:25:33 and 07:30:57 UTC.
+- Nanda had stopped Dawn's bleeding and treated all 26 wounds by 07:26:37, but
+  the dependent patient remained without the bed/rescue/feeding chain despite
+  stocked food. The old BloodLoss caption did not establish Dawn's terminal cause.
+- The user ended the colony with Nanda alive. Native game-over/victory were
+  false: record this as **user-ended after all founders died**, not everyone dead.
+  Workers stopped, game paused at tick 494099 and final progress saved at
+  07:36:39 UTC. The naming dialogue had renamed the save to
+  `Union of Atin (Permadeath)`. RimWorld and the GUI closed; hourly observation paused.
+- Confirmed repair targets include uncontrollable doctors, blood-loss urgency,
+  missing care prerequisites, repeated weapon/drug deferrals, ineffective combat
+  choices, and Construction disabled for the sole warm-biome builder. Recorded
+  snapshots drive offline sequence tests; this does not replay or reverse deaths.
+- [Postmortem, fixes and verification limits](docs/audits/requader-postmortem-2026-10-03.md).
 
 ## Test 1 — 25 September 2026
 

@@ -44,6 +44,13 @@ def _prune(snapshot: dict[str, Any], memory: dict[str, Any]) -> None:
             and type(v.get("tick")) is int and type(v.get("duration")) is int
             and 0 < v["duration"] <= 15000 and type(v.get("map_id")) is int and v["map_id"] == map_id
             and retry.recent(v, tick, v["duration"])}.items())[-512:])
+    deferred = memory.get("weapon_deferred") or {}
+    deferred = deferred if isinstance(deferred, dict) else {}
+    live = {str(p.get("id")) for p in snapshot.get("combat", {}).get("colonists") or []}
+    memory["weapon_deferred"] = dict(list({key: value for key, value in deferred.items()
+        if isinstance(key, str) and key in live and isinstance(value, dict) and type(value.get("map_id")) is int
+        and value["map_id"] == map_id and type(value.get("tick")) is int
+        and 0 <= value["tick"] <= tick and isinstance(value.get("guard"), str)}.items())[-512:])
 
 
 def _scope(action: str, key: str) -> str:
@@ -183,13 +190,44 @@ def weapon_compatible(pawn: dict[str, Any], weapon: dict[str, Any]) -> bool:
 
 def weapon_note(weapon: dict[str, Any]) -> str:
     special = ",".join(k for k in ("emp", "explosive", "incendiary", "single_use") if weapon.get(k)) or "normal"
-    return (f"{weapon.get('label') or weapon.get('def_name')} quality {weapon.get('quality')}; {special}; range {weapon.get('min_range', 0)}..{weapon.get('range', '?')}; "
+    return (f"{weapon.get('label') or weapon.get('def_name')} quality {weapon.get('quality')}; {special}; "
+            + ("improvised item; replaces current weapon; " if weapon.get("is_improvised") is True else "")
+            + f"range {weapon.get('min_range', 0)}..{weapon.get('range', '?')}; "
             f"damage {weapon.get('damage', '?')} {weapon.get('damage_def')}; burst {weapon.get('burst_shots', 1)}; "
             f"armor penetration {weapon.get('armor_penetration', '?')}; accuracy near/short/mid/long "
             f"{weapon.get('accuracy_touch', '?')}/{weapon.get('accuracy_short', '?')}/"
             f"{weapon.get('accuracy_medium', '?')}/{weapon.get('accuracy_long', '?')}; "
             f"warmup/cooldown {weapon.get('warmup', '?')}/{weapon.get('cooldown', '?')}; melee DPS {weapon.get('melee_dps', '?')}; "
             f"condition {weapon.get('hit_points_percent')}")
+
+
+def weapon_tradeoff_note(current, alternative):
+    switch = ("loses ranged reach for melee; " if current.get("is_ranged") and not alternative.get("is_ranged") else
+              "switches to ranged attacks; " if alternative.get("is_ranged") and not current.get("is_ranged") else "")
+    differences = []
+    for field, label in (("range", "range"), ("damage", "damage"), ("armor_penetration", "AP"), ("melee_dps", "melee DPS")):
+        left, right = current.get(field), alternative.get(field)
+        if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+            differences.append(f"{label} change {right-left:+.2f}")
+    return f"replaces {current.get('def_name') or 'unarmed'}; {switch}" + "; ".join(differences) + "; " + weapon_note(alternative)
+
+
+def _weapon_guard(snapshot, plan):
+    fields = ("id", "def_name", "quality", "is_ranged", "is_weapon", "is_improvised", "range", "min_range",
+              "damage", "damage_def", "armor_penetration", "burst_shots", "warmup", "cooldown", "melee_dps",
+              "accuracy_touch", "accuracy_short", "accuracy_medium", "accuracy_long", "emp", "explosive", "incendiary")
+    def facts(weapon):
+        return tuple(weapon.get(field) for field in fields)
+    pawn = plan["pawn"]
+    threats = sorted((str(h.get("id")), h.get("kind_def"), bool(h.get("is_mechanoid")),
+                      bool(h.get("is_insect")), bool(h.get("has_ranged_weapon")),
+                      float(h.get("armor_sharp") or 0) >= .5)
+                     for h in snapshot.get("combat", {}).get("hostiles") or []
+                     if not h.get("is_dead") and not h.get("is_downed"))
+    return repr((pawn.get("id"), pawn.get("weapon_def"), facts(pawn.get("weapon_info") or {}),
+                 pawn.get("shooting_skill"), pawn.get("melee_skill"), bool(pawn.get("has_shield_belt")),
+                 pawn.get("can_fight"), tuple(float(pawn.get(k) or 0) < .5 for k in ("sight", "manipulation")),
+                 sorted((str(k), facts(v)) for k, v in plan["weapons"].items()), threats))
 
 
 def weapon_score(pawn: dict[str, Any], weapon: dict[str, Any], distance: float = 20, armored: bool = False) -> float:
@@ -213,8 +251,12 @@ def weapon_score(pawn: dict[str, Any], weapon: dict[str, Any], distance: float =
 
 
 def safe_weapons(snapshot: dict[str, Any], pawn: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    current = pawn.get("weapon_info") or {}
+    unarmed = (not pawn.get("weapon_def") or current.get("is_improvised") is True or current.get("is_weapon") is False
+               or current.get("equippable") is False or current.get("hit_points_percent") == 0)
     return {str(w["id"]): w for w in snapshot.get("combat", {}).get("available_weapons") or []
             if w.get("id") is not None and w.get("id") != (pawn.get("weapon_info") or {}).get("id")
+            and (unarmed or (w.get("is_improvised") is not True and w.get("is_weapon") is not False))
             and weapon_compatible(pawn, w) and not combat.errand_exposed(snapshot, w.get("position"), pawn.get("position"))}
 
 
@@ -314,6 +356,13 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
                 any(w.get(k) != current.get(k) for k in ("quality", "hit_points_percent", "damage", "armor_penetration", "melee_dps"))
                 for w in weapons.values())):
             weapon_plans[str(pawn["id"])] = {"pawn": pawn, "weapons": weapons}
+    if weapon_plans:
+        for key, plan in list(weapon_plans.items()):
+            deferred = map_state["weapon_deferred"].get(key)
+            if deferred and deferred["guard"] == _weapon_guard(snapshot, plan):
+                del weapon_plans[key]
+            elif deferred:
+                del map_state["weapon_deferred"][key]
     if weapon_plans:
         plans["improve_weapon_loadout"] = weapon_plans
         actions.append("improve_weapon_loadout")
@@ -433,7 +482,8 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
             "enemies": [{k: e.get(k) for k in ("kind_def", "armor_sharp", "is_mechanoid", "is_insect")}
                         for e in snapshot.get("combat", {}).get("hostiles") or [] if not e.get("is_dead")][:4]}, "colony": state}
         if pick("weapon_item", "Choose a compatible weapon or keep current one. Compare range, quality, damage, accuracy and AP with pawn skills and enemies. Explosives risk friendly fire; EMP does not replace normal damage.", {
-                **{k: weapon_note(w) for k, w in plans[key]["weapons"].items()},
+                **{k: weapon_tradeoff_note(plans[key]["pawn"].get("weapon_info") or {}, w)
+                   for k, w in plans[key]["weapons"].items()},
                 "defer": "Keep current weapon: " + weapon_note(plans[key]["pawn"].get("weapon_info") or {})}) == "defer":
             details["weapon_defer"] = True
     return details, raw
@@ -590,7 +640,13 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
             if action == "improve_weapon_loadout" and selected.get("weapon_pawn") not in (None, "defer"):
                 shown = [str(selected["weapon_pawn"])]
             for target in shown[:256]:
-                _remember(snapshot, map_state, _scope(action, target), 250)
+                if action == "improve_weapon_loadout":
+                    plan = snapshot["development"].get("capability_plans", {}).get(action, {}).get(target)
+                    if plan:
+                        map_state["weapon_deferred"][target] = {"tick": int(snapshot["game"].get("tick") or 0),
+                            "map_id": int(snapshot["map"]["id"]), "guard": _weapon_guard(snapshot, plan)}
+                else:
+                    _remember(snapshot, map_state, _scope(action, target), 250)
         elif action in {"clear_plant_blight", "harvest_at_risk_crops"}:
             for plant in snapshot["development"].get("capability_plans", {}).get(action, {}).get("plants", [])[:200]:
                 _remember(snapshot, map_state, _scope(action, str(plant["thing_id"])), 250, not result.get("applied"))

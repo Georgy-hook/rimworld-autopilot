@@ -188,6 +188,14 @@ namespace RIMAPI.Services
                     return ApiResult.Fail("Tending requires a living patient and a mobile doctor on the same map");
                 if (doctor.skills?.GetSkill(SkillDefOf.Medicine)?.TotallyDisabled ?? true)
                     return ApiResult.Fail("Selected doctor is incapable of medicine");
+                if (doctor.InMentalState || doctor.Drafted || doctor.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
+                    || !doctor.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
+                    return ApiResult.Fail("Selected doctor is not currently controllable for treatment");
+                if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
+                    || doctor.CurJobDef == JobDefOf.FeedPatient)
+                    return ApiResult.Fail("Selected doctor is already providing patient care");
+                if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))
+                    return ApiResult.Fail("Selected doctor cannot reserve and reach the patient");
                 if (!(patient.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false))
                     return ApiResult.Fail("Patient has no condition currently requiring tending");
                 bool success = PawnHelper.AssignTendJob(doctor, patient);

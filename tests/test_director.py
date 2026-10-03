@@ -4522,7 +4522,8 @@ class DirectorTests(unittest.TestCase):
         patient = {"id": 65, "position": {"x": 55, "z": 10},
                    "tendable_now": True, "bleeding_rate": 2.858}
         beds = [{"id": 7, "position": {"x": 10, "z": 10}}]
-        snapshot = {"colonists": [patient, {"id": 69, "capacities": {"moving": 0.6}}],
+        snapshot = {"colonists": [patient, {"id": 69, "capacities": {"moving": 0.6},
+                    "work_priorities": {"Doctor": {"priority": 1, "disabled": False}}}],
                     "combat": {"colonists": []}}
         self.assertFalse(director.rescue_order_safe(patient, snapshot, beds))
         patient["bleeding_rate"] = 0.1
@@ -4742,7 +4743,7 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(director.urgent_care_unassigned(snapshot))
         self.assertTrue(director.urgent_care_actionable(snapshot))
         options = director.post_combat_care_options(snapshot)
-        self.assertEqual(set(options), {"tend_1_3", "tend_1_4"})
+        self.assertEqual(set(options), {"tend_1_3", "tend_1_4", "tend_2_4"})
         snapshot["combat"]["colonists"][0]["tendable_now"] = False
         self.assertIn("tend_2_4", director.post_combat_care_options(snapshot))
         snapshot["combat"]["colonists"][0]["tendable_now"] = True
