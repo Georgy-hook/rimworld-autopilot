@@ -19,6 +19,23 @@ This log tracks real, unattended runs. “Cause” is the last condition reporte
   readback and local-model replay. These are technical tests, not autonomous
   gameplay. [Incident, repairs and verification](docs/audits/startup-loop-replay-2026-10-03.md).
 
+### Requader continuation — 3 October, 07:21 UTC
+
+- The user requested continuation of the same saved colony. Load briefly advanced
+  216457 -> 217712 before the technical pause. No reset or new colony.
+- The paused startup gate found unsupported `remain_drafted` at zero threats.
+  Commit `55892f2` removes that no-threat option and repairs compact pawn flags;
+  842 tests passed. Installed native DLL remains the build from `dadd0fb`.
+- At 07:21:06 UTC the runtime issued `stand_down`, then colony decisions resumed.
+  The colony already had severe untreated injuries: Garrett downed, Alyssa
+  incapable of medicine, and Dawn in an insulting spree.
+- Garrett's death was observed at **07:22:31 UTC**. Exact native cause was absent;
+  last observed condition was severe blood loss. API accepted Dawn's treatment
+  order at 07:21:21, but her subsequent job remained `Insult`; treatment was not
+  verified. This executor/result discrepancy remains open.
+- At 07:23:16 UTC, tick 225391, Alyssa was downed and Dawn mobile but bleeding.
+  Two survivors remained. Hourly observation continues; no colony outcome yet.
+
 ## Test 1 — 25 September 2026
 
 - Colony: Pepe, Triv and Bolton; Doc joined later. Cassandra, seed `16622162`.
