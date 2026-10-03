@@ -57,7 +57,15 @@ class RescueSiteAcknowledgmentTests(unittest.TestCase):
             client.post.return_value = {"success": True}
             d.run_rescue_site_cycle(*args)
             self.assertEqual(client.post.call_count, 2)
-            self.assertNotIn("site_retry", state["maps"]["home"]["rescue_mission"])
+            self.assertTrue(state["maps"]["home"]["rescue_mission"]["site_retry"]["awaiting_observation"])
+            for cycle in range(8):
+                self.assertIsNone(d.run_rescue_site_cycle(*args))
+            self.assertEqual(client.post.call_count, 2)
+            snapshot["combat"]["colonists"] = [{"id": 1, "current_job": "ReleasePrisoner"}]
+            snapshot["game"]["tick"] += 1000
+            with patch("colony_retry.time.time", return_value=200):
+                self.assertIsNone(d.run_rescue_site_cycle(*args))
+            self.assertEqual(client.post.call_count, 2)
 
 if __name__ == "__main__":
     unittest.main()

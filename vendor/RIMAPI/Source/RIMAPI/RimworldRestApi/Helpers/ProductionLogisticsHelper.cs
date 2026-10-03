@@ -74,8 +74,10 @@ namespace RIMAPI.Helpers
             return group == null || !group.parent.Accepts(thing);
         }
 
-        public static List<Choice> Options(Map map, List<object> blocked = null)
+        public static List<Choice> Options(Map map, List<object> blocked = null, List<ActiveNativeOrderDto> activeOrders = null)
         {
+            var activeHauls = new HashSet<int>((activeOrders ?? ResilienceAutomationHelper.ActiveOrders(map))
+                .Where(o => o.Kind == "haul").Select(o => o.TargetId));
             var options = new List<Choice>();
             Thing[] materials = map.listerThings.AllThings.Where(Material).ToArray();
             Pawn[] hostiles = map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToArray();
@@ -156,7 +158,8 @@ namespace RIMAPI.Helpers
                 foreach (Pawn pawn in haulers)
                 {
                     Thing thing = candidates.FirstOrDefault(t => {
-                        if (!pawn.CanReserveAndReach(t, PathEndMode.ClosestTouch, Danger.Some)
+                        if (activeHauls.Contains(t.thingIDNumber)
+                            || !pawn.CanReserveAndReach(t, PathEndMode.ClosestTouch, Danger.Some)
                             || !HaulAIUtility.PawnCanAutomaticallyHaulFast(pawn, t, false)) return false;
                         if (!StoreUtility.TryFindBestBetterStorageFor(t, pawn, map,
                             StoreUtility.CurrentStoragePriorityOf(t, false), pawn.Faction,
@@ -186,8 +189,9 @@ namespace RIMAPI.Helpers
             Map map = MapHelper.GetMapByID(id);
             if (map == null) return ApiResult<object>.Fail("Map missing");
             var blocked = new List<object>();
-            var options = Options(map, blocked);
-            return ApiResult<object>.Ok(new { available = true, options, blocked });
+            var activeOrders = ResilienceAutomationHelper.ActiveOrders(map);
+            var options = Options(map, blocked, activeOrders);
+            return ApiResult<object>.Ok(new { available = true, options, blocked, active_orders = activeOrders });
         }
 
         public static ApiResult<object> Policy(ProductionRecipePolicyDto request)

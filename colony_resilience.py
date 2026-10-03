@@ -76,6 +76,11 @@ def _recent(record: dict, tick: int, delay: int) -> bool:
     return retry_recent(record, tick, delay)
 
 
+def _active_targets(context):
+    return {(row.get('kind'), row.get('target_id')) for row in context.get('active_orders') or []
+            if isinstance(row, dict) and row.get('kind') in {'feed', 'rescue'}}
+
+
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault('development', {}).setdefault('resilience', {})
     memory = map_state.get('resilience_memory') or {}
@@ -91,9 +96,12 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
     if not memory:
         map_state.pop('resilience_memory', None)
     options = {a: {} for a in ACTIONS}
+    active = _active_targets(context)
     for row in context.get('options') or []:
         action = 'resilience_' + str(row.get('kind'))
         if action not in options:
+            continue
+        if (row.get('kind'), row.get('target_id')) in active:
             continue
         subject = action + ':' + _subject(row)
         deferred = (memory.get('deferred') or {}).get(subject, {})
@@ -117,6 +125,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     plans = context.get('plans', {}).get(action) or {}
     if not plans:
         return {'defer': True}, {'reason': 'no_live_resilience_options'}
+    def defer_selection(rows):
+        return {'defer': True, 'deferred_subjects': list(dict.fromkeys(_subject(row) for row in rows.values()))}
     people = {str(p['pawn_id']): p for p in context.get('patients') or [] if p.get('pawn_id') is not None}
     def subject(row: dict) -> str:
         return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
@@ -159,7 +169,7 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     target_effects['defer'] = defer
     target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.', targets, detailed=True)
     if target == 'defer':
-        return {'defer': True}, first
+        return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if subject(row) == target}
     choices = {k: f"{row.get('worker', row['worker_id'])}; {row.get('giver', row['kind'])}; Medicine {row.get('medicine_skill')}" for k, row in plans.items()}
     option_effects = {k: effects(row) for k, row in plans.items()}
@@ -171,7 +181,7 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     choices['defer'], option_effects['defer'] = targets['defer'], defer
     key, raw = ask_laya_choice(agent, {'decision_facts': {'target': target, 'evidence': target_effects[target]['benefit'], 'exposure': target_effects[target]['risk']}, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
     raw['patient_choice'] = first
-    return ({'defer': True} if key == 'defer' else {k: plans[key][k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in plans[key]}), raw
+    return (defer_selection(plans) if key == 'defer' else {k: plans[key][k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in plans[key]}), raw
 
 def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
     tick = int(snapshot.get('game', {}).get('tick') or 0)
@@ -179,6 +189,8 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     if selected.get('defer'):
         context = snapshot.get('development', {}).get('resilience', {})
         for row in (context.get('plans', {}).get(action) or {}).values():
+            if 'deferred_subjects' in selected and _subject(row) not in selected['deferred_subjects']:
+                continue
             memory.setdefault('deferred', {})[action + ':' + _subject(row)] = {'tick': tick, 'state': repr(_state(row, context))}
         return {'applied': False, 'reason': 'laya_deferred'}
     payload = {k: selected[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in selected}
@@ -186,7 +198,8 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         memory.setdefault('failed', {})[_option(payload)] = failure_record(tick, seconds=15)
     try:
         fresh = collect(client, snapshot)
-        if 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or []):
+        if ((payload.get('kind'), payload.get('target_id')) in _active_targets(fresh)
+                or 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or [])):
             failed()
             return {'applied': False, 'reason': 'selection_no_longer_feasible'}
         result = client.post('/api/v1/resilience/order', body={'map_id': snapshot['map']['id'], **payload})
@@ -197,4 +210,6 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         memory.setdefault('issued', {})[action + ':' + _subject(payload)] = {'tick': tick}
     else:
         failed()
-    return result if isinstance(result, dict) else {'applied': False, 'reason': 'invalid_response'}
+    if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):
+        return {"applied": False, "reason": "invalid_response", "outcome_unknown": True, "response": result}
+    return result

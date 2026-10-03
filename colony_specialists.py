@@ -277,10 +277,17 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             failed = (memory.get('failed') or {}).get(_key(row, action))
             subject = _subject(row, action)
             deferred = (memory.get('deferred') or {}).get(subject)
-            if failed or (not native.get('configuring') and ((memory.get('issued') or {}).get(subject) or (deferred and deferred.get('state') == _fingerprint(_readiness(row, action))))):
+            if (failed and failed.get('state') in (None, _fingerprint(_readiness(row, action)))) or (not native.get('configuring') and (((memory.get('issued') or {}).get(subject) and (memory['issued'][subject].get('state') in (None, _fingerprint(_readiness(row, action))))) or (deferred and deferred.get('state') == _fingerprint(_readiness(row, action))))):
                 del rows[key]
     if not memory:
         map_state.pop('specialists_memory', None)
+    import colony_sessions
+    replay = colony_sessions.transition_memory(map_state, 'specialist_transitions', snapshot)
+    for action, rows in options.items():
+        for key, row in list(rows.items()):
+            readiness = colony_sessions.transition_signature({'payload': _payload(row, action), 'readiness': _readiness(row, action), 'material': _material(row.get('context') or {}), 'configuration': (row.get('context') or {}).get('configuration')})
+            if colony_sessions.transition_wait(replay, _key(row, action), readiness):
+                del rows[key]
     context['eligible_actions'] = [a for a, rows in options.items() if rows]
     return context['eligible_actions']
 
@@ -397,7 +404,7 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     raw["specialist_target_choice"] = first
     return ({"defer": True} if key == "defer" else {k: v for k, v in plans[key].items() if k != "context"}), raw
 
-def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
+def _execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
     tick = int(snapshot.get('game', {}).get('tick') or 0)
     memory = map_state.setdefault('specialists_memory', {})
     if selected.get('defer'):
@@ -406,7 +413,7 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         return {'applied': False, 'reason': 'laya_deferred'}
     payload = _payload(selected, action)
     def failed():
-        memory.setdefault('failed', {})[_key(selected, action)] = {**failure_record(tick), 'time': time.time(), 'paused': bool((selected.get('context') or {}).get('configuring'))}
+        memory.setdefault('failed', {})[_key(selected, action)] = {**failure_record(tick), 'time': time.time(), 'paused': bool((selected.get('context') or {}).get('configuring')), 'state': _fingerprint(_readiness(selected, action))}
     try:
         live = collect(client, snapshot)
         prepare({'map': snapshot['map'], 'game': snapshot.get('game') or {}, 'development': {'specialists': live}}, {})
@@ -435,7 +442,29 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
             if row.get('operation') == 'name':
                 session['named'] = (session['named'] + [_fingerprint((native.get('configuration') or {}).get('selected_packs'))])[-16:]
         else:
-            memory.setdefault('issued', {})[_subject(row, action)] = {'tick': tick}
+            memory.setdefault('issued', {})[_subject(row, action)] = {'tick': tick, 'state': _fingerprint(_readiness(row, action))}
     else:
         failed()
     return outcome
+
+
+def execute(client, snapshot, map_state, action, selected):
+    import colony_sessions
+    if selected.get('defer'): return _execute(client, snapshot, map_state, action, selected)
+    if not selected.get('context'):
+        payload = _payload(selected, action)
+        rows = snapshot.get('development', {}).get('specialists', {}).get('options', {}).get(action) or {}
+        selected = next((row for row in rows.values() if _payload(row, action) == payload), selected)
+    key = _key(selected, action)
+    readiness = colony_sessions.transition_signature({'payload': _payload(selected, action), 'readiness': _readiness(selected, action), 'material': _material(selected.get('context') or {}), 'configuration': (selected.get('context') or {}).get('configuration')})
+    memory = colony_sessions.transition_memory(map_state, 'specialist_transitions', snapshot)
+    if colony_sessions.transition_wait(memory, key, readiness):
+        return {'applied': False, 'reason': 'native_transition_awaiting_observation'}
+    try:
+        result = _execute(client, snapshot, map_state, action, selected)
+    except Exception:
+        colony_sessions.transition_record(memory, key, readiness, {'applied': False, 'reason': 'network_outcome_unknown'})
+        raise
+    colony_sessions.transition_record(memory, key, readiness, result,
+        recovery_seconds=60 if (selected.get('context') or {}).get('configuring') else 30)
+    return result

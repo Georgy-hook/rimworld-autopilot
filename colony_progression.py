@@ -183,7 +183,7 @@ def collect(client, snapshot):
     return result
 
 
-def _options(context):
+def _raw_options(context):
     current = (context.get("current") or {}).get("name")
     frontier = set((context.get("ship_research") or {}).get("frontier") or [])
     options = {}
@@ -204,6 +204,8 @@ def prepare(snapshot, map_state):
     context = snapshot.setdefault("development", {}).setdefault("progression", {})
     if context.get("victory_verified") is True or (context.get("endings") or {}).get("victory_verified") is True:
         return []
+    import colony_sessions
+    context["_transition_memory"] = colony_sessions.transition_memory(map_state, "progression_transitions", snapshot)
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
     chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
@@ -228,7 +230,7 @@ def prepare(snapshot, map_state):
     return [action for action in actions if not cooling[action] or pending_action(context) == action]
 
 
-def ending_options(context):
+def _ending_options(context):
     native = context.get("endings") or {}
     if native.get("victory_verified"):
         return {}
@@ -273,6 +275,27 @@ def ending_options(context):
     return options
 
 
+
+def _transition_row(row):
+    import colony_sessions
+    observation = dict(row)
+    for field in ('expires_in_ticks', 'remaining_points', 'progress', 'inspect', 'description'):
+        observation.pop(field, None)
+    if row.get('kind') == 'journey':
+        for field in ('label', 'travelers', 'home_food_nutrition', 'mass', 'capacity', 'approximate_distance_tiles',
+                      'travel_estimate_reason', 'travel_days', 'food_margin_days', 'native_approx_food_days', 'daily_nutrition'):
+            observation.pop(field, None)
+        if 'home_pawn_ids' in row: observation.pop('colonists_at_home', None)
+    return colony_sessions.transition_signature(observation)
+
+
+def ending_options(context):
+    import colony_sessions
+    rows = _ending_options(context)
+    memory = context.get('_transition_memory') or {}
+    return {key: row for key, row in rows.items() if not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
+
+
 def journey_summary(context):
     route = context.get("chosen_ending_route")
     native = context.get("ending_journey") or {}
@@ -299,7 +322,7 @@ def summary(snapshot):
     return {"journey_blockers": len(ready.get("blockers") or []), "journey_needs": ready} if ready else {}
 
 
-def boarding_options(context):
+def _rawboarding_options(context):
     options = {}
     for ship in context.get("native_milestones") or []:
         if not isinstance(ship, dict) or ship.get("countdown") or ship.get("hostile_pawns", 0):
@@ -314,7 +337,7 @@ def boarding_options(context):
     return options
 
 
-def ship_options(context):
+def _rawship_options(context):
     options = {}
     for ship in context.get("native_milestones") or []:
         if not isinstance(ship, dict) or ship.get("countdown"):
@@ -461,7 +484,7 @@ def choose(agent, state, action, snapshot):
     return ({'defer': True} if selected == 'defer' else candidates[selected]), raw
 
 
-def execute(client, snapshot, map_state, action, selected):
+def _execute(client, snapshot, map_state, action, selected):
     if action not in ACTIONS:
         return {"applied": False, "reason": "deferred or unsupported action"}
     if selected.get("blocked"):
@@ -550,3 +573,39 @@ def assess(action, snapshot):
             "risk": "Diverting researchers can worsen food, care and defense; switching delays current unlocks.",
             "inaction": "Retains current project and labor flexibility but postpones missing technologies.",
             "uncertainty": "No reliable completion date without throughput; research completion alone never verifies victory."}
+
+
+def execute(client, snapshot, map_state, action, selected):
+    import colony_sessions
+    if selected.get('defer') or selected.get('blocked'):
+        return _execute(client, snapshot, map_state, action, selected)
+    readiness = _transition_row(selected)
+    key = action + ':' + readiness
+    memory = colony_sessions.transition_memory(map_state, 'progression_transitions', snapshot)
+    if colony_sessions.transition_wait(memory, key, readiness):
+        return {'applied': False, 'reason': 'native_transition_awaiting_observation'}
+    try:
+        result = _execute(client, snapshot, map_state, action, selected)
+    except Exception:
+        colony_sessions.transition_record(memory, key, readiness, {'applied': False, 'reason': 'network_outcome_unknown'})
+        raise
+    colony_sessions.transition_record(memory, key, readiness, result)
+    return result
+
+
+def _filter_transitions(context, action, rows):
+    import colony_sessions
+    memory = context.get('_transition_memory') or {}
+    return {key: row for key, row in rows.items() if not colony_sessions.transition_wait(memory, action + ':' + _transition_row(row), _transition_row(row))}
+
+
+def _options(context):
+    return _filter_transitions(context, 'progression_research', _raw_options(context))
+
+
+def boarding_options(context):
+    return _filter_transitions(context, 'progression_boardship', _rawboarding_options(context))
+
+
+def ship_options(context):
+    return _filter_transitions(context, 'progression_ship', _rawship_options(context))

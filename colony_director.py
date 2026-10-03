@@ -1781,6 +1781,41 @@ def clear_action_failure(map_state: dict[str, Any], choice: str) -> None:
         failures.pop(choice, None)
 
 
+def action_outcome(choice: str, result: Any) -> str:
+    """A completed Python call is not evidence that RimWorld accepted an order."""
+    if not isinstance(result, dict):
+        return "unknown"
+    if result.get("applied") is True:
+        return "accepted"
+    if result.get("fulfilled") is True:
+        return "fulfilled"
+    if (result.get("deliberate_defer") is True or result.get("deferred") is True
+            or choice in {"hold_survival", "leave_wildlife_alone"}
+            or str(result.get("reason") or "").startswith("laya_")
+            or result.get("reason") in {"native_transition_awaiting_observation", "native_transition_retry_wait"}):
+        return "deferred"
+    return "unknown" if result.get("outcome_unknown") or result.get("applied") is not False else "rejected"
+
+
+def interrupt_blocks_development(record: dict[str, Any] | None) -> bool:
+    return record is not None and record.get("blocks_development", True) is not False
+
+
+def remember_action_outcome(map_state: dict[str, Any], choice: str, result: Any) -> str:
+    outcome = action_outcome(choice, result)
+    if outcome in {"accepted", "fulfilled", "deferred"}:
+        clear_action_failure(map_state, choice)
+    else:
+        # These providers already hold exact-subject retry memory. A second
+        # action-wide gate would hide a different urgent patient or new target.
+        scoped = (colony_modules.owner(choice) is not None or choice in capabilities.ACTIONS
+                  or choice == "equip_colonists")
+        reason = (result.get("reason") or result.get("error")) if isinstance(result, dict) else None
+        if not scoped or not reason:
+            register_action_failure(map_state, choice, reason or "Order produced no acknowledged effect")
+    return outcome
+
+
 def filter_backed_off_choices(
     map_state: dict[str, Any],
     choices: list[str] | dict[str, Any],
@@ -3482,19 +3517,6 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     ):
         one_time.append("unforbid_supplies")
 
-    unarmed_fighters = [pawn for pawn in (snapshot.get("combat") or {}).get("colonists", [])
-                        if not pawn.get("is_dead") and not pawn.get("is_downed")
-                        and pawn.get("can_fight") is not False
-                        and not pawn.get("has_ranged_weapon") and bridge.first_number(pawn.get("manipulation"), 1) >= 0.65]
-    free_weapons = [weapon for weapon in (snapshot.get("combat") or {}).get("available_weapons", [])
-                    if weapon.get("is_ranged") and weapon.get("id") is not None
-                    and any(not bridge.combat_planner.errand_exposed(
-                        snapshot, weapon.get("position"), pawn.get("position"))
-                        for pawn in unarmed_fighters)]
-    if unarmed_fighters and free_weapons and not issued_recently(map_state, "equip_colonists", tick, retry_ticks=2500):
-        details["equip_context"] = {"unarmed": len(unarmed_fighters), "available_ranged": len(free_weapons)}
-        one_time.append("equip_colonists")
-
     issued = map_state.setdefault("issued", {})
     resources = snapshot["map"]["resources"]
     lowest_food = min((float(c.get("hunger") or 0.0) for c in snapshot["colonists"]), default=1.0)
@@ -3757,12 +3779,12 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             dev["hunt_options"] = emergency_hunt_options
             dev["fighter_context"] = details["fighter_context"]
             emergency_actions.append("designate_safe_hunting")
-        if wild_food_groups and can_work("PlantCutting") and not issued_recently(map_state, "priority:PlantCutting", tick, retry_ticks=15000):
+        if wild_food_groups and priority_deficit_workers(snapshot, "PlantCutting"):
             emergency_actions.append("prioritize_plant_cutting")
-        if emergency_hunt_options and can_work("Hunting") and not issued_recently(map_state, "priority:Hunting", tick, retry_ticks=15000):
+        if emergency_hunt_options and priority_deficit_workers(snapshot, "Hunting"):
             emergency_actions.append("prioritize_hunting")
         if (int(resources.get("raw_food") or 0) > 0 and has_cooking_station
-                and can_work("Cooking") and not issued_recently(map_state, "priority:Cooking", tick, retry_ticks=15000)):
+                and priority_deficit_workers(snapshot, "Cooking")):
             emergency_actions.append("prioritize_cooking")
         details["food_emergency_context"] = {
             "food": int(resources.get("food") or 0),
@@ -3811,7 +3833,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if butcher_center and not local_butcher_station_present(dev, butcher_center):
         dev["butchery_gap"] = len(butcher_cluster)
         details["butcher_cluster_center"] = butcher_center
-        if not issued_recently(map_state, "butcher_spot", tick, retry_ticks=1500):
+        site = local_butcher_plan(client, snapshot, butcher_center)
+        if site is not None:
+            details["butcher_site"] = site
             corpse_actions.append("build_butcher_spot")
     if all_corpses and can_work("Hauling") and (human_dump_exists or animal_dump_exists or counts.get("Grave", 0) > 0) and not issued_recently(map_state, "priority:Burial", tick, retry_ticks=30000):
         corpse_actions.append("prioritize_burial")
@@ -4098,8 +4122,9 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     food_tables = [row for row in tables if str(row.get("thing_def") or "") in {
         "Campfire", "FueledStove", "ElectricStove", "TableButcher", "ButcherSpot",
     }]
-    if (food_tables and food_bills_need_configuration(client, food_tables)
-            and not issued_recently(map_state, "food_bills", tick, retry_ticks=15000)):
+    food_targets = food_bill_targets(client, food_tables)
+    if food_targets:
+        details["food_bill_targets"] = food_targets
         one_time.append("configure_food_bills")
     cooking_options = cooking_rebalance_options(snapshot, int(map_state.get("reserved_researcher_id") or 0))
     if cooking_options and not issued_recently(map_state, "cooking_rebalance", tick, retry_ticks=12000):
@@ -4699,9 +4724,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         "psychic_force": "balanced", "mechanized_force": "balanced",
         "anomaly_weapons": "weapons", "gravship_security": "balanced",
     }.get(military_focus, military_focus)
-    can_equip_fighters = bool(unarmed_fighters and free_weapons)
     can_start_armament_research = has_research_bench and current.lower() == "none"
-    if current_doctrine and (can_equip_fighters or can_start_armament_research) and not issued_recently(map_state, "armament", tick, retry_ticks=60000):
+    if current_doctrine and can_start_armament_research and not issued_recently(map_state, "armament", tick, retry_ticks=60000):
         underarmed = sum(1 for p in snapshot.get("combat", {}).get("colonists", []) if not p.get("has_ranged_weapon"))
         if underarmed or armament_focus in {"weapons", "armor", "balanced"}:
             details["armament_context"] = {
@@ -5424,27 +5448,26 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if counts.get("Bed", 0) + counts.get("SleepingSpot", 0) < len(snapshot["colonists"]) or any(
         counts.get(name, 0) == 0 for name in ("FueledStove", "SimpleResearchBench")
     ):
-        if can_work("Construction") and not issued_recently(map_state, "priority:Construction", tick, retry_ticks=60000):
+        if priority_deficit_workers(snapshot, "Construction"):
             maintenance.append("prioritize_construction")
     if current.lower() != "none" and has_research_bench and not researcher_is_dedicated(snapshot):
         if research_staffing_plan(snapshot) and not issued_recently(map_state, "priority:Research", tick, retry_ticks=12000):
             maintenance.append("prioritize_research")
     if has_cooking_station and meals < max(8, len(snapshot["colonists"]) * 4):
-        if can_work("Cooking") and not issued_recently(map_state, "priority:Cooking", tick, retry_ticks=60000):
+        if priority_deficit_workers(snapshot, "Cooking"):
             maintenance.append("prioritize_cooking")
-    if can_work("Growing") and not issued_recently(map_state, "priority:Growing", tick, retry_ticks=60000):
+    if priority_deficit_workers(snapshot, "Growing"):
         maintenance.append("prioritize_growing")
-    if can_work("Hauling") and not issued_recently(map_state, "priority:Hauling", tick, retry_ticks=60000):
+    if priority_deficit_workers(snapshot, "Hauling"):
         maintenance.append("prioritize_hauling")
-    if can_work("PlantCutting") and not issued_recently(map_state, "priority:PlantCutting", tick, retry_ticks=60000):
+    if priority_deficit_workers(snapshot, "PlantCutting"):
         maintenance.append("prioritize_plant_cutting")
-    if can_work("Cleaning") and not issued_recently(map_state, "priority:Cleaning", tick, retry_ticks=60000):
+    if priority_deficit_workers(snapshot, "Cleaning"):
         maintenance.append("prioritize_cleaning")
     if snapshot["map"].get("animals", 0) > 0:
-        if (not colony_recovering and can_work("Hunting")
-                and not issued_recently(map_state, "priority:Hunting", tick, retry_ticks=60000)):
+        if (not colony_recovering and priority_deficit_workers(snapshot, "Hunting")):
             maintenance.append("prioritize_hunting")
-        if can_work("Handling") and not issued_recently(map_state, "priority:Handling", tick, retry_ticks=60000):
+        if priority_deficit_workers(snapshot, "Handling"):
             maintenance.append("prioritize_handling")
         if details.get("hunt_options") and not issued_recently(map_state, "safe_hunting", tick, retry_ticks=60000):
             maintenance.append("designate_safe_hunting")
@@ -5557,6 +5580,15 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["live_work_options"] = work_options
         one_time.append("set_work_priority")
     capability_actions = capabilities.prepare(snapshot, map_state)
+    # Founder arming is a view of the same executable plans used for model
+    # parameters and orders. Never offer a separately reconstructed pawn list.
+    founders = capabilities.founder_weapon_snapshot(snapshot)
+    founder_plans = founders["development"]["capability_plans"]["improve_weapon_loadout"]
+    if founder_plans:
+        details["equip_context"] = {"unarmed": len(founder_plans), "available_ranged":
+            len({weapon for plan in founder_plans.values() for weapon in plan["weapons"]})}
+        one_time.append("equip_colonists")
+        capability_actions = [a for a in capability_actions if a != "improve_weapon_loadout"]
     # Preserve sufficient food acreage, while permitting expansion of small
     # fields and separate plots for a selected crop-dependent economic plan.
     if any("Growing" in str(z.get("type")) for z in zones) and not map_state.get("pending_income_crop") and capabilities.crop_nutrition_estimate(snapshot) >= len(snapshot["colonists"]) * 2.0 * 1.3 and not (int(counts.get("SunLamp") or 0) > 0
@@ -5565,6 +5597,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     one_time.extend(capability_actions)
     one_time.extend(colony_modules.prepare(snapshot, map_state))
     actionable = list(dict.fromkeys(one_time + maintenance))
+    # Remove failed legacy choices before focus rules narrow the alternatives.
+    # Filtering afterwards could leave only hold_survival for a bad candidate.
+    actionable, blocked = filter_backed_off_choices(map_state, actionable)
+    if blocked:
+        dev["temporarily_blocked_actions"] = blocked
     if not can_work("Construction"):
         actionable = [action for action in actionable if not requires_builder_now(action)]
     actionable = defer_discretionary_work_until_shelter(snapshot, map_state, actionable)
@@ -6368,7 +6405,7 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
         q["worker_pawn"] = {"type": "choice", "instructions": "Choose a mobile capable builder to finish the temperature control now; consider current injuries and other urgent duties.", "criteria": worker_criteria(snapshot, "Construction")}
     elif action in {"prioritize_construction", "prioritize_burial"}:
         skill = "Construction" if action == "prioritize_construction" else "Hauling"
-        q["worker_pawn"] = {"type": "choice", "instructions": "Choose the exact colonist. Corpse-tolerant traits reduce mood cost; injuries and missing limbs reduce throughput.", "criteria": worker_criteria(snapshot, skill)}
+        q["worker_pawn"] = {"type": "choice", "instructions": "Choose the exact colonist. Corpse-tolerant traits reduce mood cost; injuries and missing limbs reduce throughput.", "criteria": priority_worker_criteria(snapshot, skill)}
     elif action == "choose_colony_doctrine" and dev.get("doctrine_context"):
         # Doctrine uses its own conditional cascade in choose_action: broad
         # domain -> exact direction -> compatible axes -> economy product.
@@ -6644,7 +6681,7 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
             merged_answers.update(steps[-1].get("answers", {}))
         raw_details = {"mode": "live_catalog", "steps": steps}
     elif choice == "equip_colonists" and snapshot.get("development", {}).get("capability_plans", {}).get("improve_weapon_loadout"):
-        extra, selection_raw = capabilities.choose(agent, state, "improve_weapon_loadout", snapshot)
+        extra, selection_raw = capabilities.choose(agent, state, "improve_weapon_loadout", capabilities.founder_weapon_snapshot(snapshot))
         parsed.update(extra)
         raw_details = selection_raw
         merged_answers.update(selection_raw.get("answers", {}))
@@ -7077,6 +7114,50 @@ def post_blueprint(client: bridge.RimApiClient, map_id: int, anchor: dict[str, i
     )
 
 
+def observed_building_cells(client: bridge.RimApiClient, map_id: int) -> set[tuple[str, int, int]]:
+    projects_raw = client.get("/api/v1/builder/projects", map_id=map_id)
+    projects = projects_raw.get("projects") or [] if isinstance(projects_raw, dict) else []
+    built = client.get("/api/v1/map/buildings", map_id=map_id)
+    return {(str(row.get("def_name") or row.get("def") or ""),
+                 (row.get("position") or {}).get("x"), (row.get("position") or {}).get("z"))
+                for row in projects + (built if isinstance(built, list) else [])
+                if isinstance(row, dict)}
+
+
+def observed_blueprint(client: bridge.RimApiClient, map_id: int,
+                       origin: dict[str, int], layout: dict[str, Any]) -> bool:
+    observed = observed_building_cells(client, map_id)
+    expected = {(row["def_name"], int(origin["x"]) + int(row.get("rel_x") or 0),
+                 int(origin["z"]) + int(row.get("rel_z") or 0))
+                for row in layout.get("buildings") or []}
+    return bool(expected) and expected <= observed
+
+
+def post_observed_blueprint(client: bridge.RimApiClient, map_id: int,
+                            origin: dict[str, int], layout: dict[str, Any]) -> dict[str, Any]:
+    response, error_text = None, None
+    try:
+        existing = observed_building_cells(client, map_id)
+    except bridge.RimApiError as error:
+        return {"applied": False, "response": None, "reason": str(error)}
+    missing = [row for row in layout.get("buildings") or []
+               if (row["def_name"], int(origin["x"]) + int(row.get("rel_x") or 0),
+                   int(origin["z"]) + int(row.get("rel_z") or 0)) not in existing]
+    if not missing and layout.get("buildings"):
+        return {"applied": True, "fulfilled": True, "response": None, "reason": None}
+    pending = {**layout, "buildings": missing}
+    try:
+        response = post_blueprint(client, map_id, origin, pending)
+    except bridge.RimApiError as error:
+        error_text = str(error)
+    try:
+        observed = observed_blueprint(client, map_id, origin, layout)
+    except bridge.RimApiError as error:
+        observed, error_text = False, str(error)
+    return {"applied": observed, "response": response,
+            "reason": error_text or (None if observed else "No requested blueprint or building was observed")}
+
+
 def place_checked_building(client: bridge.RimApiClient, map_id: int, plan: dict[str, Any],
                            near: dict[str, int], stuff: str | None = None, *,
                            radius: int = 80, expand_search: bool = True,
@@ -7212,26 +7293,64 @@ def dedicate_researcher(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
                 for work, priority, response in changes]}
 
 
+def priority_deficit_workers(snapshot: dict[str, Any], work: str, *,
+                             preferred_ids: set[int] | None = None,
+                             avoid_ids: set[int] | None = None) -> list[dict[str, Any]]:
+    eligible = [pawn for pawn in snapshot.get("colonists") or []
+                if not pawn.get("in_mental_state")
+                and (preferred_ids is None or int(pawn.get("id") or 0) in preferred_ids)]
+    if avoid_ids:
+        alternatives = [pawn for pawn in eligible if int(pawn.get("id") or 0) not in avoid_ids]
+        if bridge.choose_worker(alternatives, work) is not None:
+            eligible = alternatives
+    best = bridge.choose_worker(eligible, work)
+    if best is None or int((((best.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1:
+        return []
+    return [best]
+
+
+def priority_worker_criteria(snapshot: dict[str, Any], work: str) -> dict[str, str]:
+    ids = {str(pawn["id"]) for pawn in priority_deficit_workers(snapshot, work)}
+    return {key: value for key, value in worker_criteria(snapshot, work).items() if key in ids}
+
+
 def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str, pawn_id: int | None = None,
                *, avoid_ids: set[int] | None = None) -> Any:
+    eligible = priority_deficit_workers(snapshot, work,
+        preferred_ids={int(pawn_id)} if pawn_id is not None else None, avoid_ids=avoid_ids)
+    selected = next((p for p in snapshot["colonists"]
+                     if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)), None)
+    if selected is not None and int((((selected.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1:
+        return {"applied": False, "fulfilled": True, "reason": "Work priority is already 1"}
     target = next(
-        (p for p in snapshot["colonists"] if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)),
+        (p for p in eligible if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)),
         None,
     )
     if target is None and pawn_id is None and avoid_ids:
-        alternatives = [pawn for pawn in snapshot["colonists"]
+        alternatives = [pawn for pawn in eligible
                         if int(pawn.get("id") or 0) not in avoid_ids]
         target = bridge.choose_worker(alternatives, work)
-    target = target or bridge.choose_worker(snapshot["colonists"], work)
+    if pawn_id is None:
+        target = target or bridge.choose_worker(eligible, work)
     if target is None:
         return {"applied": False, "reason": f"No eligible colonist for {work}"}
     if bridge.active_immune_diseases(target) and work not in {"Patient", "PatientBedRest"}:
         return {"applied": False, "reason": f"{target.get('name')} needs disease recovery"}
-    response = client.post(
-        "/api/v1/colonist/work-priority",
-        body={"id": target["id"], "work": work, "priority": 1},
-    )
-    return {"applied": True, "colonist": target["name"], "work": work, "response": response}
+    response, error_text = None, None
+    try:
+        response = client.post("/api/v1/colonist/work-priority",
+                               body={"id": target["id"], "work": work, "priority": 1})
+    except bridge.RimApiError as error:
+        error_text = str(error)
+    try:
+        fresh = bridge.normalize_colonists(client.get("/api/v2/colonists/detailed"))
+        observed = next((pawn for pawn in fresh if int(pawn.get("id") or 0) == int(target["id"])), {})
+        fulfilled = int((((observed.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1
+    except bridge.RimApiError as error:
+        fulfilled, error_text = False, str(error)
+    return {"applied": fulfilled, "pawn_id": target["id"], "colonist": target["name"],
+            "work": work, "response": response,
+            "reason": error_text or (None if fulfilled else "Priority change was not observed")}
 
 
 def free_cold_shelter_builder(client: bridge.RimApiClient, snapshot: dict[str, Any],
@@ -7254,57 +7373,105 @@ def free_cold_shelter_builder(client: bridge.RimApiClient, snapshot: dict[str, A
     return {"doctor_priority": 2, "builder_id": int(pawn_id), "response": response}
 
 
-def food_bills_need_configuration(client: bridge.RimApiClient | None,
-                                  tables: list[dict[str, Any]]) -> bool:
-    """Offer the recipe action only when a real food table lacks its bill."""
-    recipes_by_table = {
-        "Campfire": "CookMealSimple", "FueledStove": "CookMealSimple",
-        "ElectricStove": "CookMealSimple", "TableButcher": "ButcherCorpseFlesh",
-        "ButcherSpot": "ButcherCorpseFlesh",
-    }
-    for table in tables:
-        required = recipes_by_table.get(str(table.get("thing_def") or ""))
-        if not required:
+def local_butcher_plan(client: bridge.RimApiClient | None, snapshot: dict[str, Any],
+                       center: dict[str, int], exact: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Query a bounded local placement plan; unknown placement is not executable."""
+    if client is None:
+        return None
+    near = (exact or {}).get("position") or center
+    try:
+        checked = client.post("/api/v1/builder/site-options", body={
+            "map_id": snapshot["map"]["id"], "def_name": "ButcherSpot",
+            "near": near, "radius": 1 if exact else 24, "limit": 12,
+        })
+    except bridge.RimApiError:
+        return None
+    for site in checked.get("sites") or []:
+        point = site.get("position") or {}
+        if (point.get("x") is None or point.get("z") is None
+                or squared_distance(point, center) > 24 ** 2
+                or bridge.combat_planner.errand_exposed(snapshot, point)):
             continue
-        if int(table.get("bills_count") or 0) <= 0:
-            return True
-        if client is None or table.get("id") is None:
+        if exact and (point.get("x") != near.get("x") or point.get("z") != near.get("z")):
+            continue
+        return {"position": point, "rotation": int(site.get("rotation") or 0)}
+    return None
+
+
+def food_bill_targets(client: bridge.RimApiClient | None,
+                      tables: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep confirmed missing recipes separate from tables whose state is unknown."""
+    recipes = {"Campfire": "CookMealSimple", "FueledStove": "CookMealSimple",
+               "ElectricStove": "CookMealSimple", "TableButcher": "ButcherCorpseFlesh",
+               "ButcherSpot": "ButcherCorpseFlesh"}
+    targets = []
+    for table in tables:
+        required = recipes.get(str(table.get("thing_def") or ""))
+        if required is None or table.get("id") is None:
+            continue
+        if client is None:
+            if int(table.get("bills_count") or 0) == 0:
+                targets.append(table)
             continue
         try:
             bills = client.get("/api/v1/buildings/bills", building_id=int(table["id"]))
         except bridge.RimApiError:
-            return True  # Unknown bill state: keep the repair available.
+            continue
         if isinstance(bills, list) and not any(
-            isinstance(row, dict) and str(row.get("recipe_def_name") or "") == required
-            for row in bills
-        ):
-            return True
-    return False
+                isinstance(row, dict) and row.get("recipe_def_name") == required for row in bills):
+            targets.append(table)
+    return targets
+
+
+def food_bills_need_configuration(client: bridge.RimApiClient | None,
+                                  tables: list[dict[str, Any]]) -> bool:
+    """Offer the recipe action only when a real food table lacks its bill."""
+    return bool(food_bill_targets(client, tables))
 
 
 def configure_food_bills(client: bridge.RimApiClient, tables: list[dict[str, Any]]) -> dict[str, Any]:
-    responses = []
+    responses, fulfilled, failures = [], [], []
     for table in tables:
         def_name = str(table.get("thing_def") or "")
-        table_id = int(table.get("id"))
+        required = ("CookMealSimple" if def_name in {"Campfire", "FueledStove", "ElectricStove"}
+                    else "ButcherCorpseFlesh" if def_name in {"TableButcher", "ButcherSpot"} else None)
+        if required is None or table.get("id") is None:
+            continue
+        table_id = int(table["id"])
         try:
             bills = client.get("/api/v1/buildings/bills", building_id=table_id)
-        except bridge.RimApiError:
+        except bridge.RimApiError as error:
+            failures.append({"table_id": table_id, "reason": str(error)})
             continue
-        recipes = {str(row.get("recipe_def_name")) for row in bills if isinstance(row, dict)}
-        if def_name in {"Campfire", "FueledStove", "ElectricStove"} and "CookMealSimple" not in recipes:
-            responses.append(client.post(
-                "/api/v1/buildings/bills/add",
-                query={"building_id": table_id},
-                body={"recipe_def_name": "CookMealSimple", "repeat_mode": "TargetCount", "target_count": 20, "pause_when_satisfied": True, "unpause_when_you_have": 8},
-            ))
-        if def_name in {"TableButcher", "ButcherSpot"} and "ButcherCorpseFlesh" not in recipes:
-            responses.append(client.post(
-                "/api/v1/buildings/bills/add",
-                query={"building_id": table_id},
-                body={"recipe_def_name": "ButcherCorpseFlesh", "repeat_mode": "Forever"},
-            ))
-    return {"applied": bool(responses), "responses": responses}
+        if not isinstance(bills, list):
+            failures.append({"table_id": table_id, "reason": "Unknown bill state"})
+            continue
+        if any(isinstance(row, dict) and row.get("recipe_def_name") == required for row in bills):
+            fulfilled.append(table_id)
+            continue
+        body = {"recipe_def_name": required, "repeat_mode": "Forever"}
+        if required == "CookMealSimple":
+            body.update(repeat_mode="TargetCount", target_count=20, pause_when_satisfied=True,
+                        unpause_when_you_have=8)
+        error_text = None
+        try:
+            responses.append(client.post("/api/v1/buildings/bills/add",
+                                         query={"building_id": table_id}, body=body))
+        except bridge.RimApiError as error:
+            error_text = str(error)
+        try:
+            observed = client.get("/api/v1/buildings/bills", building_id=table_id)
+        except bridge.RimApiError as error:
+            failures.append({"table_id": table_id, "reason": str(error)})
+            continue
+        if isinstance(observed, list) and any(isinstance(row, dict)
+                and row.get("recipe_def_name") == required for row in observed):
+            fulfilled.append(table_id)
+        else:
+            failures.append({"table_id": table_id,
+                             "reason": error_text or "Bill was not observed after request"})
+    return {"applied": bool(fulfilled), "responses": responses,
+            "fulfilled_table_ids": fulfilled, "failures": failures}
 
 
 def ensure_bill(client: bridge.RimApiClient, table: dict[str, Any], recipe: str, target_count: int = 20) -> Any:
@@ -7788,63 +7955,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         map_state["weapon_shelf_site"] = site
         return {"applied": True, "phase": "build", "site": site, "response": result}
     if choice == "equip_colonists":
-        if details.get("weapon_defer"):
-            issued["equip_colonists"] = tick
-            return capabilities.execute(client, snapshot, map_state, "improve_weapon_loadout", details)
-        fighters = [pawn for pawn in snapshot.get("combat", {}).get("colonists", [])
-                    if not pawn.get("is_dead") and not pawn.get("is_downed")
-                    and not pawn.get("is_in_mental_state") and pawn.get("current_job") not in capabilities.CARE_JOBS
-                    and pawn.get("id") not in bridge.combat_planner.protected_emergency_care_ids(snapshot)
-                    and pawn.get("can_fight") is not False
-                    and not pawn.get("has_ranged_weapon") and bridge.first_number(pawn.get("manipulation"), 1) >= 0.65]
-        weapons = [weapon for weapon in snapshot.get("combat", {}).get("available_weapons", [])
-                   if weapon.get("is_ranged") and weapon.get("id") is not None]
-        fighters.sort(key=lambda pawn: int(pawn.get("shooting_skill") or 0), reverse=True)
-        responses = []
-        assignments = []
-        for pawn in fighters:
-            safe_weapons = [weapon for weapon in weapons if not bridge.combat_planner.errand_exposed(
-                snapshot, weapon.get("position"), pawn.get("position")) and capabilities.weapon_compatible(pawn, weapon)]
-            if details.get("weapon_pawn") is not None:
-                if str(pawn["id"]) != str(details["weapon_pawn"]):
-                    continue
-                safe_weapons = [w for w in safe_weapons if str(w["id"]) == str(details.get("weapon_item"))]
-            if not safe_weapons:
-                continue
-            pos = pawn.get("position") or {}
-            weapon = max(safe_weapons, key=lambda row: capabilities.weapon_score(pawn, row))
-            weapons.remove(weapon)
-            if weapon.get("is_forbidden"):
-                responses.append(client.post("/api/v1/things/set-forbidden", body={
-                    "map_id": map_id, "thing_ids": [int(weapon["id"])], "forbidden": False,
-                }))
-            responses.append(client.post("/api/v1/pawn/job", body={
-                "pawn_id": int(pawn["id"]), "job_def": "Equip", "target_thing_id": int(weapon["id"]),
-            }))
-            assignments.append(f"{pawn.get('name')} -> {weapon.get('label') or weapon.get('def_name')}")
-        if responses:
-            issued["equip_colonists"] = tick
-        return {"applied": bool(responses), "assignments": assignments, "responses": responses}
+        return capabilities.execute(client, capabilities.founder_weapon_snapshot(snapshot),
+                                    map_state, "improve_weapon_loadout", details)
     if choice == "prioritize_armament":
-        unarmed = [p for p in snapshot.get("combat", {}).get("colonists", [])
-                   if not p.get("has_ranged_weapon") and not p.get("is_dead") and not p.get("is_downed")
-                   and p.get("can_fight") is not False
-                   and bridge.first_number(p.get("manipulation"), 1) >= 0.65]
-        weapons = [w for w in snapshot.get("combat", {}).get("available_weapons", []) if w.get("is_ranged")]
-        responses = []
-        for pawn in unarmed:
-            compatible = [row for row in weapons if capabilities.weapon_compatible(pawn, row)
-                          and not bridge.combat_planner.errand_exposed(snapshot, row.get("position"), pawn.get("position"))]
-            weapon = max(compatible, key=lambda w: capabilities.weapon_score(pawn, w)) if compatible else None
-            if weapon is None:
-                continue
-            weapons.remove(weapon)
-            if weapon.get("is_forbidden"):
-                responses.append(client.post("/api/v1/things/set-forbidden", body={"map_id": map_id, "thing_ids": [int(weapon["id"])], "forbidden": False}))
-            responses.append(client.post("/api/v1/pawn/job", body={"pawn_id": int(pawn["id"]), "job_def": "Equip", "target_thing_id": int(weapon["id"])}))
-        if responses:
-            issued["armament"] = tick
-            return {"applied": True, "phase": "equip", "responses": responses}
         if not any("ResearchBench" in str(name) and int(amount or 0) > 0
                    for name, amount in (snapshot["development"].get("building_counts") or {}).items()):
             return {"applied": False, "reason": "No completed research bench is available"}
@@ -7974,20 +8087,20 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["animal_corpse_dump"] = tick
         return result
     if choice == "build_butcher_spot":
-        terrain = client.get("/api/v1/map/terrain", map_id=map_id)
         cluster, near_carcasses = animal_carcass_cluster(snapshot, anchor)
         if not cluster or near_carcasses is None:
             return {"applied": False, "reason": "No accessible animal carcass cluster remains"}
         if local_butcher_station_present(snapshot["development"], near_carcasses):
             return {"applied": False, "reason": "A butcher station is already planned or built beside this carcass cluster"}
-        site = open_recreation_site(terrain, anchor, snapshot["development"], desired=near_carcasses)
-        if site is None:
-            return {"applied": False, "reason": "No dry empty tile near the carcasses for a butcher spot"}
-        if squared_distance(site, near_carcasses) > 24 ** 2:
-            return {"applied": False, "reason": "No safe empty butcher tile within 24 cells of the carcass cluster"}
-        response = post_blueprint(client, map_id, site, blueprint([building("ButcherSpot", 0, 0)], 1, 1))
-        if not response.get("success"):
-            return {"applied": False, "site": site, "response": response}
+        plan = local_butcher_plan(client, snapshot, near_carcasses, details.get("butcher_site"))
+        if plan is None:
+            return {"applied": False, "reason": "No verified local butcher placement remains"}
+        site = plan["position"]
+        placed = post_observed_blueprint(client, map_id, site,
+            blueprint([building("ButcherSpot", 0, 0, rotation=plan["rotation"])], 1, 1))
+        if not placed["applied"]:
+            return {**placed, "site": site}
+        response = placed["response"]
         issued["butcher_spot"] = tick
         bill_response: dict[str, Any] = {"applied": False, "reason": "Butcher spot has not appeared as a work table yet"}
         bill_configured = False
@@ -8113,7 +8226,6 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                           if (site.get("position") or {}).get("x") == origin["x"]
                           and (site.get("position") or {}).get("z") == origin["z"]), None)
             if valid is None:
-                issued[f"heating_room:{room['room_id']}"] = tick
                 return {"applied": False, "reason": "The room's campfire cell has no valid interaction rotation",
                         "target": origin, "placement_check": checked.get("reason")}
             layout = blueprint([building("Campfire", 0, 0, rotation=int(valid["rotation"]))], 1, 1)
@@ -8123,12 +8235,10 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 return {"applied": False, "reason": "No verified live-grid cable route"}
             origin, layout = wired_heater_blueprint(
                 target, route, include_heater=choice == "build_room_heater")
-        response = client.post("/api/v1/builder/blueprint", body={
-            "map_id": map_id,
-            "position": origin,
-            "blueprint": layout,
-            "clear_obstacles": False,
-        })
+        placed = post_observed_blueprint(client, map_id, origin, layout)
+        if not placed["applied"]:
+            return {**placed, "room": room["room_id"], "target": target}
+        response = placed["response"]
         marker = (f"heater_power_room:{room['room_id']}" if choice == "connect_room_heater_power"
                   else f"heating_room:{room['room_id']}")
         issued[marker] = tick
@@ -8236,7 +8346,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
     if choice == "prioritize_burial":
         result = prioritize(client, snapshot, "Hauling", details.get("worker_pawn"))
         issued["priority:Burial"] = tick
-        issued["priority:Hauling"] = tick
+        if result.get("applied"):
+            issued["priority:Hauling"] = tick
+            issued[f"priority:Hauling:{result['pawn_id']}"] = tick
         return result
     if choice == "create_food_stockpile":
         terrain = client.get("/api/v1/map/terrain", map_id=map_id)
@@ -8641,8 +8753,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             map_state["campfire_attempts"] = int(map_state.get("campfire_attempts") or 0) + 1
         return result
     if choice == "configure_food_bills":
-        result = configure_food_bills(client, snapshot["development"]["work_tables"])
-        issued["food_bills"] = tick
+        result = configure_food_bills(client, details.get("food_bill_targets") or snapshot["development"]["work_tables"])
         return result
     if choice == "advance_research":
         target = details["research_target"]
@@ -9022,7 +9133,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         result = prioritize(client, snapshot, "Construction", worker_id)
         if doctor_change is not None:
             result["cold_shelter_staffing"] = doctor_change
-        issued["priority:Construction"] = tick
+        if result.get("applied"):
+            issued["priority:Construction"] = tick
+            issued[f"priority:Construction:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_firefighting":
         available_ids = set(details.get("firefighter_worker_ids") or [])
@@ -9079,7 +9192,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "project_thing_id": int(project_id),
             "pawn_id": int(worker_id),
         })
-        if isinstance(response, dict) and response.get("applied") is False:
+        if bridge.command_acceptance({"endpoint": "/api/v1/builder/prioritize"}, response) is not True:
             map_state.setdefault("failed_construction_projects", {})[str(project_id)] = {
                 "tick": tick,
                 "wood": int((snapshot["development"].get("item_counts") or {}).get("WoodLog") or 0),
@@ -9087,7 +9200,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                    if project is not None and construction_material_stock(project) is not None else {}),
             }
             return {"applied": False, "project_id": int(project_id),
-                    "builder_id": int(worker_id), "reason": response.get("reason"),
+                    "builder_id": int(worker_id), "reason": (response.get("reason") if isinstance(response, dict) else None)
+                    or "Construction job was not acknowledged",
                     "responses": [priority, response]}
         issued["thermal_project_priority" if choice == "prioritize_thermal_project"
                else "construction_project_priority"] = tick
@@ -9102,7 +9216,9 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return result
     if choice == "prioritize_cooking":
         result = prioritize(client, snapshot, "Cooking", avoid_ids=routine_avoid)
-        issued["priority:Cooking"] = tick
+        if result.get("applied"):
+            issued["priority:Cooking"] = tick
+            issued[f"priority:Cooking:{result['pawn_id']}"] = tick
         return result
     if choice == "rebalance_cooking":
         selected = str(details.get("cooking_rebalance_choice") or "")
@@ -9120,27 +9236,39 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 "priority": priority, "response": response}
     if choice == "prioritize_growing":
         result = prioritize(client, snapshot, "Growing", avoid_ids=routine_avoid)
-        issued["priority:Growing"] = tick
+        if result.get("applied"):
+            issued["priority:Growing"] = tick
+            issued[f"priority:Growing:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_hauling":
         result = prioritize(client, snapshot, "Hauling", avoid_ids=routine_avoid)
-        issued["priority:Hauling"] = tick
+        if result.get("applied"):
+            issued["priority:Hauling"] = tick
+            issued[f"priority:Hauling:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_hunting":
         result = prioritize(client, snapshot, "Hunting", avoid_ids=routine_avoid)
-        issued["priority:Hunting"] = tick
+        if result.get("applied"):
+            issued["priority:Hunting"] = tick
+            issued[f"priority:Hunting:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_handling":
         result = prioritize(client, snapshot, "Handling", avoid_ids=routine_avoid)
-        issued["priority:Handling"] = tick
+        if result.get("applied"):
+            issued["priority:Handling"] = tick
+            issued[f"priority:Handling:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_plant_cutting":
         result = prioritize(client, snapshot, "PlantCutting", avoid_ids=routine_avoid)
-        issued["priority:PlantCutting"] = tick
+        if result.get("applied"):
+            issued["priority:PlantCutting"] = tick
+            issued[f"priority:PlantCutting:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_cleaning":
         result = prioritize(client, snapshot, "Cleaning", avoid_ids=routine_avoid)
-        issued["priority:Cleaning"] = tick
+        if result.get("applied"):
+            issued["priority:Cleaning"] = tick
+            issued[f"priority:Cleaning:{result['pawn_id']}"] = tick
         return result
     if choice == "prioritize_rescue":
         result = prioritize(client, snapshot, "BasicWorker")
@@ -9462,7 +9590,7 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
             failure["retry_after"] = time.time() + (30 if result.get("deliberate_defer") else min(30, 5 * 2 ** (failure["count"] - 1)))
             map_state["expedition_readiness"] = {"observed_tick": int(snapshot["game"].get("tick") or 0), "reason": result.get("reason"), "readiness": details["expedition"].get("readiness") or {}}
         else:
-            clear_action_failure(map_state, choice)
+            remember_action_outcome(map_state, choice, result)
             if details.get("expedition") and isinstance(result, dict) and result.get("applied"):
                 map_state.pop("expedition_readiness", None)
     try:
@@ -9478,6 +9606,7 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
         "candidates": candidates,
         "decision": decision,
         "result": result,
+        "order_outcome": action_outcome(choice, result),
     }
     record["previous_outcome"] = snapshot["development"].get("outcome_feedback") or {}
     record["module_observations"] = snapshot["development"].get("module_status") or {}
@@ -10053,6 +10182,9 @@ def run_event_cycle(
         "timestamp": bridge.utc_now(), "mode": "event-director", "map_seed": seed,
         "event": event, "options": options, "blocked_options": blocked_responses,
         "decision": {"choice": response, "raw": raw, **details}, "result": result,
+        "blocks_development": not execution_failed and response not in {
+            "observe_event", "skip_trade", "defer_rescue", "defer_quest", "evaluate_animals",
+            "evaluate_recruit", "ask_laya_generic", "rescue_arrival", "delegate_to_combat_planner"},
     }
     save_state(state_path, state)
     bridge.append_log(log_path, record)
@@ -10100,8 +10232,9 @@ def run_rescue_site_cycle(
             for pawn in snapshot.get("combat", {}).get("colonists", [])
         )
         if release_active:
-            result = {"applied": False, "reason": "normal prisoner release job is still active"}
-            phase = "wait-for-release"
+            # The accepted job owns its pawn; unrelated expedition work can
+            # proceed without issuing the same release order every cycle.
+            return None
         else:
             result = order("/api/v1/world/rescue/site/secure")
             phase = "free-captive"
@@ -10114,7 +10247,9 @@ def run_rescue_site_cycle(
                     and result.get("success") is not False
                     and (result.get("applied") is True or (phase == "free-captive" and result.get("success") is True)))
     if acknowledged:
-        mission.pop("site_retry", None)
+        # Acceptance means the normal job was queued, not that the captive
+        # is freed. Retain the observation window until status/job changes.
+        mission["site_retry"]["awaiting_observation"] = True
         if phase == "return-home":
             for map_state in active_plans:
                 map_state["last_rescue_mission"] = map_state.pop("rescue_mission")
@@ -10122,7 +10257,7 @@ def run_rescue_site_cycle(
                 map_state["last_rescue_mission"]["completion"] = "unverified"
     record = {
         "timestamp": bridge.utc_now(), "mode": "rescue-site", "phase": phase,
-        "status": status, "result": result,
+        "status": status, "result": result, "blocks_development": acknowledged,
     }
     try:
         if overlay_language(client) == "en":
@@ -10667,8 +10802,7 @@ def combat_positioning_finished(snapshot: dict[str, Any], record: dict[str, Any]
 
 
 def combat_tactical_acceptance(response: Any) -> bool:
-    return isinstance(response, dict) and response.get("applied") is not False and any(
-        bool(response.get(k)) for k in ("positioned_pawn_ids", "attacking_pawn_ids", "psycast_queued"))
+    return bridge.combat_tactical_acceptance(response)
 
 
 def combat_record_rejected(record: dict | None) -> bool:
@@ -11559,7 +11693,14 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
                     "letter_id": int(letter_id), "option_label": label,
                     "letter_text": letter_text,
                 })
-                handled[letter_id] = tick
+                acknowledged = (isinstance(result, dict) and result.get("success") is True
+                                and result.get("applied", True) is True)
+                if acknowledged:
+                    handled[letter_id] = tick
+                else:
+                    map_state.setdefault("deferred_letters", {})[letter_id] = time.time() + 60
+                    result = {"applied": False, "response": result,
+                              "reason": "Letter reply was not acknowledged; retain the offer."}
             except bridge.RimApiError as exc:
                 map_state.setdefault("deferred_letters", {})[letter_id] = time.time() + 60
                 result = {"applied": False, "error": str(exc),
@@ -11679,8 +11820,9 @@ def main() -> int:
                     if not pending_world.get("quiet"):
                         bridge.append_log(args.log, pending_world)
                     save_state(args.state, state)
-                    time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
-                    continue
+                    if pending_world.get("blocks_development", True):
+                        time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
+                        continue
                 if isinstance(ending_evidence, dict) and ending_evidence.get("loaded_map_count") == 0:
                     world_snapshot = {"map": {"resources": {}}, "game": {"tick": ending_evidence.get("game_tick")},
                                       "colonists": [], "development": {}}
@@ -11740,8 +11882,9 @@ def main() -> int:
                     if not pending_record.get("quiet"):
                         bridge.append_log(args.log, pending_record)
                     save_state(args.state, state)
-                    time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
-                    continue
+                    if pending_record.get("blocks_development", True):
+                        time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
+                        continue
                 letter_record = run_letter_cycle(client, agent, snapshot, state, args.log)
                 if letter_record is not None:
                     save_state(args.state, state)
@@ -11888,7 +12031,9 @@ def main() -> int:
                             client.post("/api/v1/game/speed", query={"speed": 1})
                         publish_combat_overlay(client, last_combat_record, repeated=True)
                     else:
-                        record = bridge.run_cycle(client, agent, apply=True, confidence=0.0, log_path=args.log)
+                        record = bridge.run_cycle(client, agent, apply=True, confidence=0.0, log_path=args.log,
+                            combat_memory=map_state.setdefault("combat_attempts", {}), combat_signature=combat_order_signature)
+                        save_state(args.state, state)
                         publish_combat_overlay(client, record)
                         last_combat_signature = signature
                         last_combat_record = record
@@ -11974,7 +12119,8 @@ def main() -> int:
                     rescue_record = run_rescue_site_cycle(client, state, args.state, args.log, snapshot)
                     away_site = bool(snapshot.get("map", {}).get("is_temp_incident_map"))
                     if rescue_record is not None:
-                        next_colony_cycle = now + args.interval
+                        if interrupt_blocks_development(rescue_record):
+                            next_colony_cycle = now + args.interval
                         print(f"[{rescue_record['timestamp']}] rescue site: {rescue_record['phase']} | {rescue_record['result']}", flush=True)
                     ancient = get_ancient_danger(client, snapshot["map"]["id"]) if rescue_record is None and not away_site else {}
                     ancient_record = None
@@ -11988,9 +12134,11 @@ def main() -> int:
                             and not active_home_fire and now >= next_colony_cycle):
                         event_record = run_event_cycle(client, agent, state, args.state, args.log)
                         if event_record is not None:
-                            next_colony_cycle = now + args.interval
+                            if interrupt_blocks_development(event_record):
+                                next_colony_cycle = now + args.interval
                             print(f"[{event_record['timestamp']}] event: {event_record['decision']['choice']} | {event_record['result']}", flush=True)
-                    if rescue_record is None and ancient_record is None and event_record is None and now >= next_colony_cycle:
+                    if (not interrupt_blocks_development(rescue_record) and ancient_record is None
+                            and not interrupt_blocks_development(event_record) and now >= next_colony_cycle):
                         record = run_development_cycle(client, agent, state, args.state, args.log, expedition=away_site)
                         next_colony_cycle = now + (2.0 if active_home_fire else args.interval)
                         print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {record['result']}", flush=True)

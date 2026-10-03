@@ -11,6 +11,38 @@ namespace RIMAPI.Helpers
 {
     public static class ResilienceAutomationHelper
     {
+        public static List<ActiveNativeOrderDto> ActiveOrders(Map map)
+        {
+            var orders = new List<ActiveNativeOrderDto>();
+            foreach (Pawn worker in map.mapPawns.AllPawnsSpawned.Where(p => p.IsColonistPlayerControlled && !p.Dead))
+            {
+                Job job = worker.CurJob;
+                if (job == null) continue;
+                string kind;
+                Thing target;
+                Thing carried = worker.carryTracker?.CarriedThing;
+                // Native FoodFeedPatient.Deliveree is targetB; targetA is food.
+                // Native TakeToBed.Takee is targetA.
+                if (job.def == JobDefOf.FeedPatient) { kind = "feed"; target = job.targetB.Thing; }
+                else if (job.def == JobDefOf.Rescue) { kind = "rescue"; target = job.targetA.Thing; }
+                else if (job.def == JobDefOf.HaulToCell || job.def == JobDefOf.HaulToContainer)
+                {
+                    kind = "haul";
+                    // A split stack may change identity: use only the known
+                    // carried item when pickup has already happened.
+                    target = carried ?? job.targetA.Thing;
+                }
+                else continue;
+                if (target == null || target.Destroyed) continue;
+                orders.Add(new ActiveNativeOrderDto { Kind = kind, WorkerId = worker.thingIDNumber,
+                    TargetId = target.thingIDNumber, JobDef = job.def.defName,
+                    CarriedThingId = carried?.thingIDNumber });
+            }
+            return orders;
+        }
+
+        private static HashSet<string> ActiveTargets(IEnumerable<ActiveNativeOrderDto> orders)
+            => new HashSet<string>(orders.Select(o => o.Kind + ":" + o.TargetId));
         // Mirror native roof support's roof-connected search and 6.9-cell radius,
         // treating all currently designated removals plus this candidate as absent.
         public static bool RemovalWouldEndangerRoof(Thing target, Dictionary<IntVec3,bool> plannedSupportCache = null)
@@ -99,8 +131,10 @@ namespace RIMAPI.Helpers
             }
             return true;
         }
-        private static WorkGiver_Scanner NativeScanner(Pawn worker, Thing target, string kind, string giverName)
+        private static WorkGiver_Scanner NativeScanner(Pawn worker, Thing target, string kind, string giverName, HashSet<string> activeTargets = null)
         {
+            if ((kind == "feed" || kind == "rescue")
+                && (activeTargets ?? ActiveTargets(ActiveOrders(worker.Map))).Contains(kind + ":" + target.thingIDNumber)) return null;
             bool selfTend=kind == "tend" && worker == target && Idle(worker);
             bool rescueExposure=kind == "rescue" && target is Pawn victim && victim.Downed;
             if (kind == null || giverName == null || (!Available(worker) && !selfTend) || !Safe(worker, target,rescueExposure) || !Givers.TryGetValue(kind, out string[] allowed) || !allowed.Contains(giverName)) return null;
@@ -151,6 +185,8 @@ namespace RIMAPI.Helpers
             Map map = MapHelper.GetMapByID(mapId);
             if (map == null) return ApiResult<ResilienceContextDto>.Fail("Map not found.");
             var result = new ResilienceContextDto();
+            result.ActiveOrders = ActiveOrders(map);
+            var activeTargets = ActiveTargets(result.ActiveOrders);
             var plannedSupportCache=new Dictionary<IntVec3,bool>();
             foreach (Designation designation in map.designationManager.AllDesignations.Where(d => d.def == DesignationDefOf.Mine || d.def == DesignationDefOf.Deconstruct))
             {
@@ -199,7 +235,7 @@ namespace RIMAPI.Helpers
                         ? map.listerThings.AllThings.Where(t => t is Filth && careRooms.Contains(t.GetRoom()) && (t.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness) ?? 0f) < 0f)
                         : patients.Cast<Thing>();
                     foreach (Thing target in targets) foreach (string giver in pair.Value)
-                        if (NativeScanner(worker, target, pair.Key, giver) != null)
+                        if (NativeScanner(worker, target, pair.Key, giver, activeTargets) != null)
                             result.Options.Add(new ResilienceOptionDto { Kind=pair.Key, WorkerId=worker.thingIDNumber, TargetId=target.thingIDNumber,
                                 Giver=giver, Worker=worker.LabelShort, Target=target.LabelShort, MedicineSkill=worker.skills?.GetSkill(SkillDefOf.Medicine)?.Level ?? 0,RoomCleanliness=target.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness) });
                 }

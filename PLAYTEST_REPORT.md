@@ -1,8 +1,23 @@
 # Colony playtest log
 
-App version: **0.0.5** (development branch; the tests below may use unreleased changes).
+Current candidate: **0.0.7**. Historical tests below retain their own revision and version context.
 
 This log tracks real, unattended runs. “Cause” is the last condition reported by the game API, not a medically certain cause of death. Wall-clock runtime excludes intentional development pauses when noted.
+
+## 3 October 2026 — Requader startup loop, paused
+
+- Fresh Crashlanded colony, Cassandra/Medium/permadeath, random tile 40061.
+  Autonomous 3× play began around 06:09 UTC on the 0.0.7 candidate; GUI data-path
+  correction caused a separate technical restart around 06:14–06:15 UTC.
+- Founder equipment repeatedly chose an armed pawn excluded by its legacy
+  executor. Empty non-applied results left the same candidate available. Combat
+  later interrupted the repetition; that did not establish recovery.
+- At the user's complaint, director and observer were stopped, progress saved,
+  game paused at tick **216457** with **three living colonists**. Hourly automation
+  and the local read-only monitor were stopped. No new colony was created.
+- Subsequent work used offline recorded snapshots, fake transports with actual
+  readback and local-model replay. These are technical tests, not autonomous
+  gameplay. [Incident, repairs and verification](docs/audits/startup-loop-replay-2026-10-03.md).
 
 ## Test 1 — 25 September 2026
 

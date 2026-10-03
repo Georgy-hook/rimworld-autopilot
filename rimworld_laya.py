@@ -1005,6 +1005,9 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure"}}
             criteria["hold_and_observe"] = "Keep current orders; the active hostile structure still threatens its area."
             criteria["continue_safe_colony_work"] = "Continue work outside verified turret exposure; leave the hostile structure intact."
+        criteria = {key: value for key, value in criteria.items() if key not in snapshot.get("_combat_blocked_choices", [])}
+        if not criteria:
+            criteria["hold_and_observe"] = "Keep existing orders while rejected native paths recover; choose new tactics when the threat changes."
         return {
             "threat_action": {
                 "type": "choice",
@@ -2275,6 +2278,112 @@ def load_agent(model: str, device: str) -> Any:
     return SafeDecisionAgent(laya.load(model_source, device=selected))
 
 
+
+_COMBAT_RECOVERY_CHOICES = {'withdraw_and_regroup', 'civilian_retreat', 'emergency_self_tend', 'prepare_undrafted', 'hold_and_observe', 'stand_down'}
+
+_NATIVE_RETRY_TACTICS = {'emp_control', 'smoke_advance', 'mortar_reload', 'mortar_counterbattery', 'attack_structure'}
+
+
+def _combat_attempt_identity(choice, body):
+    return json.dumps({'choice': choice, 'tactic': body.get('tactic'),
+        'target': body.get('target_pawn_id'), 'fighters': sorted(body.get('fighter_ids') or []),
+        'defense': body.get('defense_building_id', 0)}, sort_keys=True)
+
+
+def _combat_retry_prepare(snapshot, memory, signature):
+    import time
+    import math
+    tick = snapshot.get('game', {}).get('tick')
+    prior_clock = memory.get('_timeline') or {}
+    if not isinstance(prior_clock, dict): prior_clock = {}
+    map_id = snapshot.get('map', {}).get('id')
+    if prior_clock.get('map') not in (None, map_id) or (isinstance(tick, int) and isinstance(prior_clock.get('tick'), int) and tick < prior_clock['tick']):
+        memory.clear()
+    memory['_timeline'] = {'tick': tick, 'map': map_id}
+    active = []
+    for key, row in list(memory.items()):
+        if key == '_timeline': continue
+        if not isinstance(row, dict) or isinstance(row.get('count'), bool) or not isinstance(row.get('count'), int) or row['count'] < 0 or isinstance(row.get('until'), bool) or not isinstance(row.get('until'), (int, float)) or not math.isfinite(row['until']):
+            memory.pop(key, None); continue
+        if row.get('signature') == signature and row['count'] >= 2 and (row.get('permanent') is True or time.time() < row['until']):
+            active.append(row)
+    native = snapshot.get('combat', {}).get('native_options') or []
+    filtered = []
+    for option in native:
+        identity = _combat_attempt_identity(option.get('tactic'), {'tactic': option.get('tactic'),
+            'target_pawn_id': option.get('target_id'), 'fighter_ids': [option.get('fighter_id')],
+            'defense_building_id': option.get('defense_building_id', 0)})
+        if not any(row.get('identity') == identity for row in active): filtered.append(option)
+    snapshot.setdefault('combat', {})['native_options'] = filtered
+    snapshot['_combat_blocked_attempts'] = active
+    blocked = set()
+    for choice in {row.get('choice') for row in active}:
+        if choice in _NATIVE_RETRY_TACTICS or choice in _COMBAT_RECOVERY_CHOICES: continue
+        candidate = plan_action(snapshot, {'choice': choice})
+        identities = {_combat_attempt_identity(choice, {**command['body'], 'fighter_ids': [fighter]})
+            for command in candidate.get('commands') or [] if command.get('endpoint') == '/api/v1/combat/tactic'
+            for fighter in (command.get('body') or {}).get('fighter_ids') or []}
+        failed_identities = {row.get('identity') for row in active if row.get('choice') == choice}
+        if identities and identities <= failed_identities: blocked.add(choice)
+    snapshot['_combat_blocked_choices'] = sorted(blocked)
+
+
+def combat_tactical_acceptance(response):
+    """Native CombatTacticResponseDto has order IDs, and no Applied property."""
+    if not isinstance(response, dict): return False
+    if 'applied' in response and response['applied'] is not True: return False
+    if 'success' in response and response['success'] is not True: return False
+    for field in ('positioned_pawn_ids', 'attacking_pawn_ids'):
+        if field in response and (not isinstance(response[field], list) or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in response[field])):
+            return False
+    if 'psycast_queued' in response and not isinstance(response['psycast_queued'], bool): return False
+    return response.get('psycast_queued') is True or any(
+        isinstance(response.get(field), list) and bool(response[field])
+        for field in ('positioned_pawn_ids', 'attacking_pawn_ids'))
+
+
+def _combat_retry_filter_action(snapshot, decision, action):
+    blocked = snapshot.get('_combat_blocked_attempts') or []
+    for command in action.get('commands') or []:
+        if command.get('endpoint') != '/api/v1/combat/tactic': continue
+        body = command.get('body') or {}
+        choice = body.get('tactic') if body.get('tactic') in _NATIVE_RETRY_TACTICS else decision.get('choice')
+        if decision.get('choice') in _COMBAT_RECOVERY_CHOICES or body.get('tactic') in _COMBAT_RECOVERY_CHOICES:
+            continue
+        body['fighter_ids'] = [fighter for fighter in body.get('fighter_ids') or [] if not any(
+            row.get('identity') == _combat_attempt_identity(choice, {**body, 'fighter_ids': [fighter]}) for row in blocked)]
+    if action.get('kind') == 'commands':
+        action['commands'] = [command for command in action.get('commands') or [] if command.get('endpoint') != '/api/v1/combat/tactic' or (command.get('body') or {}).get('fighter_ids')]
+    return action
+
+
+def _combat_retry_record(memory, signature, decision, action, result):
+    import time
+    responses = (result.get('responses') or []) if isinstance(result, dict) else []
+    seen = set()
+    for index, command in enumerate(action.get('commands') or []):
+        if command.get('endpoint') != '/api/v1/combat/tactic': continue
+        if index >= len(responses) and (not isinstance(result, dict) or result.get('failed_command_index') != index): continue
+        body = command.get('body') or {}
+        choice = body.get('tactic') if body.get('tactic') in _NATIVE_RETRY_TACTICS else decision.get('choice')
+        response = responses[index] if index < len(responses) else None
+        accepted = combat_tactical_acceptance(response)
+        accepted_ids = set((response.get('positioned_pawn_ids') or []) + (response.get('attacking_pawn_ids') or [])) if accepted else set()
+        for fighter in body.get('fighter_ids') or []:
+            identity = _combat_attempt_identity(choice, {**body, 'fighter_ids': [fighter]})
+            if identity in seen: continue
+            seen.add(identity)
+            if accepted and (fighter in accepted_ids or response.get('psycast_queued')):
+                memory.pop(identity, None); continue
+            prior = memory.get(identity) or {}
+            count = prior.get('count', 0) if prior.get('signature') == signature and isinstance(prior.get('count'), int) else 0
+            memory[identity] = {'identity': identity, 'choice': choice, 'tactic': body.get('tactic'), 'fighter': fighter, 'target': body.get('target_pawn_id'),
+                'signature': signature, 'count': count + 1, 'until': time.time() + 60,
+                'permanent': isinstance(response, dict) and str(response.get('reason') or '') in ('invalid_contract', 'unsupported_action')}
+    while len(memory) > 129:
+        memory.pop(next(key for key in memory if key != '_timeline'))
+
+
 def run_cycle(
     client: RimApiClient,
     agent: Any,
@@ -2282,13 +2391,22 @@ def run_cycle(
     apply: bool,
     confidence: float,
     log_path: Path,
+    combat_memory: dict | None = None,
+    combat_signature: Any = None,
 ) -> dict[str, Any]:
     snapshot = collect_snapshot(client)
+    signature = json.dumps(combat_signature(snapshot), sort_keys=True) if callable(combat_signature) else None
+    if combat_memory is not None and signature is not None:
+        _combat_retry_prepare(snapshot, combat_memory, signature)
     decision = decide(agent, snapshot, confidence)
     action = plan_action(snapshot, decision)
+    if combat_memory is not None and signature is not None:
+        action = _combat_retry_filter_action(snapshot, decision, action)
     result = {"applied": False, "reason": "preview mode"}
     if apply:
         result = apply_action(client, action)
+        if combat_memory is not None and signature is not None:
+            _combat_retry_record(combat_memory, signature, decision, action, result)
     record = {
         "timestamp": utc_now(),
         "mode": "apply" if apply else "preview",

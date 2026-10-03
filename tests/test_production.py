@@ -65,10 +65,11 @@ class ProductionTests(unittest.TestCase):
             self.assertFalse(result['applied'])
             self.assertNotIn('production_utilities',p.prepare(s,state))
     def test_defer_records_cooldown_without_api_mutation(self):
-        s=self.snapshot(); c=Client({}); m={}
+        s=self.snapshot(); c=Client({}); m={};p.prepare(s,m)
         r=p.execute(c,s,m,'production_feed_batch',{'production_policy':'defer'})
         self.assertFalse(r['applied']); self.assertEqual([],c.calls)
-        self.assertEqual(20000,m['issued']['production:production_feed_batch'])
+        self.assertEqual(20000,m['production_selection_dwell']['production_feed_batch']['3']['tick'])
+        self.assertNotIn('production_feed_batch',p.prepare(self.snapshot(),m))
     def test_risk_and_defer_reach_native_choice(self):
         s=self.snapshot();p.prepare(s,{})
         with patch.object(p,'ask_laya_choice',return_value=('defer',{})) as ask:
@@ -156,7 +157,9 @@ class LogisticsProductionTests(unittest.TestCase):
         return {'map':{'id':1},'game':{'tick':20000},'development':{'production':{'logistics_context':{'options':[self.plan()]}}}}
     def test_logistics_registered_and_cooldown(self):
         s=self.snapshot();self.assertIn('production_material_logistics',p.prepare(s,{}))
-        self.assertNotIn('production_material_logistics',p.prepare(s,{'issued':{'production:production_material_logistics':19000}}))
+        state={'issued':{'production:production_material_logistics':19000}}
+        self.assertIn('production_material_logistics',p.prepare(s,state))
+        self.assertNotIn('production:production_material_logistics',state['issued'])
     def test_changed_footprint_not_posted(self):
         s=self.snapshot();plan=self.plan();plan['cells'].pop()
         class LogisticsClient(Client):

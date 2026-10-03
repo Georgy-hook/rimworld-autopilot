@@ -22,6 +22,9 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Startup loop incident and sequence verification, 2026-10-03](audits/startup-loop-replay-2026-10-03.md):
+  actual first-run failure, corrected contracts, model replay and launch gates.
+
 - [API and repeated-decision audit, 2026-10-02](audits/api-loop-audit-2026-10-02.md):
   agent review decisions, concrete failure sequences and repository corrections.
 

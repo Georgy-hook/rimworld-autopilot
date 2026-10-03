@@ -7,6 +7,15 @@ namespace RIMAPI.Models
         public List<object> Patients { get; set; } = new List<object>();
         public object Environment { get; set; }
         public List<ResilienceOptionDto> Options { get; set; } = new List<ResilienceOptionDto>();
+        public List<ActiveNativeOrderDto> ActiveOrders { get; set; } = new List<ActiveNativeOrderDto>();
+    }
+    public class ActiveNativeOrderDto
+    {
+        public string Kind { get; set; }
+        public int WorkerId { get; set; }
+        public int TargetId { get; set; }
+        public string JobDef { get; set; }
+        public int? CarriedThingId { get; set; }
     }
     public class ResilienceOptionDto
     {

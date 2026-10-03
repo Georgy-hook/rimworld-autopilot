@@ -55,6 +55,15 @@ Each registered domain defines `DESCRIPTIONS`, `LABELS`, `ACTIONS`, `DOMAINS` an
    parameters, refresh eligibility and use an ordinary game action. Return an
    explicit boolean `applied`; do not replace the selected action silently.
 
+Startup aliases must project the owner's prepared plan for all three stages:
+candidate, parameter selection and execution. Founder equipment uses the
+capability executor; it must not reconstruct a different recipient list.
+Subject-level histories must leave other subjects available. Native active-job
+observations protect pending haul/feed/rescue work across timer expiry.
+Interrupt records expose `blocks_development`: modal work owns scheduling,
+while quiet nonmodal waiting and failed event attempts permit normal development.
+See [sequence verification requirements](audits/startup-loop-replay-2026-10-03.md).
+
 Module identifiers are static code registrations. Duplicate or wrongly prefixed
 actions are rejected. Collection errors clear stale module context, suppress
 that domain's candidates and produce a warning; unrelated modules remain usable.

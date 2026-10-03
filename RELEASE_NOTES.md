@@ -27,6 +27,11 @@ published installer or a claim of demonstrated autonomous victory. See the
 - Reconcile partial rooms and hospitals against their saved layouts before
   repairing missing elements. Failed choices retain a real-time retry floor at
   3× game speed without hiding other patients, buildings or projects.
+- Corrected the observed startup equipment loop by sharing candidate, parameter
+  and execution plans. Added repeated-cycle fixtures, native active-job context,
+  exact-target retry histories and nonmodal scheduler fallthrough. See the
+  [2026-10-03 incident and verification](docs/audits/startup-loop-replay-2026-10-03.md);
+  the saved colony remains paused pending the next runtime validation.
 
 # 0.0.6 — construction coverage, fire response and colony survival
 

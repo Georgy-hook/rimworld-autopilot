@@ -6,6 +6,97 @@ from laya_decisions import ask_laya_choice
 import colony_modules
 
 
+
+def transition_signature(value):
+    """Observation identity without clocks, labels or ordinary movement drift."""
+    import colony_affordances
+    def stable(v):
+        if isinstance(v, dict):
+            transient = {'tick', 'ticks', 'expires_in_ticks', 'time', 'mood', 'food', 'name',
+                         'position', 'current_job', 'job', 'inspect', 'key', '_transition_memory',
+                         'bleed_rate', 'bleeding_rate', 'pain', 'severity', 'health', 'description',
+                         'effect_description', 'temperature', 'distance', 'distance_to_nearest_opponent',
+                         'eligible_actions', 'options_filtered', 'recent_configuration_effects'}
+            fixed_cell = v.get('kind') in ('cell', 'odyssey', 'world-targeting') or v.get('operation') in ('land', 'place')
+            result = {k: stable(x) for k, x in v.items()
+                      if k not in transient and (k not in {'x', 'z'} or fixed_cell)}
+            if fixed_cell and isinstance(v.get('position'), dict):
+                result['target_cell'] = {k: v['position'].get(k) for k in ('x', 'z')}
+            bleeding = v.get('bleed_rate', v.get('bleeding_rate'))
+            health = v.get('health')
+            if isinstance(health, (int, float)):
+                result['health_urgency'] = 'critical' if health < .5 else 'injured' if health < .8 else 'stable'
+            if isinstance(bleeding, (int, float)):
+                result['bleeding_urgency'] = 'critical' if bleeding >= 2 else 'active' if bleeding > .05 else 'none'
+            job = v.get('current_job', v.get('job'))
+            if job in {'TendPatient', 'Rescue', 'FeedPatient', 'DoBill', 'EnterCryptosleepCasket', 'CarryToCryptosleepCasket'}:
+                result['protected_job'] = job
+            return result
+        if isinstance(v, list):
+            import json
+            return sorted((stable(x) for x in v), key=lambda x: json.dumps(x, sort_keys=True, default=str))
+        return v
+    return colony_affordances.state_fingerprint(stable(value))
+
+
+
+def target_readiness(context):
+    fields = ('session_id', 'map_id', 'effect_identity', 'source', 'effect_cost', 'caster_facts')
+    option_fields = ('target_id', 'kind', 'definition', 'hostile', 'downed', 'clinical', 'actual_cost',
+                     'roof', 'fire', 'allies_within_five', 'affected_allies', 'hostiles_within_twenty')
+    rows = []
+    for row in context.get('options') or []:
+        facts = {key: row.get(key) for key in option_fields}
+        if row.get('kind') == 'cell':
+            facts.update(x=row.get('x'), z=row.get('z'), position=row.get('position'))
+        rows.append(facts)
+    return transition_signature({**{key: context.get(key) for key in fields}, 'options': rows})
+
+
+def transition_wait(memory, key, readiness):
+    prior = memory.get(key)
+    if not isinstance(prior, dict) or prior.get('readiness') != readiness or prior.get('status') not in ('accepted', 'rejected', 'unknown'):
+        return False
+    until = prior.get('until')
+    return prior.get('status') in ('accepted', 'rejected') or (isinstance(until, (int, float)) and time.time() < until)
+
+
+def transition_record(memory, key, readiness, result, *, recovery_seconds=60):
+    accepted = isinstance(result, dict) and result.get('applied') is True
+    reason = str((result or {}).get('reason', '') if isinstance(result, dict) else result).lower()
+    deterministic = any(token in reason for token in ('invalid_contract', 'unsupported_action', 'unsupported contract'))
+    memory[key] = {'readiness': readiness, 'status': 'accepted' if accepted else 'rejected' if deterministic else 'unknown',
+                   'until': time.time() + recovery_seconds}
+    while len(memory) > 128:
+        memory.pop(next(iter(memory)))
+
+
+
+def transition_memory(map_state, bucket, snapshot):
+    import math
+    map_id = (snapshot.get('map') or {}).get('id')
+    map_key = bucket + '_map'
+    if map_id is not None:
+        if map_state.get(map_key) not in (None, map_id): map_state.pop(bucket, None)
+        map_state[map_key] = map_id
+    tick = (snapshot.get('game') or {}).get('tick')
+    clock_key = bucket + '_tick'
+    prior_tick = map_state.get(clock_key)
+    if isinstance(tick, int) and not isinstance(tick, bool):
+        if isinstance(prior_tick, int) and tick < prior_tick:
+            map_state.pop(bucket, None)
+        map_state[clock_key] = tick
+    memory = map_state.get(bucket)
+    if not isinstance(memory, dict):
+        memory = {}; map_state[bucket] = memory
+    for key, row in list(memory.items()):
+        if not isinstance(key, str) or not isinstance(row, dict) or not isinstance(row.get('readiness'), str) or row.get('status') not in ('accepted', 'rejected', 'unknown') or isinstance(row.get('until'), bool) or not isinstance(row.get('until'), (int, float)) or not math.isfinite(row['until']):
+            memory.pop(key, None)
+    while len(memory) > 128:
+        memory.pop(next(iter(memory)))
+    return memory
+
+
 def bind_campaign(state: dict, evidence: Any) -> None:
     """A saved native campaign identity separates a new game from a new map."""
     if not isinstance(evidence, dict) or not evidence.get("campaign_id"):
@@ -166,30 +257,38 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
     top = next((w for w in reversed(windows) if w.get("force_pause") or w.get("blocks_input")), None)
     targeting = client.get("/api/v1/affordances/targeting") if top is None and not world_only else {}
     if isinstance(targeting, dict) and targeting.get("active"):
+        native_memory = transition_memory(map_state, 'native_transition_memory', snapshot)
+        transition_key = 'target:' + str(targeting.get('session_id'))
+        readiness = target_readiness(targeting)
+        if transition_wait(native_memory, transition_key, readiness):
+            return _transition_wait_record(bool(top))
         retry = map_state.get("native_target_retry") or {}
         now = time.time()
         if not isinstance(retry, dict) or not isinstance(retry.get("until"), (int, float)) or retry.get("until", 0) > now + 5:
             retry = {}; map_state.pop("native_target_retry", None)
         if targeting.get("options") and retry.get("signature") == _target_retry_signature(targeting, retry.get("selected")) and now < retry.get("until", 0):
-            return {"mode": "native-target-wait", "quiet": True, "decision": {"choice": "wait_for_target_retry"},
+            return {"mode": "native-target-wait", "quiet": True, "blocks_development": bool(top), "decision": {"choice": "wait_for_target_retry"},
                     "result": {"applied": False, "reason": "target_retry_cooling", "completion": "unverified"}}
         selected, raw = target_choice(agent, targeting, map_state.get("native_intent"))
         if not selected["cancel"]:
             fresh = client.get("/api/v1/affordances/targeting") or {}
             if not fresh.get("active") or targeting_changed(targeting_evidence(targeting, selected), targeting_evidence(fresh, selected)):
+                transition_record(native_memory, transition_key, readiness, {'applied': False, 'reason': 'stale_readback'})
                 _target_failed(map_state, fresh if fresh.get("active") else targeting, selected)
-                return {"mode": "native-target", "decision": {"choice": "target", "selected": selected, "raw": raw},
+                return {"mode": "native-target", "blocks_development": bool(top), "decision": {"choice": "target", "selected": selected, "raw": raw},
                         "result": {"applied": False, "reason": "target_effect_or_consequences_changed", "completion": "unverified"}}
         try:
             result = client.post("/api/v1/affordances/targeting", query=selected)
         except Exception:
+            transition_record(native_memory, transition_key, readiness, {'applied': False, 'reason': 'network_outcome_unknown'})
             if not selected["cancel"]: _target_failed(map_state, targeting, selected)
             raise
         if not selected["cancel"] and (not isinstance(result, dict) or result.get("applied") is not True):
             _target_failed(map_state, fresh, selected)
         else:
             map_state.pop("native_target_retry", None)
-        return {"mode": "native-target", "decision": {"choice": "cancel" if selected["cancel"] else "target",
+        transition_record(native_memory, transition_key, readiness, result)
+        return {"mode": "native-target", "blocks_development": bool(top) or bool(isinstance(result, dict) and result.get('applied')), "decision": {"choice": "cancel" if selected["cancel"] else "target",
                 "selected": selected, "raw": raw}, "result": result}
     map_state.pop("native_target_retry", None)
     # No module may reach through a higher unhandled modal window.
@@ -205,6 +304,12 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
     for module in candidates:
         name = module.__name__.removeprefix("colony_")
         snapshot.setdefault("development", {})[name] = module.collect(client, snapshot)
+        native_context = snapshot['development'][name]
+        if name == 'specialists':
+            native_context = {key: value for key, value in native_context.items() if isinstance(value, dict) and value.get('configuring')}
+        elif name == 'progression':
+            native_context = {key: native_context.get(key) for key in ('world_targeting', 'odyssey', 'ending_selection', 'ending_continuation')}
+        native_readiness = transition_signature(native_context)
         module.prepare(snapshot, map_state)
         action = getattr(module, "pending_action", lambda _: None)(snapshot["development"][name])
         if action is None:
@@ -214,13 +319,19 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
             key = name + ":" + str(action) + ":" + str(blocker)
             quiet = map_state.get("blocked_native_continuation") == key
             map_state["blocked_native_continuation"] = key
-            return {"mode": "native-continuation-wait", "quiet": quiet,
+            return {"mode": "native-continuation-wait", "quiet": quiet, "blocks_development": bool(top),
                     "decision": {"choice": "wait_for_native_readiness", "action": action},
                     "result": {"applied": False, "blocked": True, "reason": str(blocker), "completion": "unverified"}}
         map_state.pop("blocked_native_continuation", None)
+        native_memory = transition_memory(map_state, 'native_transition_memory', snapshot)
+        transition_key = module.__name__ + ':' + str(top.get('window_id') if top else '')
+        readiness = native_readiness
+        if transition_wait(native_memory, transition_key, readiness):
+            return _transition_wait_record(bool(top))
         selected, raw = module.choose(agent, {"pending_native_choice": True}, action, snapshot)
         result = colony_modules.execute(client, snapshot, map_state, action, selected)
-        return {"mode": "native-continuation", "decision": {"choice": action, "selected": selected, "raw": raw}, "result": result}
+        transition_record(native_memory, transition_key, readiness, result)
+        return {"mode": "native-continuation", "blocks_development": bool(top) or bool(result.get('applied')), "decision": {"choice": action, "selected": selected, "raw": raw}, "result": result}
     if top and (not world_only or top.get("window_type") in ("Dialog_ChooseThingsForNewColony", "Dialog_ConfigureIdeo", "Screen_ArchonexusSettlementCinematics")):
         key = str(top.get("window_id")) + ":" + str(top.get("window_type"))
         quiet = map_state.get("blocked_native_window") == key
@@ -231,3 +342,10 @@ def run_pending(client: Any, agent: Any, snapshot: dict, map_state: dict, *, wor
     map_state.pop("blocked_native_window", None)
     map_state.pop("blocked_native_continuation", None)
     return None
+
+
+
+def _transition_wait_record(blocking):
+    return {'mode': 'native-transition-wait', 'quiet': True, 'blocks_development': blocking,
+            'decision': {'choice': 'wait_for_native_observation'},
+            'result': {'applied': False, 'reason': 'native_transition_awaiting_observation', 'completion': 'unverified'}}

@@ -202,6 +202,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     plans = context.get('options', {}).get(action) or {}
     if not plans:
         return {'defer': True}, {'reason': 'no_live_society_options'}
+    def defer_selection(rows):
+        return {'defer': True, 'deferred_subjects': list(dict.fromkeys(_subject(action, row) for row in rows.values()))}
     defer = {'benefit': 'Preserve current jobs/resources/policy', 'risk': 'Unmet needs or illness may persist', 'cost': 'No new supplies/labor', 'inaction': 'Autonomous work continues', 'uncertainty': 'Future outcomes are unknown'}
     persons, person_effects = {}, {}
     for row in plans.values():
@@ -211,10 +213,11 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     persons['defer'], person_effects['defer'] = 'Keep current jobs and policy', defer
     pid, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_people': len(persons)-1}, 'option_effects': person_effects}, action + '_person', 'Choose a live person or defer; compare actual needs, risks and costs.', persons, detailed=True)
     if pid == 'defer':
-        return {'defer': True}, first
+        return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if str(row['pawn_id']) == pid}
     if action == 'society_growth':
-        return _growth_choice(agent, next(iter(plans.values())), context, first)
+        selected, raw = _growth_choice(agent, next(iter(plans.values())), context, first)
+        return (defer_selection(plans) if selected.get('defer') else selected), raw
     workers = {str(row.get('worker_id', 0)) for row in plans.values()}
     if len(workers) > 1:
         choices, effects = {}, {}
@@ -226,14 +229,14 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         worker, raw = ask_laya_choice(agent, {'decision_facts': {'person': pid, 'need': person_effects[pid]['benefit']}, 'option_effects': effects}, action + '_worker', 'Choose an available caregiver/teacher/doctor, or defer.', choices, detailed=True)
         first['worker_choice'] = raw
         if worker == 'defer':
-            return {'defer': True}, first
+            return defer_selection(plans), first
         plans = {k: row for k, row in plans.items() if str(row.get('worker_id', 0)) == worker}
     criteria = {k: row.get('label') or f"{row.get('value')} hour={row.get('hour')}" for k, row in plans.items()}
     option_effects = {k: _effects(row, action, context) for k, row in plans.items()}
     criteria['defer'], option_effects['defer'] = 'Keep current policy/jobs; needs may persist', defer
     key, raw = ask_laya_choice(agent, {'decision_facts': {'person': pid, 'diagnosis_need': person_effects[pid]['benefit']}, 'option_effects': option_effects}, action, DESCRIPTIONS[action], criteria, detailed=True)
     raw['society_person_choice'] = first
-    return ({'defer': True} if key == 'defer' else _payload(plans[key])), raw
+    return (defer_selection(plans) if key == 'defer' else _payload(plans[key])), raw
 
 
 PENDING_WINDOWS = ("Dialog_GrowthMomentChoices",)
@@ -261,6 +264,8 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
     memory = map_state.setdefault('society_memory', {})
     if selected.get("defer"):
         for row in (snapshot.get('development', {}).get('society', {}).get('options', {}).get(action) or {}).values():
+            if 'deferred_subjects' in selected and _subject(action, row) not in selected['deferred_subjects']:
+                continue
             memory.setdefault('deferred', {})[_subject(action, row)] = {'tick': tick, 'state': _clinical(row)}
         return {"applied": False, "reason": "laya_deferred"}
     live = collect(client, snapshot)
@@ -295,4 +300,6 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         memory.setdefault('issued', {})[_subject(action, row)] = {'tick': tick}
     else:
         memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
-    return result if isinstance(result, dict) else {"applied": False, "reason": "invalid_response"}
+    if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):
+        return {"applied": False, "reason": "invalid_response", "outcome_unknown": True, "response": result}
+    return result

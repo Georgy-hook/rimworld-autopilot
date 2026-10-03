@@ -24,6 +24,14 @@ unchanged failures have bounded retry, save rollback resets future history, and
 ordinary work is not repeatedly restarted. A source assertion or passing HTTP
 status alone does not demonstrate native job completion.
 
+For startup/equipment changes also run `tools/replay_startup_decisions.py` with
+the installed local model. It uses a recorded fixture and an offline transport;
+it does not start or command RimWorld. See the
+[startup incident and sequence gate](docs/audits/startup-loop-replay-2026-10-03.md).
+Use actual endpoint response DTO shapes in test doubles. In particular native
+combat success has accepted pawn IDs, not an `applied` property. Review a test's
+behavioral assertions and transport readback before treating its result as evidence.
+
 Offline tests and a C# build do not require launching RimWorld or model weights.
 Live tests must be separately authorized and recorded as gameplay, technical
 replay or direct intervention. The current candidate targets `developing`

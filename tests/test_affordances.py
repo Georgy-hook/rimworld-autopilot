@@ -211,13 +211,15 @@ class AffordanceTests(unittest.TestCase):
             for now in (100, 100.5, 101, 101.5, 103, 107, 112):
                 with patch.object(sessions.time, "time", return_value=now):
                     sessions.run_pending(client, None, {"game": {"tick": 100, "is_paused": True}}, memory)
-            self.assertEqual(choose.call_count, 5)
-            self.assertEqual(memory["native_target_retry"]["delay"], 5)
+            self.assertEqual(choose.call_count, 1)
+            with patch.object(sessions.time, "time", return_value=161):
+                sessions.run_pending(client, None, {}, memory)
+            self.assertEqual(choose.call_count, 2)
             memory = json.loads(json.dumps(memory))
             context["session_id"] = 11
             with patch.object(sessions.time, "time", return_value=112.1):
                 sessions.run_pending(client, None, {}, memory)
-            self.assertEqual(choose.call_count, 6)
+            self.assertEqual(choose.call_count, 3)
         context["options"] = []
         with patch.object(sessions, "target_choice", return_value=({**selected, "session_id": 11, "cancel": True}, {})), patch.object(sessions.time, "time", return_value=112.2):
             sessions.run_pending(client, None, {}, memory)

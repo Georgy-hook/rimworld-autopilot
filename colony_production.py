@@ -64,7 +64,27 @@ def _ready_plans(plans, map_state, action, tick):
     for old_key in list(entries):
         if not retry_recent(entries[old_key], tick, BACKOFF_TICKS):
             del entries[old_key]
-    return {key: plan for key, plan in plans.items() if str(key) not in entries}
+    dwell = (map_state.get("production_selection_dwell") or {}).get(action) or {}
+    for old_key in list(dwell):
+        if not retry_recent(dwell[old_key], tick, dwell[old_key].get("duration", 15000)):
+            del dwell[old_key]
+    return {key: plan for key, plan in plans.items() if str(key) not in entries
+            and _selection_scope(action, key, plan) not in dwell}
+
+
+def _selection_scope(action, key, plan):
+    if action == "production_material_logistics":
+        return repr((plan.get("kind"), plan.get("target_id"), plan.get("value")))
+    if action == "production_recipe_batch":
+        return repr((plan.get("building_id"), plan.get("recipe"), plan.get("material")))
+    return str(key)
+
+
+def _remember_selection(map_state, snapshot, action, plans, duration):
+    history = map_state.setdefault("production_selection_dwell", {}).setdefault(action, {})
+    tick = int(snapshot.get("game", {}).get("tick") or 0)
+    for key, plan in plans.items():
+        history[_selection_scope(action, key, plan)] = {"tick": tick, "duration": duration}
 
 
 def _thermal_band(building):
@@ -141,20 +161,25 @@ def recipe_choose(agent, context, state=None):
     for key, plan in plans.items(): groups.setdefault(plan.get("category") or "other", []).append((key, plan))
     group, raw = _stage(agent, state, [(category, category, effect(items[0][1])) for category, items in groups.items()], "production_purpose", "Choose production purpose or defer; compare scarcity, bandwidth, waste and costs.")
     stages.append(raw)
-    if group is None: return {"production_policy":"defer"}, {"stages":stages}
+    if group is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     recipes = {}
     for key, plan in groups[group]: recipes.setdefault(plan['recipe'], []).append((key,plan))
     recipe, raw = _stage(agent, state, [(r, items[0][1].get('label'), effect(items[0][1])) for r,items in recipes.items()], "production_recipe", "Choose loaded feasible recipe or defer. Work, materials and autonomous cycles remain pending.")
     stages.append(raw)
-    if recipe is None: return {"production_policy":"defer"}, {"stages":stages}
+    if recipe is None: return {"production_policy":"defer", "shown_production_options": [key for key, _ in groups[group]]}, {"stages":stages}
     key, raw = _stage(agent, state, [(key, plan.get('label'), effect(plan)) for key, plan in recipes[recipe]], "production_table_material", "Choose actual table/material or defer. Competing resources and labor are real costs.")
     stages.append(raw)
-    return {"production_policy":key or "defer"}, {"stages":stages}
+    return {"production_policy":key or "defer", **({"shown_production_options": [k for k, _ in recipes[recipe]]} if key is None else {})}, {"stages":stages}
 
 def logistics_options(context):
     if "logistics_options" in context:
         return context["logistics_options"]
-    return {p["key"]: p for p in (context.get("logistics_context") or {}).get("options") or [] if isinstance(p, dict) and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul"}}
+    native = context.get("logistics_context") or {}
+    active = {row.get("target_id") for row in native.get("active_orders") or []
+              if isinstance(row, dict) and row.get("kind") == "haul"}
+    return {p["key"]: p for p in native.get("options") or [] if isinstance(p, dict)
+            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul"}
+            and not (p.get("kind") == "haul" and p.get("target_id") in active)}
 
 def logistics_choose(agent, context, state=None):
     plans = logistics_options(context)
@@ -165,15 +190,15 @@ def logistics_choose(agent, context, state=None):
     for key, plan in plans.items(): groups.setdefault(plan["kind"], []).append((key, plan))
     kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose ordinary material logistics purpose or defer; compare labor, exposure and lost floor space.")
     stages.append(raw)
-    if kind is None: return {"production_policy":"defer"}, {"stages":stages}
+    if kind is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     subjects = {}
     for key, plan in groups[kind]: subjects.setdefault(str(plan["target_id"]), []).append((key, plan))
     subject, raw = _stage(agent, state, [(subject, str(items[0][1].get('label')), effect(items[0][1])) for subject, items in subjects.items()], "production_logistics_subject", "Choose actual storage, table or material stack; do not claim permission equals delivery.")
     stages.append(raw)
-    if subject is None: return {"production_policy":"defer"}, {"stages":stages}
+    if subject is None: return {"production_policy":"defer", "shown_production_options": [key for key, _ in groups[kind]]}, {"stages":stages}
     key, raw = _stage(agent, state, [(key, str(plan.get('label')), effect(plan)) for key, plan in subjects[subject]], "production_logistics_policy", "Choose actual material or enabled hauler, or defer to preserve labor/floor space.")
     stages.append(raw)
-    return {"production_policy":key or "defer"}, {"stages":stages}
+    return {"production_policy":key or "defer", **({"shown_production_options": [k for k, _ in subjects[subject]]} if key is None else {})}, {"stages":stages}
 
 def options(context):
     plans = {}
@@ -213,8 +238,9 @@ def prepare(snapshot, map_state):
     if logistics_options(context):
         available.append("production_material_logistics")
     # Retire old category utility locks when loading a persisted pre-scope state.
-    (map_state.get("issued") or {}).pop("production:production_utilities", None)
-    return [a for a in available if tick - (map_state.get("issued") or {}).get("production:" + a, -1000000) >= 15000]
+    for action in ACTIONS:
+        (map_state.get("issued") or {}).pop("production:" + action, None)
+    return available
 
 def choose(agent, state, action, snapshot):
     context = snapshot["development"]["production"]
@@ -271,7 +297,13 @@ def execute(client, snapshot, map_state, action, selected):
             shown = selected.get("shown_utility_options") or []
             _remember_utility(map_state, snapshot, [observed[k] for k in shown if k in observed], BACKOFF_TICKS)
         else:
-            map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+            context = snapshot.get("development", {}).get("production", {})
+            observed = (recipe_options(context) if action == "production_recipe_batch" else
+                        logistics_options(context) if action == "production_material_logistics" else
+                        context.get("feed_options") or {})
+            if "shown_production_options" in selected:
+                observed = {k: v for k, v in observed.items() if k in selected["shown_production_options"]}
+            _remember_selection(map_state, snapshot, action, observed, BACKOFF_TICKS)
         return {"applied": False, "reason": "laya_deferred_production"}
 
     context = snapshot.get("development", {}).get("production", {})
@@ -332,7 +364,7 @@ def execute(client, snapshot, map_state, action, selected):
     if action == "production_utilities":
         _remember_utility(map_state, snapshot, [live], 15000)
     else:
-        map_state.setdefault("issued", {})["production:" + action] = int(snapshot.get("game", {}).get("tick") or 0)
+        _remember_selection(map_state, snapshot, action, {key: live}, 15000)
     return {"applied": True, "reason": response.get("reason"), "response": response}
 
 def assess(action, snapshot):

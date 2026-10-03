@@ -218,6 +218,21 @@ def safe_weapons(snapshot: dict[str, Any], pawn: dict[str, Any]) -> dict[str, di
             and weapon_compatible(pawn, w) and not combat.errand_exposed(snapshot, w.get("position"), pawn.get("position"))}
 
 
+def founder_weapon_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Project founder choices without duplicating eligibility or order logic."""
+    dev = snapshot.get("development") or {}
+    plans = {}
+    for key, plan in (dev.get("capability_plans", {}).get("improve_weapon_loadout") or {}).items():
+        pawn = plan.get("pawn") or {}
+        if not pawn or pawn.get("has_ranged_weapon"):
+            continue
+        weapons = {k: w for k, w in plan["weapons"].items() if w.get("is_ranged")}
+        if weapons:
+            plans[key] = {**plan, "weapons": weapons}
+    return {**snapshot, "development": {**dev, "capability_plans": {
+        **(dev.get("capability_plans") or {}), "improve_weapon_loadout": plans}}}
+
+
 def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     _prune(snapshot, map_state)
     dev = snapshot["development"]
@@ -285,8 +300,11 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
             plans[action] = rows
             actions.append(action)
     weapon_plans = {}
+    protected = combat.protected_emergency_care_ids(snapshot)
     for pawn in snapshot.get("combat", {}).get("colonists") or []:
-        if pawn.get("is_dead") or pawn.get("is_downed") or pawn.get("is_in_mental_state") or pawn.get("current_job") in CARE_JOBS:
+        if (pawn.get("is_dead") or pawn.get("is_downed") or pawn.get("is_in_mental_state")
+                or pawn.get("current_job") in CARE_JOBS | {"Equip"} or pawn.get("id") in protected
+                or float(pawn.get("manipulation", 1) or 0) < 0.65):
             continue
         weapons = safe_weapons(snapshot, pawn)
         current = pawn.get("weapon_info") or {}
@@ -569,6 +587,8 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
             question = {"plan_colonist_augmentation": "augmentation_patient", "improve_weapon_loadout": "weapon_pawn",
                         "research_greenhouse": "greenhouse_research"}.get(action)
             shown = selected.get("shown_subjects", {}).get(question, [])
+            if action == "improve_weapon_loadout" and selected.get("weapon_pawn") not in (None, "defer"):
+                shown = [str(selected["weapon_pawn"])]
             for target in shown[:256]:
                 _remember(snapshot, map_state, _scope(action, target), 250)
         elif action in {"clear_plant_blight", "harvest_at_risk_crops"}:

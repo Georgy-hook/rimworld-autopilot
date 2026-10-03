@@ -281,9 +281,17 @@ class SpecialistCycleContracts(unittest.TestCase):
             specialists.prepare(snap, state)
             self.assertNotIn('0', context['options']['specialists_ritual'])
             self.assertIn('cancel', context['options']['specialists_ritual'])
-        with patch.object(specialists.time, 'time', return_value=102.1):
+        for now in (102.1, 110, 115, 120, 130, 140, 150):
+            with patch.object(specialists.time, 'time', return_value=now):
+                specialists.prepare(snap, state)
+                self.assertNotIn('0', context['options']['specialists_ritual'])
+                self.assertIn('cancel', context['options']['specialists_ritual'])
+        with patch.object(specialists.time, 'time', return_value=161):
             specialists.prepare(snap, state)
             self.assertIn('0', context['options']['specialists_ritual'])
+        context['rituals']['configuration']['board'] = True
+        specialists.prepare(snap, state)
+        self.assertIn('0', context['options']['specialists_ritual'])
         context['options']['specialists_ritual'] = {}
         self.assertIsNotNone(specialists.pending_blocker(context))
 

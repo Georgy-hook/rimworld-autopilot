@@ -1,5 +1,9 @@
 # API and repeated-decision audit — 2026-10-02
 
+**Subsequent finding:** the first live startup exposed a founder-equipment loop
+that these checks missed. See [the 2026-10-03 sequence audit](startup-loop-replay-2026-10-03.md)
+for the reproduction, repairs and replacement verification requirements.
+
 Candidate: 0.0.7. Starting revision: `5a80895`.
 Scope: offline source, DTO/route wiring, installed RimWorld 1.6.4871 engine
 contracts and sequential regression fixtures. No live gameplay/API, game launch,

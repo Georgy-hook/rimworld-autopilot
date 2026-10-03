@@ -24,6 +24,43 @@ SPEC.loader.exec_module(director)
 
 
 class DirectorTests(unittest.TestCase):
+    def observe_legacy_writes(self, client, snapshot):
+        """Transport double with readback; a rejected native response changes nothing."""
+        old_post = client.post.side_effect
+        old_get = client.get.side_effect
+        dev = snapshot.setdefault("development", {})
+        def post(endpoint, **kwargs):
+            response = old_post(endpoint, **kwargs) if old_post else client.post.return_value
+            if (not isinstance(response, dict) or response.get("success") is False
+                    or response.get("applied") is False or not (
+                        response.get("success") is True or response.get("applied") is True
+                        or response.get("placed", 0) > 0)):
+                return response
+            body = kwargs.get("body") or {}
+            if endpoint == "/api/v1/builder/blueprint":
+                for i, row in enumerate(body["blueprint"]["buildings"]):
+                    dev.setdefault("construction_projects", []).append({
+                        "thing_id": 1000 + i, "def_name": row["def_name"], "position": {
+                            "x": body["position"]["x"] + row["rel_x"],
+                            "z": body["position"]["z"] + row["rel_z"]}})
+            if endpoint == "/api/v1/colonist/work-priority":
+                worker = next(p for p in snapshot["colonists"] if p["id"] == body["id"])
+                worker.setdefault("work_priorities", {}).setdefault(body["work"], {})["priority"] = body["priority"]
+            return response
+        def get(endpoint, **kwargs):
+            if endpoint == "/api/v1/builder/projects":
+                return {"projects": copy.deepcopy(dev.get("construction_projects") or [])}
+            if endpoint == "/api/v1/map/buildings":
+                return copy.deepcopy(dev.get("buildings") or [])
+            if endpoint == "/api/v2/colonists/detailed":
+                return [{"id": pawn["id"], "name": pawn["name"], "work_info": {"work_priorities": [
+                    {"work_type": name, "priority": row.get("priority", 0)}
+                    for name, row in (pawn.get("work_priorities") or {}).items()]}}
+                    for pawn in snapshot["colonists"]]
+            return old_get(endpoint, **kwargs) if old_get else []
+        client.post.side_effect = post
+        client.get.side_effect = get
+
     def test_cold_start_keeps_shelter_and_care_choices_without_optional_work(self):
         snapshot = {
             "map": {"resources": {"nutrition": 12}},
@@ -89,7 +126,7 @@ class DirectorTests(unittest.TestCase):
 
     def test_cold_builder_can_finish_shell_before_nonbleeding_tending(self):
         client = mock.Mock()
-        client.post.return_value = {"success": True}
+        client.post.return_value = {"applied": True}
         snapshot = {"game": {"tick": 1000}, "map": {"id": 1},
                     "colonists": [{"id": 1, "name": "Maker", "health": 1.0,
                                    "work_priorities": {
@@ -252,6 +289,7 @@ class DirectorTests(unittest.TestCase):
         client.post.side_effect = lambda endpoint, **kwargs: (
             {"sites": [{"position": {"x": 14, "z": 14}, "rotation": 2}]}
             if endpoint.endswith("/site-options") else {"placed": 1})
+        self.observe_legacy_writes(client, snapshot)
         with mock.patch.object(director, "prioritize", return_value={"success": True}):
             result = director.execute_action(client, snapshot, state, "build_room_campfire", details)
         self.assertTrue(result["applied"])
@@ -275,6 +313,7 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_room_heater", choices)
         self.assertIn("prioritize_thermal_project", choices)
         self.assertEqual([row["thing_id"] for row in details["thermal_project_options"]], [99])
+        client.post.return_value = {"applied": True}
         with mock.patch.object(director, "prioritize", return_value={"success": True}):
             result = director.execute_action(client, snapshot, state, "prioritize_thermal_project",
                                              {**details, "thermal_project": 99, "worker_pawn": 62})
@@ -366,6 +405,8 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_room_heater", choices)
         self.assertGreater(details["power_connection_options"]["10"]["conduit_cost"], 15)
         client = mock.Mock()
+        client.post.return_value = {"success": True}
+        self.observe_legacy_writes(client, snapshot)
         with mock.patch.object(director, "prioritize", return_value={"success": True}):
             result = director.execute_action(client, snapshot,
                                              {"anchor": {"x": 14, "z": 14}, "issued": {}},
@@ -1909,11 +1950,13 @@ class DirectorTests(unittest.TestCase):
         choices, _ = director.candidate_actions(None, snapshot, state)
         self.assertIn("equip_colonists", choices)
         client = mock.Mock()
-        client.post.return_value = {"ok": True}
-        result = director.execute_action(client, snapshot, state, "equip_colonists", {})
+        client.post.return_value = {"success": True}
+        selection = director.choose_action(self.FakeAgent(["1", "70"]), snapshot, ["equip_colonists"])
+        result = director.execute_action(client, snapshot, state, "equip_colonists", selection)
         self.assertTrue(result["applied"])
         self.assertEqual([call.args[0] for call in client.post.call_args_list],
-                         ["/api/v1/things/set-forbidden", "/api/v1/pawn/job"])
+                         ["/api/v1/pawn/job"])
+        self.assertTrue(client.post.call_args.kwargs["body"]["allow_unforbid_equip"])
 
     def test_low_mood_context_names_observed_needs_without_claiming_exact_thoughts(self):
         snapshot = {"map": {"resources": {"food": 0}}, "colonists": [{
@@ -2243,6 +2286,7 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual([pawn["id"] for pawn in director.firefighter_priority_options(snapshot)], [7])
         client = mock.Mock()
         client.post.return_value = {"success": True}
+        self.observe_legacy_writes(client, snapshot)
         result = director.execute_action(client, snapshot, state, "prioritize_firefighting", details)
         self.assertTrue(result["applied"])
         client.post.assert_called_once_with("/api/v1/colonist/work-priority",
@@ -2254,12 +2298,13 @@ class DirectorTests(unittest.TestCase):
 
     def test_home_fire_assigns_all_firefighters_in_one_cycle_and_hides_research(self):
         snapshot = {"game": {"tick": 12000}, "map": {"id": 1},
-                    "colonists": [{"id": 7, "name": "Ada", "work_priorities": {}},
-                                  {"id": 8, "name": "Bess", "work_priorities": {}}],
+                    "colonists": [{"id": 7, "name": "Ada", "health": 1, "work_priorities": {"Firefighter": {"priority": 3}}},
+                                  {"id": 8, "name": "Bess", "health": 1, "work_priorities": {"Firefighter": {"priority": 3}}}],
                     "development": {}}
         state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
         client = mock.Mock()
         client.post.return_value = {"success": True}
+        self.observe_legacy_writes(client, snapshot)
         result = director.execute_action(client, snapshot, state, "prioritize_firefighting",
                                          {"firefighter_worker_ids": [7, 8]})
         self.assertTrue(result["applied"])
@@ -2351,7 +2396,7 @@ class DirectorTests(unittest.TestCase):
         table["bills_count"] = 0
         client.get.reset_mock()
         self.assertTrue(director.food_bills_need_configuration(client, [table]))
-        client.get.assert_not_called()
+        client.get.assert_called_once_with("/api/v1/buildings/bills", building_id=7)
 
     def test_animal_carcasses_need_butcher_spot_then_forever_bill(self):
         snapshot = {
@@ -2370,7 +2415,7 @@ class DirectorTests(unittest.TestCase):
         }
         state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
         actions, _ = director.candidate_actions(None, snapshot, state)
-        self.assertIn("build_butcher_spot", actions)
+        self.assertNotIn("build_butcher_spot", actions)
         self.assertFalse(director.requires_builder_now("build_butcher_spot"))
         focused = director.focus_imminent_food_choices(
             snapshot, ["build_butcher_spot", "designate_safe_hunting", "prioritize_hunting", "hold_survival"])
@@ -2393,17 +2438,23 @@ class DirectorTests(unittest.TestCase):
             raise AssertionError(path)
         def post(path, **kwargs):
             nonlocal bill_added
+            if path == "/api/v1/builder/site-options":
+                return {"sites": [{"position": {"x": 21, "z": 17}, "rotation": 0}]}
             if path == "/api/v1/buildings/bills/add":
                 bill_added = True
             return {"success": True}
         client.get.side_effect = get
         client.post.side_effect = post
-        with mock.patch.object(director, "open_recreation_site", return_value={"x": 21, "z": 17}) as find_site:
-            result = director.execute_action(client, snapshot, state, "build_butcher_spot", {})
+        self.observe_legacy_writes(client, snapshot)
+        actions, details = director.candidate_actions(client, snapshot, state)
+        self.assertIn("build_butcher_spot", actions)
+        result = director.execute_action(client, snapshot, state, "build_butcher_spot", details)
         self.assertTrue(result["applied"])
         self.assertTrue(result["bill_configured"])
         self.assertEqual(result["site"], {"x": 21, "z": 17})
-        self.assertEqual(find_site.call_args.kwargs["desired"], {"x": 25, "y": 0, "z": 17})
+        placement_calls = [call for call in client.post.call_args_list
+                           if call.args[0] == "/api/v1/builder/site-options"]
+        self.assertEqual(placement_calls[-1].kwargs["body"]["radius"], 1)
         blueprint_call = next(call for call in client.post.call_args_list
                               if call.args[0] == "/api/v1/builder/blueprint")
         self.assertEqual(blueprint_call.kwargs["body"]["blueprint"]["buildings"][0]["def_name"],
@@ -2423,7 +2474,8 @@ class DirectorTests(unittest.TestCase):
 
         # A station on the far side of the map cannot process this pile in time.
         snapshot["development"]["buildings"][0]["position"] = {"x": 90, "z": 39}
-        actions, details = director.candidate_actions(None, snapshot, state)
+        snapshot["development"]["construction_projects"] = []
+        actions, details = director.candidate_actions(client, snapshot, state)
         self.assertIn("build_butcher_spot", actions)
         self.assertEqual(details["butcher_cluster_center"], {"x": 25, "y": 0, "z": 17})
 
@@ -3249,9 +3301,9 @@ class DirectorTests(unittest.TestCase):
         snapshot = {
             "game": {"tick": 1000}, "map": {"id": 1},
             "colonists": [
-                {"id": 1, "name": "One", "work_priorities": {
+                {"id": 1, "name": "One", "health": 1, "work_priorities": {
                     "Construction": {"priority": 0}, "Doctor": {"priority": 1}}},
-                {"id": 2, "name": "Two", "work_priorities": {
+                {"id": 2, "name": "Two", "health": 1, "work_priorities": {
                     "Construction": {"priority": 3}}},
                 {"id": 3, "name": "Three", "work_priorities": {
                     "Construction": {"disabled": True}}},
@@ -3260,6 +3312,7 @@ class DirectorTests(unittest.TestCase):
                             "item_counts": {"WoodLog": 150}},
         }
         state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        self.observe_legacy_writes(client, snapshot)
         result = director.execute_action(client, snapshot, state, "build_starter_base", {})
         self.assertTrue(result["success"])
         self.assertEqual(len(result["cold_shelter_staffing"]), 3)
@@ -3479,6 +3532,7 @@ class DirectorTests(unittest.TestCase):
                                return_value={"applied": True, "pawn_id": 1}):
             director.execute_action(client, snapshot, state, "prioritize_research", {})
         self.assertEqual(state["reserved_researcher_id"], 1)
+        self.observe_legacy_writes(client, snapshot)
         with mock.patch.object(director.bridge, "choose_worker",
                                side_effect=lambda pawns, work: pawns[0] if pawns else None):
             result = director.execute_action(client, snapshot, state, "prioritize_hunting", {})

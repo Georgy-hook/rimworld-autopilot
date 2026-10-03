@@ -1,0 +1,4794 @@
+{
+  "game": {
+    "tick": 13263,
+    "wealth": 16953.8359,
+    "colonist_count": 3,
+    "storyteller": "Cassandra",
+    "is_paused": false,
+    "date": "1st of Aprimay, 5500, 11h"
+  },
+  "map": {
+    "id": 0,
+    "seed": 16622162,
+    "tile_id": 40061,
+    "is_player_home": true,
+    "is_temp_incident_map": false,
+    "is_current_map": true,
+    "enemies": 0,
+    "animals": 26,
+    "growing_zones": 0,
+    "plants": 0,
+    "expected_yield": 0.0,
+    "resources": {
+      "food": 51,
+      "meals": 51,
+      "raw_food": 0,
+      "nutrition": 45.9,
+      "nutrition_rotting_soon": 0.0,
+      "medicine": 34,
+      "weapons": 8
+    }
+  },
+  "colonists": [
+    {
+      "id": 254,
+      "map_id": 0,
+      "spawned": true,
+      "name": "Founder A",
+      "gender": "Female",
+      "age": 60,
+      "health": 1.0,
+      "mood": 0.62,
+      "hunger": 0.444,
+      "rest": 0.696,
+      "joy": 0.442,
+      "bleeding_rate": 0.0,
+      "tendable_now": false,
+      "pain": 0.113,
+      "comfort": 0.286,
+      "beauty": 0.351,
+      "downed": false,
+      "current_job": "GotoWander",
+      "inspiration": "",
+      "position": {
+        "x": 139,
+        "y": 0,
+        "z": 112
+      },
+      "skills": {
+        "Shooting": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Melee": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Construction": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "level": 5,
+          "passion": 1,
+          "disabled": false
+        },
+        "Plants": {
+          "level": 5,
+          "passion": 1,
+          "disabled": false
+        },
+        "Animals": {
+          "level": 4,
+          "passion": 0,
+          "disabled": false
+        },
+        "Crafting": {
+          "level": 2,
+          "passion": 0,
+          "disabled": false
+        },
+        "Artistic": {
+          "level": 15,
+          "passion": 2,
+          "disabled": false
+        },
+        "Medicine": {
+          "level": 0,
+          "passion": 0,
+          "disabled": true
+        },
+        "Social": {
+          "level": 0,
+          "passion": 0,
+          "disabled": true
+        },
+        "Intellectual": {
+          "level": 6,
+          "passion": 1,
+          "disabled": false
+        }
+      },
+      "work_priorities": {
+        "Doctor": {
+          "priority": 0,
+          "disabled": true
+        },
+        "Warden": {
+          "priority": 0,
+          "disabled": true
+        },
+        "Hunting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Construction": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Growing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "priority": 0,
+          "disabled": false
+        },
+        "PlantCutting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Smithing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Tailoring": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Crafting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Hauling": {
+          "priority": 0,
+          "disabled": true
+        },
+        "Childcare": {
+          "priority": 0,
+          "disabled": true
+        },
+        "Firefighter": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Patient": {
+          "priority": 3,
+          "disabled": false
+        },
+        "PatientBedRest": {
+          "priority": 3,
+          "disabled": false
+        },
+        "BasicWorker": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Handling": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Cooking": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Art": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Cleaning": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Research": {
+          "priority": 3,
+          "disabled": false
+        },
+        "DarkStudy": {
+          "priority": 3,
+          "disabled": false
+        }
+      },
+      "traits": [
+        {
+          "name": "DislikesMen",
+          "label": "misandrist",
+          "description": "",
+          "suppressed": false
+        },
+        {
+          "name": "Ascetic",
+          "label": "ascetic",
+          "description": "",
+          "suppressed": false
+        },
+        {
+          "name": "Kind",
+          "label": "kind",
+          "description": "",
+          "suppressed": false
+        }
+      ],
+      "health_conditions": [
+        {
+          "def_name": "Bite",
+          "label": "bite scar (painful)",
+          "part": "head",
+          "severity": 3.0,
+          "permanent": true,
+          "life_threatening": false,
+          "bleeding": false,
+          "tendable_now": false,
+          "can_ever_kill": false,
+          "immunity": null,
+          "lethal_severity": null,
+          "tend_quality": 0.0,
+          "tend_ticks_left": -1
+        }
+      ],
+      "patient_feeding_eligible": false,
+      "patient_raw_food_allowed": false,
+      "capacities": {
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0
+      },
+      "relations": [
+        {
+          "relation_def_name": "Parent",
+          "other_pawn_id": "Human267",
+          "other_pawn_name": "Yumi 'Philly' Abilla"
+        },
+        {
+          "relation_def_name": "Parent",
+          "other_pawn_id": "Human271",
+          "other_pawn_name": "Scipio 'Joseph' Joseph"
+        }
+      ],
+      "in_mental_state": false
+    },
+    {
+      "id": 257,
+      "map_id": 0,
+      "spawned": true,
+      "name": "Founder B",
+      "gender": "Female",
+      "age": 37,
+      "health": 1.0,
+      "mood": 0.7,
+      "hunger": 0.444,
+      "rest": 0.727,
+      "joy": 0.402,
+      "bleeding_rate": 0.0,
+      "tendable_now": false,
+      "pain": 0.0,
+      "comfort": 0.286,
+      "beauty": 0.334,
+      "downed": false,
+      "current_job": "GotoWander",
+      "inspiration": "",
+      "position": {
+        "x": 109,
+        "y": 0,
+        "z": 139
+      },
+      "skills": {
+        "Shooting": {
+          "level": 2,
+          "passion": 0,
+          "disabled": false
+        },
+        "Melee": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Construction": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "level": 2,
+          "passion": 0,
+          "disabled": false
+        },
+        "Plants": {
+          "level": 2,
+          "passion": 0,
+          "disabled": false
+        },
+        "Animals": {
+          "level": 4,
+          "passion": 2,
+          "disabled": false
+        },
+        "Crafting": {
+          "level": 4,
+          "passion": 0,
+          "disabled": false
+        },
+        "Artistic": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Medicine": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Social": {
+          "level": 11,
+          "passion": 2,
+          "disabled": false
+        },
+        "Intellectual": {
+          "level": 6,
+          "passion": 2,
+          "disabled": false
+        }
+      },
+      "work_priorities": {
+        "Doctor": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Handling": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Construction": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Growing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "priority": 0,
+          "disabled": false
+        },
+        "PlantCutting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Art": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Firefighter": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Patient": {
+          "priority": 3,
+          "disabled": false
+        },
+        "PatientBedRest": {
+          "priority": 3,
+          "disabled": false
+        },
+        "BasicWorker": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Warden": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Hunting": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Smithing": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Tailoring": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Crafting": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Hauling": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Cleaning": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Research": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Childcare": {
+          "priority": 3,
+          "disabled": false
+        },
+        "DarkStudy": {
+          "priority": 3,
+          "disabled": false
+        }
+      },
+      "traits": [
+        {
+          "name": "DislikesMen",
+          "label": "misandrist",
+          "description": "",
+          "suppressed": false
+        },
+        {
+          "name": "DrugDesire",
+          "label": "chemical fascination",
+          "description": "",
+          "suppressed": false
+        },
+        {
+          "name": "Cannibal",
+          "label": "cannibal",
+          "description": "",
+          "suppressed": false
+        }
+      ],
+      "health_conditions": [],
+      "patient_feeding_eligible": false,
+      "patient_raw_food_allowed": false,
+      "capacities": {
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0
+      },
+      "relations": [
+        {
+          "relation_def_name": "Parent",
+          "other_pawn_id": "Human254",
+          "other_pawn_name": "Founder A 'Founder A' Abilla"
+        }
+      ],
+      "in_mental_state": false
+    },
+    {
+      "id": 260,
+      "map_id": 0,
+      "spawned": true,
+      "name": "Nonviolent founder",
+      "gender": "Male",
+      "age": 50,
+      "health": 1.0,
+      "mood": 0.641,
+      "hunger": 0.448,
+      "rest": 0.737,
+      "joy": 0.371,
+      "bleeding_rate": 0.0,
+      "tendable_now": false,
+      "pain": 0.0,
+      "comfort": 0.289,
+      "beauty": 0.373,
+      "downed": false,
+      "current_job": "GotoWander",
+      "inspiration": "",
+      "position": {
+        "x": 102,
+        "y": 0,
+        "z": 134
+      },
+      "skills": {
+        "Shooting": {
+          "level": 0,
+          "passion": 0,
+          "disabled": true
+        },
+        "Melee": {
+          "level": 0,
+          "passion": 0,
+          "disabled": true
+        },
+        "Construction": {
+          "level": 3,
+          "passion": 0,
+          "disabled": false
+        },
+        "Mining": {
+          "level": 3,
+          "passion": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "level": 5,
+          "passion": 2,
+          "disabled": false
+        },
+        "Plants": {
+          "level": 11,
+          "passion": 2,
+          "disabled": false
+        },
+        "Animals": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Crafting": {
+          "level": 4,
+          "passion": 2,
+          "disabled": false
+        },
+        "Artistic": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        },
+        "Medicine": {
+          "level": 9,
+          "passion": 2,
+          "disabled": false
+        },
+        "Social": {
+          "level": 0,
+          "passion": 0,
+          "disabled": false
+        },
+        "Intellectual": {
+          "level": 1,
+          "passion": 0,
+          "disabled": false
+        }
+      },
+      "work_priorities": {
+        "Warden": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Handling": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Cooking": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Hunting": {
+          "priority": 0,
+          "disabled": true
+        },
+        "Smithing": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Tailoring": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Art": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Crafting": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Research": {
+          "priority": 0,
+          "disabled": false
+        },
+        "DarkStudy": {
+          "priority": 0,
+          "disabled": false
+        },
+        "Firefighter": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Patient": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Doctor": {
+          "priority": 3,
+          "disabled": false
+        },
+        "PatientBedRest": {
+          "priority": 3,
+          "disabled": false
+        },
+        "BasicWorker": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Construction": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Growing": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Mining": {
+          "priority": 3,
+          "disabled": false
+        },
+        "PlantCutting": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Hauling": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Cleaning": {
+          "priority": 3,
+          "disabled": false
+        },
+        "Childcare": {
+          "priority": 3,
+          "disabled": false
+        }
+      },
+      "traits": [
+        {
+          "name": "Kind",
+          "label": "kind",
+          "description": "",
+          "suppressed": false
+        },
+        {
+          "name": "NightOwl",
+          "label": "night owl",
+          "description": "",
+          "suppressed": false
+        }
+      ],
+      "health_conditions": [],
+      "patient_feeding_eligible": false,
+      "patient_raw_food_allowed": false,
+      "capacities": {
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0
+      },
+      "relations": [
+        {
+          "relation_def_name": "Bond",
+          "other_pawn_id": "YorkshireTerrier5068",
+          "other_pawn_name": "Bambino"
+        }
+      ],
+      "in_mental_state": false
+    }
+  ],
+  "combat": {
+    "available": true,
+    "colonists": [
+      {
+        "id": 254,
+        "name": "Founder A",
+        "kind_def": "Colonist",
+        "faction": "PlayerColony",
+        "is_colonist": true,
+        "is_hostile": false,
+        "is_drafted": false,
+        "is_downed": false,
+        "is_in_mental_state": false,
+        "is_dead": false,
+        "health": 1.0,
+        "position": {
+          "x": 139,
+          "y": 0,
+          "z": 112
+        },
+        "shooting_skill": 0,
+        "melee_skill": 0,
+        "weapon_def": "Gun_Revolver",
+        "weapon_label": "Revolver (normal)",
+        "weapon_info": {
+          "id": 5063,
+          "def_name": "Gun_Revolver",
+          "label": "Revolver (normal)",
+          "is_ranged": true,
+          "is_forbidden": false,
+          "market_value": 135.4,
+          "position": {
+            "x": 144,
+            "y": 0,
+            "z": 111
+          },
+          "range": 25.9,
+          "min_range": 0.0,
+          "damage": 12.0,
+          "damage_def": "Bullet",
+          "armor_penetration": 0.179999992,
+          "burst_shots": 1,
+          "warmup": 0.3,
+          "cooldown": 1.6,
+          "accuracy_touch": 0.8,
+          "accuracy_short": 0.75,
+          "accuracy_medium": 0.55,
+          "accuracy_long": 0.4,
+          "melee_dps": 4.5,
+          "quality": 2,
+          "equippable": true,
+          "explosive": false,
+          "incendiary": false,
+          "emp": false,
+          "single_use": false,
+          "description": "An ancient pattern double-action revolver. It's not very powerful, but has a decent range for a pistol and is quick on the draw.",
+          "hit_points_percent": 1.0
+        },
+        "has_shield_belt": false,
+        "has_ranged_weapon": true,
+        "current_job": "GotoWander",
+        "distance_to_nearest_opponent": 0.0,
+        "gender": "Female",
+        "biological_age": 60,
+        "bleeding_rate": 0.0,
+        "tendable_now": false,
+        "self_tend_allowed": false,
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0,
+        "pain": 0.112500004,
+        "market_value": 1135.0,
+        "combat_power": 30.0,
+        "weapon_range": 25.9,
+        "shootable_opponent_ids": [],
+        "armor_sharp": 0.0,
+        "carrying_player_pawn": false,
+        "kidnapping_intent": false,
+        "psyfocus": -1.0,
+        "target_psyfocus": 0.5,
+        "neural_heat": 0.0,
+        "neural_heat_limit": 30.0,
+        "psychic_sensitivity": 1.0,
+        "psylink_level": 0,
+        "psycasts": [],
+        "social_skill": 0,
+        "medicine_skill": 0,
+        "construction_skill": 0,
+        "animals_skill": 4,
+        "intellectual_skill": 6,
+        "cooking_skill": 5,
+        "recruitable": true,
+        "faction_permanent_enemy": false,
+        "faction_can_give_goodwill": false,
+        "faction_goodwill": 0,
+        "traits": [
+          "Misandrist",
+          "Ascetic",
+          "Kind"
+        ],
+        "top_skills": [
+          "artistic:15",
+          "intellectual:6",
+          "cooking:5",
+          "plants:5",
+          "animals:4"
+        ],
+        "health_conditions": [
+          "Bite:Head"
+        ],
+        "can_fight": true
+      },
+      {
+        "id": 257,
+        "name": "Founder B",
+        "kind_def": "Colonist",
+        "faction": "PlayerColony",
+        "is_colonist": true,
+        "is_hostile": false,
+        "is_drafted": false,
+        "is_downed": false,
+        "is_in_mental_state": false,
+        "is_dead": false,
+        "health": 1.0,
+        "position": {
+          "x": 108,
+          "y": 0,
+          "z": 139
+        },
+        "shooting_skill": 2,
+        "melee_skill": 0,
+        "has_shield_belt": false,
+        "has_ranged_weapon": false,
+        "current_job": "GotoWander",
+        "distance_to_nearest_opponent": 0.0,
+        "gender": "Female",
+        "biological_age": 37,
+        "bleeding_rate": 0.0,
+        "tendable_now": false,
+        "self_tend_allowed": false,
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0,
+        "pain": 0.0,
+        "market_value": 790.0,
+        "combat_power": 30.0,
+        "weapon_range": 0.0,
+        "shootable_opponent_ids": [],
+        "armor_sharp": 0.0,
+        "carrying_player_pawn": false,
+        "kidnapping_intent": false,
+        "psyfocus": -1.0,
+        "target_psyfocus": 0.5,
+        "neural_heat": 0.0,
+        "neural_heat_limit": 30.0,
+        "psychic_sensitivity": 1.0,
+        "psylink_level": 0,
+        "psycasts": [],
+        "social_skill": 11,
+        "medicine_skill": 1,
+        "construction_skill": 0,
+        "animals_skill": 4,
+        "intellectual_skill": 6,
+        "cooking_skill": 2,
+        "recruitable": true,
+        "faction_permanent_enemy": false,
+        "faction_can_give_goodwill": false,
+        "faction_goodwill": 0,
+        "traits": [
+          "Misandrist",
+          "Chemical fascination",
+          "Cannibal"
+        ],
+        "top_skills": [
+          "social:11",
+          "intellectual:6",
+          "animals:4",
+          "crafting:4",
+          "shooting:2"
+        ],
+        "health_conditions": [],
+        "can_fight": true
+      },
+      {
+        "id": 260,
+        "name": "Nonviolent founder",
+        "kind_def": "Colonist",
+        "faction": "PlayerColony",
+        "is_colonist": true,
+        "is_hostile": false,
+        "is_drafted": false,
+        "is_downed": false,
+        "is_in_mental_state": false,
+        "is_dead": false,
+        "health": 1.0,
+        "position": {
+          "x": 101,
+          "y": 0,
+          "z": 134
+        },
+        "shooting_skill": 0,
+        "melee_skill": 0,
+        "has_shield_belt": false,
+        "has_ranged_weapon": false,
+        "current_job": "GotoWander",
+        "distance_to_nearest_opponent": 0.0,
+        "gender": "Male",
+        "biological_age": 50,
+        "bleeding_rate": 0.0,
+        "tendable_now": false,
+        "self_tend_allowed": false,
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "manipulation": 1.0,
+        "sight": 1.0,
+        "pain": 0.0,
+        "market_value": 1155.0,
+        "combat_power": 30.0,
+        "weapon_range": 0.0,
+        "shootable_opponent_ids": [],
+        "armor_sharp": 0.0,
+        "carrying_player_pawn": false,
+        "kidnapping_intent": false,
+        "psyfocus": -1.0,
+        "target_psyfocus": 0.5,
+        "neural_heat": 0.0,
+        "neural_heat_limit": 30.0,
+        "psychic_sensitivity": 1.0,
+        "psylink_level": 0,
+        "psycasts": [],
+        "social_skill": 0,
+        "medicine_skill": 9,
+        "construction_skill": 3,
+        "animals_skill": 1,
+        "intellectual_skill": 1,
+        "cooking_skill": 5,
+        "recruitable": true,
+        "faction_permanent_enemy": false,
+        "faction_can_give_goodwill": false,
+        "faction_goodwill": 0,
+        "traits": [
+          "Kind",
+          "Night owl"
+        ],
+        "top_skills": [
+          "plants:11",
+          "medical:9",
+          "cooking:5",
+          "crafting:4",
+          "construction:3"
+        ],
+        "health_conditions": [],
+        "can_fight": false
+      }
+    ],
+    "hostiles": [],
+    "hostile_buildings": [],
+    "native_options": [],
+    "available_weapons": [
+      {
+        "id": 5064,
+        "def_name": "MeleeWeapon_Knife",
+        "label": "Plasteel knife (normal 100%)",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 285.0,
+        "position": {
+          "x": 145,
+          "y": 0,
+          "z": 105
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 8.975647,
+        "quality": 2,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "One of mankind's oldest manufactured objects. The knife has taken many forms, but the concept has always remained the same: A handle for holding and a sharp edge for cutting.",
+        "hit_points_percent": 0.996428549
+      },
+      {
+        "id": 5062,
+        "def_name": "Gun_BoltActionRifle",
+        "label": "Bolt-action rifle (normal 99%)",
+        "is_ranged": true,
+        "is_forbidden": false,
+        "market_value": 255.0,
+        "position": {
+          "x": 142,
+          "y": 0,
+          "z": 104
+        },
+        "range": 36.9,
+        "min_range": 0.0,
+        "damage": 18.0,
+        "damage_def": "Bullet",
+        "armor_penetration": 0.269999981,
+        "burst_shots": 1,
+        "warmup": 1.7,
+        "cooldown": 1.5,
+        "accuracy_touch": 0.65,
+        "accuracy_short": 0.8,
+        "accuracy_medium": 0.9,
+        "accuracy_long": 0.8,
+        "melee_dps": 4.5,
+        "quality": 2,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "An ancient pattern bolt-action rifle. With its long range, and low fire rate, it is unlikely to drive animals to revenge, which makes it a favorite weapon for hunting.",
+        "hit_points_percent": 0.99
+      },
+      {
+        "id": 5085,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 132,
+          "y": 0,
+          "z": 120
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      },
+      {
+        "id": 5086,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 131,
+          "y": 0,
+          "z": 121
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      },
+      {
+        "id": 5087,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 127,
+          "y": 0,
+          "z": 121
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      },
+      {
+        "id": 5088,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 132,
+          "y": 0,
+          "z": 117
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      },
+      {
+        "id": 5089,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 139,
+          "y": 0,
+          "z": 114
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      },
+      {
+        "id": 5090,
+        "def_name": "WoodLog",
+        "label": "Wood",
+        "is_ranged": false,
+        "is_forbidden": false,
+        "market_value": 1.2,
+        "position": {
+          "x": 138,
+          "y": 0,
+          "z": 110
+        },
+        "range": 0.0,
+        "min_range": 0.0,
+        "damage": 0.0,
+        "armor_penetration": 0.0,
+        "burst_shots": 1,
+        "warmup": 0.0,
+        "cooldown": 1.0,
+        "accuracy_touch": 1.0,
+        "accuracy_short": 1.0,
+        "accuracy_medium": 1.0,
+        "accuracy_long": 1.0,
+        "melee_dps": 5.0,
+        "equippable": true,
+        "compatible_pawn_ids": [
+          254,
+          257,
+          260
+        ],
+        "explosive": false,
+        "incendiary": false,
+        "emp": false,
+        "single_use": false,
+        "description": "Wood from trees or other fibrous plants. Useful for building structures and weapons. It is a good fuel for campfires and generators, and can be refined into chemfuel. In a pinch, a piece of wood can be used as a weapon or a leg.",
+        "hit_points_percent": 1.0
+      }
+    ],
+    "colony_animals": [
+      {
+        "id": 5068,
+        "name": "Bambino",
+        "def": "YorkshireTerrier",
+        "faction": "PlayerColony",
+        "is_colony_animal": true,
+        "health": 1.0,
+        "hunger": 0.38323012,
+        "rest": 0.709657,
+        "consciousness": 1.0,
+        "moving": 1.0,
+        "pain": 0.0,
+        "health_conditions": [],
+        "bleeding_rate": 0.0,
+        "tendable_now": false,
+        "downed": false,
+        "dead": false,
+        "current_job": "GotoWander",
+        "position": {
+          "x": 93,
+          "y": 0,
+          "z": 140
+        },
+        "trainer": 260,
+        "master_pawn_id": 260,
+        "bonded_pawn_id": 260,
+        "follow_drafted": false,
+        "animals_released": false,
+        "trainability": "Intermediate",
+        "in_mental_state": false,
+        "trainables": [
+          {
+            "def_name": "Obedience",
+            "label": "guard",
+            "can_train": true,
+            "wanted": true,
+            "learned": true,
+            "reason": ""
+          },
+          {
+            "def_name": "Release",
+            "label": "attack",
+            "can_train": true,
+            "wanted": false,
+            "learned": false,
+            "reason": ""
+          },
+          {
+            "def_name": "Rescue",
+            "label": "rescue",
+            "can_train": false,
+            "wanted": false,
+            "learned": false,
+            "reason": "Bambino is too small to train this."
+          },
+          {
+            "def_name": "Haul",
+            "label": "haul",
+            "can_train": false,
+            "wanted": false,
+            "learned": false,
+            "reason": "Bambino is too small to train this."
+          },
+          {
+            "def_name": "Tameness",
+            "label": "tameness",
+            "can_train": true,
+            "wanted": true,
+            "learned": true,
+            "reason": ""
+          }
+        ],
+        "pregnant": false,
+        "gender": "Male",
+        "wildness": 0.0,
+        "minimum_handling_skill": 0,
+        "manhunter_on_tame_fail_chance": 0.0,
+        "reproductive": true,
+        "can_be_designated_for_taming": false,
+        "requires_pen": false,
+        "has_suitable_enclosed_pen": false,
+        "market_value": 100.0,
+        "meat_amount": 45,
+        "leather_amount": 20,
+        "combat_power": 30.0,
+        "predator": false,
+        "harm_revenge_chance": 0.0,
+        "min_comfortable_temperature": -15.0,
+        "max_comfortable_temperature": 40.0
+      }
+    ],
+    "defenses": []
+  },
+  "animals": [
+    {
+      "id": 5068,
+      "name": "Bambino",
+      "def": "YorkshireTerrier",
+      "is_colony_animal": true,
+      "health": 1.0,
+      "hunger": 0.383,
+      "rest": 0.71,
+      "consciousness": 1.0,
+      "moving": 1.0,
+      "pain": 0.0,
+      "health_conditions": [],
+      "bleeding_rate": 0.0,
+      "tendable_now": false,
+      "gender": "Male",
+      "wildness": 0.0,
+      "minimum_handling_skill": 0,
+      "master_pawn_id": 260,
+      "bonded_pawn_id": 260,
+      "follow_drafted": false,
+      "animals_released": false,
+      "trainability": "Intermediate",
+      "trainables": [
+        {
+          "def_name": "Obedience",
+          "label": "guard",
+          "can_train": true,
+          "wanted": true,
+          "learned": true,
+          "reason": ""
+        },
+        {
+          "def_name": "Release",
+          "label": "attack",
+          "can_train": true,
+          "wanted": false,
+          "learned": false,
+          "reason": ""
+        },
+        {
+          "def_name": "Rescue",
+          "label": "rescue",
+          "can_train": false,
+          "wanted": false,
+          "learned": false,
+          "reason": "Bambino is too small to train this."
+        },
+        {
+          "def_name": "Haul",
+          "label": "haul",
+          "can_train": false,
+          "wanted": false,
+          "learned": false,
+          "reason": "Bambino is too small to train this."
+        },
+        {
+          "def_name": "Tameness",
+          "label": "tameness",
+          "can_train": true,
+          "wanted": true,
+          "learned": true,
+          "reason": ""
+        }
+      ],
+      "in_mental_state": false,
+      "combat_power": 30.0,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "pregnant": false,
+      "downed": false,
+      "dead": false,
+      "current_job": "GotoWander",
+      "position": {
+        "x": 93,
+        "y": 0,
+        "z": 140
+      },
+      "min_comfortable_temperature": -15.0,
+      "max_comfortable_temperature": 40.0
+    }
+  ],
+  "wild_animals": [
+    {
+      "id": 16620,
+      "name": "Emu",
+      "def": "Emu",
+      "gender": "Male",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 1.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 200.0,
+      "meat_amount": 84,
+      "leather_amount": 28,
+      "combat_power": 70.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 162,
+        "y": 0,
+        "z": 15
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16621,
+      "name": "Hare",
+      "def": "Hare",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 50.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 33.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 220,
+        "y": 0,
+        "z": 64
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16622,
+      "name": "Ostrich",
+      "def": "Ostrich",
+      "gender": "Male",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 0.1,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 250.0,
+      "meat_amount": 140,
+      "leather_amount": 40,
+      "combat_power": 85.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 190,
+        "y": 0,
+        "z": 178
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16623,
+      "name": "Hare",
+      "def": "Hare",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 50.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 33.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 66,
+        "y": 0,
+        "z": 62
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16624,
+      "name": "Ostrich",
+      "def": "Ostrich",
+      "gender": "Male",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 0.1,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 250.0,
+      "meat_amount": 140,
+      "leather_amount": 40,
+      "combat_power": 85.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 97,
+        "y": 0,
+        "z": 200
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16625,
+      "name": "Emu",
+      "def": "Emu",
+      "gender": "Male",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 1.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 200.0,
+      "meat_amount": 84,
+      "leather_amount": 28,
+      "combat_power": 70.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 178,
+        "y": 0,
+        "z": 154
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16626,
+      "name": "Iguana",
+      "def": "Iguana",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 56,
+      "leather_amount": 22,
+      "combat_power": 40.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 126,
+        "y": 0,
+        "z": 210
+      },
+      "min_comfortable_temperature": 0.0,
+      "max_comfortable_temperature": 60.0
+    },
+    {
+      "id": 16627,
+      "name": "Iguana",
+      "def": "Iguana",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 56,
+      "leather_amount": 22,
+      "combat_power": 40.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 160,
+        "y": 0,
+        "z": 11
+      },
+      "min_comfortable_temperature": 0.0,
+      "max_comfortable_temperature": 60.0
+    },
+    {
+      "id": 16628,
+      "name": "Rat",
+      "def": "Rat",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 35.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 30.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 96,
+        "y": 0,
+        "z": 239
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16629,
+      "name": "Iguana",
+      "def": "Iguana",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 56,
+      "leather_amount": 22,
+      "combat_power": 40.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 41,
+        "y": 0,
+        "z": 55
+      },
+      "min_comfortable_temperature": 0.0,
+      "max_comfortable_temperature": 60.0
+    },
+    {
+      "id": 16630,
+      "name": "Rat",
+      "def": "Rat",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 35.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 30.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 179,
+        "y": 0,
+        "z": 145
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16631,
+      "name": "Iguana",
+      "def": "Iguana",
+      "gender": "Female",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 56,
+      "leather_amount": 22,
+      "combat_power": 40.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 160,
+        "y": 0,
+        "z": 214
+      },
+      "min_comfortable_temperature": 0.0,
+      "max_comfortable_temperature": 60.0
+    },
+    {
+      "id": 16632,
+      "name": "Ostrich",
+      "def": "Ostrich",
+      "gender": "Male",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 0.1,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 250.0,
+      "meat_amount": 140,
+      "leather_amount": 40,
+      "combat_power": 85.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 201,
+        "y": 0,
+        "z": 173
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16633,
+      "name": "Fennec fox",
+      "def": "Fox_Fennec",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 200.0,
+      "meat_amount": 77,
+      "leather_amount": 27,
+      "combat_power": 45.0,
+      "predator": true,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 51,
+        "y": 0,
+        "z": 127
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16634,
+      "name": "Megasloth",
+      "def": "Megasloth",
+      "gender": "Male",
+      "wildness": 0.97,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 0.3,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 700.0,
+      "meat_amount": 560,
+      "leather_amount": 160,
+      "combat_power": 280.0,
+      "predator": false,
+      "harm_revenge_chance": 0.5,
+      "position": {
+        "x": 124,
+        "y": 0,
+        "z": 33
+      },
+      "min_comfortable_temperature": -55.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16635,
+      "name": "Boomrat",
+      "def": "Boomrat",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 55.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 172,
+        "y": 0,
+        "z": 54
+      },
+      "min_comfortable_temperature": -15.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16636,
+      "name": "Boomrat",
+      "def": "Boomrat",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 55.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 228,
+        "y": 0,
+        "z": 114
+      },
+      "min_comfortable_temperature": -15.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16637,
+      "name": "Donkey",
+      "def": "Donkey",
+      "gender": "Female",
+      "wildness": 0.0,
+      "minimum_handling_skill": 0,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 320.0,
+      "meat_amount": 196,
+      "leather_amount": 56,
+      "combat_power": 80.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 8,
+        "y": 0,
+        "z": 145
+      },
+      "min_comfortable_temperature": -25.0,
+      "max_comfortable_temperature": 45.0
+    },
+    {
+      "id": 16638,
+      "name": "Donkey",
+      "def": "Donkey",
+      "gender": "Female",
+      "wildness": 0.0,
+      "minimum_handling_skill": 0,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 320.0,
+      "meat_amount": 196,
+      "leather_amount": 56,
+      "combat_power": 80.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 5,
+        "y": 0,
+        "z": 147
+      },
+      "min_comfortable_temperature": -25.0,
+      "max_comfortable_temperature": 45.0
+    },
+    {
+      "id": 16639,
+      "name": "Rat",
+      "def": "Rat",
+      "gender": "Female",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 35.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 30.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 136,
+        "y": 0,
+        "z": 48
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16640,
+      "name": "Iguana",
+      "def": "Iguana",
+      "gender": "Female",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 100.0,
+      "meat_amount": 56,
+      "leather_amount": 22,
+      "combat_power": 40.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 174,
+        "y": 0,
+        "z": 25
+      },
+      "min_comfortable_temperature": 0.0,
+      "max_comfortable_temperature": 60.0
+    },
+    {
+      "id": 16641,
+      "name": "Hare",
+      "def": "Hare",
+      "gender": "Female",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 50.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 33.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 42,
+        "y": 0,
+        "z": 187
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16642,
+      "name": "Ostrich",
+      "def": "Ostrich",
+      "gender": "Female",
+      "wildness": 0.95,
+      "minimum_handling_skill": 10,
+      "manhunter_on_tame_fail_chance": 0.1,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": true,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 250.0,
+      "meat_amount": 140,
+      "leather_amount": 40,
+      "combat_power": 85.0,
+      "predator": false,
+      "harm_revenge_chance": 1.0,
+      "position": {
+        "x": 32,
+        "y": 0,
+        "z": 49
+      },
+      "min_comfortable_temperature": -8.0,
+      "max_comfortable_temperature": 50.0
+    },
+    {
+      "id": 16643,
+      "name": "Rat",
+      "def": "Rat",
+      "gender": "Male",
+      "wildness": 0.5,
+      "minimum_handling_skill": 5,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 35.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 30.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 97,
+        "y": 0,
+        "z": 210
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    },
+    {
+      "id": 16644,
+      "name": "Hare",
+      "def": "Hare",
+      "gender": "Male",
+      "wildness": 0.75,
+      "minimum_handling_skill": 8,
+      "manhunter_on_tame_fail_chance": 0.0,
+      "reproductive": true,
+      "pregnant": false,
+      "can_tame": true,
+      "requires_pen": false,
+      "has_suitable_enclosed_pen": false,
+      "market_value": 50.0,
+      "meat_amount": 31,
+      "leather_amount": 16,
+      "combat_power": 33.0,
+      "predator": false,
+      "harm_revenge_chance": 0.0,
+      "position": {
+        "x": 37,
+        "y": 0,
+        "z": 229
+      },
+      "min_comfortable_temperature": -30.0,
+      "max_comfortable_temperature": 40.0
+    }
+  ],
+  "development": {
+    "building_counts": {},
+    "item_counts": {
+      "MedicineUltratech": 4,
+      "ComponentSpacer": 3,
+      "Neurotrainer_Animals": 1,
+      "BiomutationPulser": 1,
+      "Silver": 800,
+      "ComponentIndustrial": 30,
+      "MeleeWeapon_Knife": 1,
+      "Apparel_AdvancedHelmet": 1,
+      "Gun_BoltActionRifle": 1,
+      "Apparel_FlakPants": 1,
+      "MedicineIndustrial": 30,
+      "Apparel_FlakVest": 1,
+      "WakeUp": 10,
+      "Steel": 948,
+      "WoodLog": 300,
+      "ChunkMechanoidSlag": 12,
+      "ChunkLimestone": 664,
+      "ChunkMarble": 609,
+      "Corpse_Human": 2,
+      "MealSurvivalPack": 51
+    },
+    "zones": [
+      {
+        "id": 0,
+        "cells_count": 16,
+        "label": "Laya Temporary Food",
+        "base_label": "Stockpile zone",
+        "type": "Zone_Stockpile"
+      },
+      {
+        "id": 1,
+        "cells_count": 36,
+        "label": "Laya Human Corpse Dump",
+        "base_label": "Stockpile zone",
+        "type": "Zone_Stockpile"
+      }
+    ],
+    "work_tables": [],
+    "finished_research": [
+      "ComplexFurniture",
+      "PassiveCooler",
+      "Stonecutting",
+      "ComplexClothing",
+      "Electricity",
+      "NutrientPaste",
+      "AirConditioning"
+    ],
+    "current_research": {
+      "name": "none",
+      "label": "None",
+      "progress": 0,
+      "research_points": 0,
+      "description": "None",
+      "is_finished": false,
+      "can_start_now": false,
+      "player_has_any_appropriate_research_bench": false,
+      "required_analyzed_thing_count": 0,
+      "analyzed_things_completed": 0,
+      "prerequisites": [],
+      "hidden_prerequisites": [],
+      "required_by_this": [],
+      "progress_percent": 0.0
+    },
+    "weather": {
+      "weather": "Clear",
+      "temperature": 24.6913815,
+      "growth_season_now": true,
+      "day_of_year": 1,
+      "quadrum": "Aprimay",
+      "current_twelfth": "First",
+      "next_twelfth_average_temperatures": [
+        26.0505371,
+        29.5376549,
+        32.4700279,
+        34.0619354
+      ]
+    },
+    "construction_projects": [],
+    "forbidden": [
+      {
+        "thing_id": 5094,
+        "def_name": "Steel",
+        "label": "steel x53",
+        "categories": [
+          "ResourcesRaw"
+        ],
+        "position": {
+          "x": 55,
+          "y": 0,
+          "z": 25
+        },
+        "rotation": 0,
+        "stack_count": 53,
+        "market_value": 1.899999976158142,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": -1,
+        "max_hit_points": 100,
+        "description": "An iron-carbon metal alloy used for building a huge variety of structures, weapons, and machines.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5095,
+        "def_name": "Steel",
+        "label": "steel x53",
+        "categories": [
+          "ResourcesRaw"
+        ],
+        "position": {
+          "x": 59,
+          "y": 0,
+          "z": 25
+        },
+        "rotation": 0,
+        "stack_count": 53,
+        "market_value": 1.899999976158142,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": -1,
+        "max_hit_points": 100,
+        "description": "An iron-carbon metal alloy used for building a huge variety of structures, weapons, and machines.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5096,
+        "def_name": "Steel",
+        "label": "steel x52",
+        "categories": [
+          "ResourcesRaw"
+        ],
+        "position": {
+          "x": 60,
+          "y": 0,
+          "z": 22
+        },
+        "rotation": 0,
+        "stack_count": 52,
+        "market_value": 1.899999976158142,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": -1,
+        "max_hit_points": 100,
+        "description": "An iron-carbon metal alloy used for building a huge variety of structures, weapons, and machines.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5097,
+        "def_name": "Steel",
+        "label": "steel x64",
+        "categories": [
+          "ResourcesRaw"
+        ],
+        "position": {
+          "x": 57,
+          "y": 0,
+          "z": 24
+        },
+        "rotation": 0,
+        "stack_count": 64,
+        "market_value": 1.899999976158142,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": -1,
+        "max_hit_points": 100,
+        "description": "An iron-carbon metal alloy used for building a huge variety of structures, weapons, and machines.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5107,
+        "def_name": "MealSurvivalPack",
+        "label": "packaged survival meal",
+        "categories": [
+          "FoodMeals"
+        ],
+        "position": {
+          "x": 238,
+          "y": 0,
+          "z": 167
+        },
+        "rotation": 0,
+        "stack_count": 1,
+        "market_value": 24.0,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": 50,
+        "max_hit_points": 50,
+        "description": "A high-quality packaged meal, manufactured for use in survival situations. While it never rots, it can still deteriorate if left outside. Great for traveling.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5108,
+        "def_name": "MealSurvivalPack",
+        "label": "packaged survival meal",
+        "categories": [
+          "FoodMeals"
+        ],
+        "position": {
+          "x": 235,
+          "y": 0,
+          "z": 161
+        },
+        "rotation": 0,
+        "stack_count": 1,
+        "market_value": 24.0,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": 50,
+        "max_hit_points": 50,
+        "description": "A high-quality packaged meal, manufactured for use in survival situations. While it never rots, it can still deteriorate if left outside. Great for traveling.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5109,
+        "def_name": "MealSurvivalPack",
+        "label": "packaged survival meal",
+        "categories": [
+          "FoodMeals"
+        ],
+        "position": {
+          "x": 239,
+          "y": 0,
+          "z": 163
+        },
+        "rotation": 0,
+        "stack_count": 1,
+        "market_value": 24.0,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": 50,
+        "max_hit_points": 50,
+        "description": "A high-quality packaged meal, manufactured for use in survival situations. While it never rots, it can still deteriorate if left outside. Great for traveling.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      },
+      {
+        "thing_id": 5110,
+        "def_name": "MealSurvivalPack",
+        "label": "packaged survival meal",
+        "categories": [
+          "FoodMeals"
+        ],
+        "position": {
+          "x": 238,
+          "y": 0,
+          "z": 162
+        },
+        "rotation": 0,
+        "stack_count": 1,
+        "market_value": 24.0,
+        "is_forbidden": true,
+        "quality": 0,
+        "hit_points": 50,
+        "max_hit_points": 50,
+        "description": "A high-quality packaged meal, manufactured for use in survival situations. While it never rots, it can still deteriorate if left outside. Great for traveling.",
+        "growth": 0.0,
+        "harvestable_now": false,
+        "is_designated_for_harvest": false,
+        "harvest_yield": 0,
+        "inner_quality": -1,
+        "beauty": 0.0
+      }
+    ],
+    "rooms": [
+      {
+        "role_def_name": "None",
+        "id": 28,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 58055,
+        "touches_map_edge": true,
+        "is_prison_cell": false,
+        "is_doorway": false,
+        "open_roof_count": 58055,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "max": {
+          "x": 249,
+          "y": 0,
+          "z": 249
+        },
+        "cells": [],
+        "light_placement_cells": [
+          {
+            "x": 25,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 26,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 27,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 28,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 29,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 30,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 31,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 32,
+            "y": 0,
+            "z": 0
+          }
+        ],
+        "contained_thing_defs": [
+          "Filth_RubbleRock",
+          "ChunkMarble",
+          "Plant_Grass",
+          "Steel",
+          "Plant_SaguaroCactus",
+          "Filth_MachineBits",
+          "Marble",
+          "Ostrich",
+          "Iguana",
+          "ChunkMechanoidSlag",
+          "ChunkLimestone",
+          "Plant_Bush",
+          "Plant_PincushionCactus",
+          "Plant_TreeDrago",
+          "Plant_Dandelion",
+          "AncientRazorWire",
+          "SteamGeyser",
+          "AncientMechDropBeacon",
+          "Plant_Agave",
+          "AncientSmallCrate",
+          "AncientMegaCannonBarrel",
+          "AncientSecurityTurret",
+          "Wall",
+          "Column",
+          "Hare",
+          "MineableGold",
+          "Door",
+          "MineableComponentsIndustrial",
+          "MineableSteel",
+          "Urn",
+          "Megasloth",
+          "AncientWarwalkerTorso",
+          "Filth_OilSmear",
+          "MineableUranium",
+          "Plant_Berry",
+          "Fox_Fennec",
+          "Filth_Blood",
+          "Filth_TwistedFlesh",
+          "VoidMonolith",
+          "AncientPipelineSection",
+          "Rat",
+          "AncientTank",
+          "Emu",
+          "Table1x2c",
+          "Donkey",
+          "MineableJade",
+          "Filth_Ash",
+          "ShipChunk",
+          "AncientShipBeacon",
+          "Sarcophagus",
+          "SteleGrand",
+          "Filth_Sand",
+          "AncientShoppingCart",
+          "AncientATM",
+          "YorkshireTerrier",
+          "Boomrat",
+          "Plant_TreeAnima",
+          "Filth_Dirt",
+          "Human",
+          "MineableSilver",
+          "WoodLog",
+          "Apparel_FlakPants",
+          "Gun_BoltActionRifle",
+          "SteleLarge",
+          "AncientGenerator",
+          "AncientFence",
+          "AncientExostriderLeg",
+          "AncientExostriderRemains",
+          "AncientExostriderHead",
+          "AncientExostriderCannon",
+          "Corpse_Human",
+          "Apparel_FlakVest",
+          "WakeUp",
+          "MedicineIndustrial",
+          "ComponentIndustrial",
+          "Apparel_AdvancedHelmet",
+          "MeleeWeapon_Knife",
+          "Silver",
+          "MealSurvivalPack",
+          "Limestone",
+          "AncientHydrant",
+          "AncientRustedEngineBlock",
+          "Table2x2c",
+          "AncientWheel",
+          "AncientRustedCarFrame",
+          "AncientPodCar",
+          "AncientRustedCar"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 29,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 131,
+          "y": 0,
+          "z": 33
+        },
+        "max": {
+          "x": 131,
+          "y": 0,
+          "z": 33
+        },
+        "cells": [
+          {
+            "x": 131,
+            "y": 0,
+            "z": 33
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door",
+          "Urn"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "Room",
+        "id": 30,
+        "role_label": "Room",
+        "temperature": 24.5637646,
+        "cells_count": 22,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": false,
+        "open_roof_count": 22,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": -7.299765,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 97,
+          "y": 0,
+          "z": 40
+        },
+        "max": {
+          "x": 105,
+          "y": 0,
+          "z": 43
+        },
+        "cells": [
+          {
+            "x": 98,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 97,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 98,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 101,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 98,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 101,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 102,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 103,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 104,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 105,
+            "y": 0,
+            "z": 42
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 43
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 43
+          },
+          {
+            "x": 101,
+            "y": 0,
+            "z": 43
+          },
+          {
+            "x": 102,
+            "y": 0,
+            "z": 43
+          },
+          {
+            "x": 103,
+            "y": 0,
+            "z": 43
+          },
+          {
+            "x": 105,
+            "y": 0,
+            "z": 43
+          }
+        ],
+        "light_placement_cells": [
+          {
+            "x": 98,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 40
+          },
+          {
+            "x": 97,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 98,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 99,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 100,
+            "y": 0,
+            "z": 41
+          },
+          {
+            "x": 101,
+            "y": 0,
+            "z": 41
+          }
+        ],
+        "contained_thing_defs": [
+          "Marble",
+          "MineableComponentsIndustrial"
+        ],
+        "role_display_label": "room"
+      },
+      {
+        "role_def_name": "None",
+        "id": 31,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 131,
+          "y": 0,
+          "z": 43
+        },
+        "max": {
+          "x": 131,
+          "y": 0,
+          "z": 43
+        },
+        "cells": [
+          {
+            "x": 131,
+            "y": 0,
+            "z": 43
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door",
+          "Plant_Grass"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 32,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 188,
+          "y": 0,
+          "z": 51
+        },
+        "max": {
+          "x": 188,
+          "y": 0,
+          "z": 51
+        },
+        "cells": [
+          {
+            "x": 188,
+            "y": 0,
+            "z": 51
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Plant_Dandelion",
+          "Plant_Grass",
+          "Door",
+          "Wall"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "Room",
+        "id": 33,
+        "role_label": "Room",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": false,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 6.43300056,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 116,
+          "y": 0,
+          "z": 67
+        },
+        "max": {
+          "x": 116,
+          "y": 0,
+          "z": 67
+        },
+        "cells": [
+          {
+            "x": 116,
+            "y": 0,
+            "z": 67
+          }
+        ],
+        "light_placement_cells": [
+          {
+            "x": 116,
+            "y": 0,
+            "z": 67
+          }
+        ],
+        "contained_thing_defs": [
+          "Marble"
+        ],
+        "role_display_label": "room"
+      },
+      {
+        "role_def_name": "None",
+        "id": 34,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 197,
+          "y": 0,
+          "z": 76
+        },
+        "max": {
+          "x": 197,
+          "y": 0,
+          "z": 76
+        },
+        "cells": [
+          {
+            "x": 197,
+            "y": 0,
+            "z": 76
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Plant_Grass",
+          "Door",
+          "Wall"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 35,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 226,
+          "y": 0,
+          "z": 85
+        },
+        "max": {
+          "x": 226,
+          "y": 0,
+          "z": 85
+        },
+        "cells": [
+          {
+            "x": 226,
+            "y": 0,
+            "z": 85
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 36,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 229,
+          "y": 0,
+          "z": 85
+        },
+        "max": {
+          "x": 229,
+          "y": 0,
+          "z": 85
+        },
+        "cells": [
+          {
+            "x": 229,
+            "y": 0,
+            "z": 85
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 37,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 150,
+          "y": 0,
+          "z": 88
+        },
+        "max": {
+          "x": 150,
+          "y": 0,
+          "z": 88
+        },
+        "cells": [
+          {
+            "x": 150,
+            "y": 0,
+            "z": 88
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Plant_Grass",
+          "Filth_RubbleRock",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 38,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 150,
+          "y": 0,
+          "z": 105
+        },
+        "max": {
+          "x": 150,
+          "y": 0,
+          "z": 105
+        },
+        "cells": [
+          {
+            "x": 150,
+            "y": 0,
+            "z": 105
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "Room",
+        "id": 39,
+        "role_label": "Room",
+        "temperature": 20.11637,
+        "cells_count": 183,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": false,
+        "open_roof_count": 0,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0437158272,
+        "impressiveness": 80.50897,
+        "average_glow": 0.0234008357,
+        "dark_cells_count": 175,
+        "dark_cells_percent": 95.62842,
+        "min": {
+          "x": 198,
+          "y": 0,
+          "z": 105
+        },
+        "max": {
+          "x": 210,
+          "y": 0,
+          "z": 121
+        },
+        "cells": [
+          {
+            "x": 199,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 198,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 198,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 210,
+            "y": 0,
+            "z": 108
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 109
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 110
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 111
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 112
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 113
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 114
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 115
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 116
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 117
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 210,
+            "y": 0,
+            "z": 118
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 119
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 120
+          },
+          {
+            "x": 204,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 205,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 206,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 207,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 208,
+            "y": 0,
+            "z": 121
+          },
+          {
+            "x": 209,
+            "y": 0,
+            "z": 121
+          }
+        ],
+        "light_placement_cells": [
+          {
+            "x": 200,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 201,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 203,
+            "y": 0,
+            "z": 105
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 202,
+            "y": 0,
+            "z": 106
+          },
+          {
+            "x": 199,
+            "y": 0,
+            "z": 107
+          },
+          {
+            "x": 200,
+            "y": 0,
+            "z": 107
+          }
+        ],
+        "contained_thing_defs": [
+          "Wall",
+          "Urn",
+          "AncientCryptosleepCasket",
+          "AncientHermeticCrate",
+          "AncientBarrel",
+          "Toughspike",
+          "Column",
+          "BiomutationPulser",
+          "ComponentSpacer",
+          "MedicineUltratech",
+          "Neurotrainer_Animals"
+        ],
+        "role_display_label": "room"
+      },
+      {
+        "role_def_name": "None",
+        "id": 40,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 41,
+          "y": 0,
+          "z": 106
+        },
+        "max": {
+          "x": 41,
+          "y": 0,
+          "z": 106
+        },
+        "cells": [
+          {
+            "x": 41,
+            "y": 0,
+            "z": 106
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door",
+          "Plant_Grass"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 41,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 66,
+          "y": 0,
+          "z": 110
+        },
+        "max": {
+          "x": 66,
+          "y": 0,
+          "z": 110
+        },
+        "cells": [
+          {
+            "x": 66,
+            "y": 0,
+            "z": 110
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 42,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 41,
+          "y": 0,
+          "z": 111
+        },
+        "max": {
+          "x": 41,
+          "y": 0,
+          "z": 111
+        },
+        "cells": [
+          {
+            "x": 41,
+            "y": 0,
+            "z": 111
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 43,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 74,
+          "y": 0,
+          "z": 112
+        },
+        "max": {
+          "x": 74,
+          "y": 0,
+          "z": 112
+        },
+        "cells": [
+          {
+            "x": 74,
+            "y": 0,
+            "z": 112
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 44,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 76,
+          "y": 0,
+          "z": 112
+        },
+        "max": {
+          "x": 76,
+          "y": 0,
+          "z": 112
+        },
+        "cells": [
+          {
+            "x": 76,
+            "y": 0,
+            "z": 112
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 45,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 85,
+          "y": 0,
+          "z": 133
+        },
+        "max": {
+          "x": 85,
+          "y": 0,
+          "z": 133
+        },
+        "cells": [
+          {
+            "x": 85,
+            "y": 0,
+            "z": 133
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "Room",
+        "id": 46,
+        "role_label": "Room",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": false,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 5.59866762,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 206,
+          "y": 0,
+          "z": 133
+        },
+        "max": {
+          "x": 206,
+          "y": 0,
+          "z": 133
+        },
+        "cells": [
+          {
+            "x": 206,
+            "y": 0,
+            "z": 133
+          }
+        ],
+        "light_placement_cells": [
+          {
+            "x": 206,
+            "y": 0,
+            "z": 133
+          }
+        ],
+        "contained_thing_defs": [
+          "Limestone"
+        ],
+        "role_display_label": "room"
+      },
+      {
+        "role_def_name": "None",
+        "id": 47,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 224,
+          "y": 0,
+          "z": 155
+        },
+        "max": {
+          "x": 224,
+          "y": 0,
+          "z": 155
+        },
+        "cells": [
+          {
+            "x": 224,
+            "y": 0,
+            "z": 155
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Plant_Grass",
+          "Door",
+          "Wall"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 48,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 138,
+          "y": 0,
+          "z": 181
+        },
+        "max": {
+          "x": 138,
+          "y": 0,
+          "z": 181
+        },
+        "cells": [
+          {
+            "x": 138,
+            "y": 0,
+            "z": 181
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door",
+          "Plant_Grass"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 49,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 138,
+          "y": 0,
+          "z": 199
+        },
+        "max": {
+          "x": 138,
+          "y": 0,
+          "z": 199
+        },
+        "cells": [
+          {
+            "x": 138,
+            "y": 0,
+            "z": 199
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Plant_Agave",
+          "Door",
+          "Plant_Grass"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 50,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 143,
+          "y": 0,
+          "z": 199
+        },
+        "max": {
+          "x": 143,
+          "y": 0,
+          "z": 199
+        },
+        "cells": [
+          {
+            "x": 143,
+            "y": 0,
+            "z": 199
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Plant_Grass",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 51,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 195,
+          "y": 0,
+          "z": 220
+        },
+        "max": {
+          "x": 195,
+          "y": 0,
+          "z": 220
+        },
+        "cells": [
+          {
+            "x": 195,
+            "y": 0,
+            "z": 220
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 52,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 181,
+          "y": 0,
+          "z": 226
+        },
+        "max": {
+          "x": 181,
+          "y": 0,
+          "z": 226
+        },
+        "cells": [
+          {
+            "x": 181,
+            "y": 0,
+            "z": 226
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 53,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 87,
+          "y": 0,
+          "z": 227
+        },
+        "max": {
+          "x": 87,
+          "y": 0,
+          "z": 227
+        },
+        "cells": [
+          {
+            "x": 87,
+            "y": 0,
+            "z": 227
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Plant_Grass",
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 54,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 180,
+          "y": 0,
+          "z": 237
+        },
+        "max": {
+          "x": 180,
+          "y": 0,
+          "z": 237
+        },
+        "cells": [
+          {
+            "x": 180,
+            "y": 0,
+            "z": 237
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      },
+      {
+        "role_def_name": "None",
+        "id": 55,
+        "role_label": "None",
+        "temperature": 24.5637646,
+        "cells_count": 1,
+        "touches_map_edge": false,
+        "is_prison_cell": false,
+        "is_doorway": true,
+        "open_roof_count": 1,
+        "contained_beds_ids": [],
+        "cleanliness": 0.0,
+        "impressiveness": 0.0,
+        "average_glow": 1.0,
+        "dark_cells_count": 0,
+        "dark_cells_percent": 0.0,
+        "min": {
+          "x": 182,
+          "y": 0,
+          "z": 237
+        },
+        "max": {
+          "x": 182,
+          "y": 0,
+          "z": 237
+        },
+        "cells": [
+          {
+            "x": 182,
+            "y": 0,
+            "z": 237
+          }
+        ],
+        "light_placement_cells": [],
+        "contained_thing_defs": [
+          "Wall",
+          "Door"
+        ],
+        "role_display_label": "none"
+      }
+    ],
+    "buildings": []
+  },
+  "evidence": {
+    "source": "Requader 2026-10-03 first empty equip decision; generated pawn names redacted",
+    "tick": 13263,
+    "selected_pawn": 254,
+    "selected_weapon": 5062,
+    "result": {
+      "applied": false,
+      "assignments": [],
+      "responses": []
+    }
+  }
+}
