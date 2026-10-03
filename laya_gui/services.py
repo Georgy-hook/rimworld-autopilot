@@ -21,7 +21,9 @@ from app_version import APP_VERSION
 APP_NAME = f"RimWorld Autopilot {APP_VERSION}"
 BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
-DATA_DIR = (Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "RimWorld Autopilot") if getattr(sys, "frozen", False) else BASE_DIR
+# Resolve data-directory junctions before passing paths to a Store Python child.
+# Its AppData view can otherwise differ from the native GUI's view.
+DATA_DIR = ((Path(os.environ.get("LOCALAPPDATA", str(BASE_DIR))) / "RimWorld Autopilot") if getattr(sys, "frozen", False) else BASE_DIR).resolve()
 CONFIG_PATH = DATA_DIR / "rimworld-autopilot.json"
 PACKAGED_CONFIG_PATH = BASE_DIR / "rimworld-autopilot.json"
 LEGACY_CONFIG_PATH = BASE_DIR / "laya-control.json"
