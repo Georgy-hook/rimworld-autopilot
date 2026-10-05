@@ -13,8 +13,7 @@ def helpers(snapshot, patient_id, doctor=False):
         if (str(pawn.get("id")) == str(patient_id) or pawn.get("downed") or pawn.get("dead")
                 or pawn.get("in_mental_state") or live.get("is_in_mental_state")
                 or pawn.get("is_drafted") or live.get("is_drafted")
-                or float(pawn.get("health", 1)) < .5
-                or float((pawn.get("capacities") or {}).get("moving", 1)) < .5
+                or float((pawn.get("capacities") or {}).get("moving", 1)) <= 0
                 or float((pawn.get("capacities") or {}).get("manipulation", 1)) <= 0
                 or str(pawn.get("current_job") or live.get("current_job") or "").lower() in CARE_JOBS):
             continue
@@ -112,9 +111,10 @@ def triage(patient):
 def stable_tend_patient(patient):
     """Residual blood loss is not ongoing bleeding; preserve active disease care."""
     return float(patient.get("bleeding_rate") or 0) <= 0 and not any(
-        h.get("def_name") != "BloodLoss" and (h.get("life_threatening")
-            or (h.get("tendable_now") and (h.get("immunity") is not None
-                or float(h.get("lethal_severity") or 0) > 0)))
+        h.get("def_name") not in {"BloodLoss", "Hypothermia", "Heatstroke", "Frostbite"}
+        and h.get("tendable_now") and (h.get("life_threatening")
+            or h.get("immunity") is not None or float(h.get("lethal_severity") or 0) > 0
+            or "infection" in str(h.get("def_name") or "").lower())
         for h in patient.get("health_conditions") or [])
 
 

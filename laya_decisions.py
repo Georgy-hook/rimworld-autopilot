@@ -57,7 +57,11 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     # Start with equal field budgets. Risk and benefit cannot be crowded out
     # by one another, and a long action ID is counted in the complete envelope.
     limit = max(4, (budget - 100) // max(1, len(options) * len(fields)))
-    visible["facts"] = clip(facts, min(64, budget // 5))
+    care_risks = facts.get("care_risks") if isinstance(facts, dict) else None
+    protected_care_facts = isinstance(care_risks, dict) and bool(care_risks.get("thermal"))
+    # This already bounded field is a single factual unit: preserve thermal,
+    # food and bleeding evidence together rather than clipping a JSON prefix.
+    visible["facts"] = {"care_risks": care_risks} if protected_care_facts else clip(facts, min(64, budget // 5))
     if "last_outcome" in visible:
         visible["last_outcome"] = clip(visible["last_outcome"], 32)
     for row in visible["effects"].values():
@@ -70,7 +74,9 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
             for row in visible["effects"].values():
                 for field in fields:
                     row[field] = clip(row[field], limit)
-        elif visible["facts"]:
+        elif protected_care_facts and "last_outcome" in visible:
+            visible.pop("last_outcome")
+        elif visible["facts"] and not protected_care_facts:
             visible["facts"] = clip(visible["facts"], max(0, size(visible["facts"]) - 4))
         else:
             raise ValueError("Consequence envelope exceeds Laya state budget")

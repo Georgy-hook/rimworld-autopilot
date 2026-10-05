@@ -112,7 +112,53 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
     people = snapshot.get("colonists") or []
     resources = (snapshot.get("map") or {}).get("resources") or {}
     sheltered = roofed_sleeping_places
+    # Keep measured hazards together so short comparison prompts cannot retain
+    # food while dropping thermal stage or blood loss at the end of the state.
+    import math
+
+    def number(value):
+        try:
+            result = float(value)
+            return round(result, 3) if math.isfinite(result) else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    care_people = [pawn for pawn in people if not pawn.get("is_dead") and not pawn.get("dead")]
+    thermal = {}
+    for pawn in care_people:
+        for h in pawn.get("health_conditions") or []:
+            if not isinstance(h, dict) or h.get("def_name") not in {"Hypothermia", "Heatstroke"}:
+                continue
+            name = h["def_name"]
+            severity = number(h.get("severity"))
+            if severity is None:
+                continue
+            old = thermal.get(name)
+            if old is None or severity > old["severity"]:
+                stage = h.get("cur_stage_index")
+                thermal[name] = {"severity": severity,
+                                 "stage": stage if isinstance(stage, int) and not isinstance(stage, bool) and stage >= 0 else None,
+                                 "life_threatening": bool(h.get("life_threatening"))}
+    care_risks = None
+    if thermal:
+        roofed_rooms = [room for room in dev.get("rooms") or []
+                        if not room.get("touches_map_edge") and not room.get("is_prison_cell")
+                        and room.get("open_roof_count") == 0 and room.get("contained_beds_ids")]
+        temperatures = [value for room in roofed_rooms if (value := number(room.get("temperature"))) is not None]
+        care_risks = {"thermal": thermal, "outside_c": number((dev.get("weather") or {}).get("temperature")),
+                      "roofed_sleepers": sheltered,
+                      "roofed_bed_room_c": [min(temperatures), max(temperatures)] if temperatures else "unverified",
+                      "meals": resources.get("meals"),
+                      "least_food_level": min((number(p.get("hunger")) for p in care_people
+                                               if number(p.get("hunger")) is not None), default=None),
+                      "bleed_rate_max": max((number(p.get("bleeding_rate")) or 0 for p in care_people), default=0),
+                      "downed": sum(bool(p.get("downed")) for p in care_people),
+                      "threats": (snapshot.get("map") or {}).get("enemies", 0),
+                      "home_fires": sum(bool(fire.get("in_home"))
+                                        for fire in (dev.get("fire_situation") or {}).get("fires") or []
+                                        if isinstance(fire, dict))}
     facts = {
+        "care_risks": care_risks,
         "threats": (snapshot.get("map") or {}).get("enemies", 0),
         "downed": sum(bool(p.get("downed")) for p in people),
         "people": len(people),

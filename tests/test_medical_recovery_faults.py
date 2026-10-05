@@ -51,12 +51,11 @@ class RecoveryFaults(unittest.TestCase):
         self.assertIn('stable patient 2',plans['tend_1_3']['summary'])
 
     def test_continuing_bleed_or_active_illness_or_surgery_keeps_doctor(self):
-        for mutation in ('bleed','disease','surgery','ample_time'):
+        for mutation in ('bleed','disease','surgery'):
             s=self.snapshot()
             if mutation=='bleed': s['combat']['colonists'][1]['bleeding_rate']=.2
             if mutation=='disease': s['colonists'][1]['health_conditions'].append({'def_name':'Plague','tendable_now':True,'immunity':.5})
             if mutation=='surgery': s['combat']['colonists'][2]['current_job']='DoBill'
-            if mutation=='ample_time': s['colonists'][0]['health_conditions'][0]['severity']=.2
             self.assertNotIn('tend_1_3',director.post_combat_care_options(s),mutation)
 
     def test_nonimmune_lungrot_enters_disease_gate_with_quality_and_body_part(self):

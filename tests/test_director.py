@@ -1932,7 +1932,9 @@ class DirectorTests(unittest.TestCase):
         snapshot["combat"]["colonists"].append({"id": 4, "name": "Stable", "tendable_now": True,
             "bleeding_rate": 0.2, "moving": 0.4, "manipulation": 0.2})
         self.assertTrue(director.urgent_care_unassigned(snapshot))
-        self.assertFalse(director.urgent_care_actionable(snapshot))
+        # The slow mobile pawn can self-tend or help another patient; native
+        # capacity/reach checks decide acceptance, not an arbitrary .5 floor.
+        self.assertTrue(director.urgent_care_actionable(snapshot))
 
     def test_loose_rifle_is_offered_before_any_raid_or_doctrine(self):
         snapshot = {"game": {"tick": 500}, "map": {"id": 1, "resources": {"food": 10, "meals": 2}},
@@ -3308,7 +3310,7 @@ class DirectorTests(unittest.TestCase):
     def test_cold_starter_blueprint_is_a_heated_shell_without_floor_work(self):
         layout = director.starter_base_blueprint(3, cold=True)
         defs = [row["def_name"] for row in layout["buildings"]]
-        self.assertEqual(defs.count("Wall"), 17)
+        self.assertEqual(defs.count("Wall"), 13)
         self.assertEqual(defs.count("Door"), 1)
         self.assertEqual(defs.count("Campfire"), 1)
         self.assertEqual(defs.count("SleepingSpot"), 3)

@@ -22,7 +22,10 @@ class CompactResultLoggingTests(unittest.TestCase):
         details['architecture_context'] = {'catalog': 'A' * 600000}
         return snapshot, memory, details, decision
 
-    def test_execution_success_defer_stale_unchanged_and_state_identical(self):
+    @patch('colony_retry.time.time', return_value=1791194000.0)
+    def test_execution_success_defer_stale_unchanged_and_state_identical(self, _clock):
+        # Both executions start at the same instant; compare logging effects,
+        # not sub-millisecond differences in legitimate retry deadlines.
         for mode in ('success', 'defer', 'stale', 'unchanged'):
             with self.subTest(mode=mode):
                 snapshot, memory, details, decision = self.setup_choice()

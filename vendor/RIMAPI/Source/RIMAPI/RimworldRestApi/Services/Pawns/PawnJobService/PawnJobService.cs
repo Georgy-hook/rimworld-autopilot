@@ -212,15 +212,16 @@ namespace RIMAPI.Services
                 {
                     Pawn oldPatient = doctor.CurJob?.targetA.Thing as Pawn;
                     float rate = patient.health.hediffSet.BleedRateTotal;
-                    float blood = patient.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.BloodLoss)?.Severity ?? 0f;
                     if (doctor.CurJobDef != JobDefOf.TendPatient || oldPatient == null
                         || oldPatient.thingIDNumber != request.ReassignFromPatientId.Value || oldPatient == patient
                         || oldPatient.health.hediffSet.BleedRateTotal > 0f
                         || oldPatient.health.hediffSet.hediffs.Any(h => h.def != HediffDefOf.BloodLoss
-                            && (h.IsCurrentlyLifeThreatening || (h.TendableNow()
-                                && (h.TryGetComp<HediffComp_Immunizable>() != null || h.def.lethalSeverity > 0f))))
-                        || rate <= 0f || (1f-blood)*60000f/rate > 6000f)
-                        return ApiResult.Fail("Emergency reassignment requires a stable current tend patient and imminent untreated bleedout");
+                            && h.def != HediffDefOf.Hypothermia && h.def != HediffDefOf.Heatstroke
+                            && h.def.defName != "Frostbite" && h.TendableNow()
+                            && (h.IsCurrentlyLifeThreatening || h.TryGetComp<HediffComp_Immunizable>() != null
+                                || h.def.lethalSeverity > 0f))
+                        || rate <= 0f)
+                        return ApiResult.Fail("Emergency reassignment requires the exact stable current tend patient and a different patient with active bleeding");
                 }
                 else if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
                     || doctor.CurJobDef == JobDefOf.FeedPatient)
