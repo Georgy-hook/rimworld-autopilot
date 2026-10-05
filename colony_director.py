@@ -11977,6 +11977,16 @@ def care_reassessment_signature(snapshot: dict[str, Any]) -> tuple:
     Quantized blood loss also gives an untreated worsening patient a revisit.
     """
     rows = (snapshot.get("combat") or {}).get("colonists") or []
+    details = {int(p["id"]): p for p in snapshot.get("colonists") or []
+               if isinstance(p, dict) and p.get("id") is not None}
+
+    def conditions(pawn: dict[str, Any]) -> list[dict[str, Any]]:
+        # CombatStateDto carries display labels; ColonistDto carries clinical
+        # objects. Join by pawn id, never by list order or by a localized label.
+        detail = details.get(int(pawn["id"]), pawn)
+        return [condition for condition in detail.get("health_conditions") or []
+                if isinstance(condition, dict)]
+
     return tuple(sorted((
         int(p["id"]), bool(p.get("is_downed")), bool(p.get("tendable_now")),
         round(bridge.first_number(p.get("bleeding_rate")), 1),
@@ -11986,7 +11996,7 @@ def care_reassessment_signature(snapshot: dict[str, Any]) -> tuple:
         in {"tendpatient", "rescue", "feedpatient"} else 0,
         tuple(sorted((str(c.get("def_name") or ""), str(c.get("part") or ""),
                       bool(c.get("tendable_now")), int(bridge.first_number(c.get("severity")) * 5))
-                     for c in p.get("health_conditions") or []
+                     for c in conditions(p)
                      if c.get("def_name") == "BloodLoss" or c.get("lethal_severity"))),
     ) for p in rows if p.get("id") is not None and not p.get("is_dead")))
 

@@ -369,5 +369,86 @@ class StreamObserverTests(unittest.TestCase):
         self.assertEqual(api.request.call_args.args[0], "/api/v1/game/speed?speed=3")
 
 
+class DirectorHeartbeatPacingTests(unittest.TestCase):
+    def test_fresh_running_live_pid_only(self):
+        now = 1800000000.0
+        from datetime import datetime, timezone
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'runtime-status.json'
+            def write(state='running', age=0, pid=123):
+                path.write_text(json.dumps({'state':state,'pid':pid,
+                    'updated_at':datetime.fromtimestamp(now-age,timezone.utc).isoformat()}),encoding='utf-8')
+            with mock.patch.object(observer,'_process_alive',return_value=True) as alive:
+                self.assertFalse(observer.director_ready(path,now=now))
+                write();self.assertTrue(observer.director_ready(path,now=now))
+                write(age=180);self.assertTrue(observer.director_ready(path,now=now))
+                for state_name in ('starting','error','stopped','completed','waiting'):
+                    write(state=state_name);self.assertFalse(observer.director_ready(path,now=now))
+                for age in (181,999,-10):
+                    write(age=age);self.assertFalse(observer.director_ready(path,now=now))
+                for pid in (None,True,0,-1,'123'):
+                    write(pid=pid);self.assertFalse(observer.director_ready(path,now=now))
+                for text in ('{','[]','{"state":"running","pid":123,"updated_at":"bad"}', 'x'*65537):
+                    path.write_text(text,encoding='utf-8');self.assertFalse(observer.director_ready(path,now=now))
+                write()
+                alive.return_value=False
+                self.assertFalse(observer.director_ready(path,now=now))
+
+    def test_eight_cycles_stopped_director_stays_paused_camera_still_observes(self):
+        planner=observer.ObserverPlanner()
+        snap=state([pawn(1)],paused=True)
+        camera=[]
+        for cycle in range(8):
+            camera.extend(planner.step(snap,[],cycle))
+            self.assertEqual([],planner.pacing_actions(snap['game'],cycle,director_is_ready=False))
+        self.assertTrue(camera)
+        self.assertEqual([{'kind':'ensure_speed','speed':3}],
+                         planner.pacing_actions(snap['game'],8,director_is_ready=True))
+
+    def test_running_error_transition_pauses_and_throttles_without_unpause(self):
+        planner=observer.ObserverPlanner(); game=state()['game']
+        self.assertEqual([{'kind':'ensure_speed','speed':3}],planner.pacing_actions(game,0,director_is_ready=True))
+        self.assertEqual([{'kind':'ensure_speed','speed':0}],planner.pacing_actions(game,1,director_is_ready=False))
+        for cycle in (2,3,4,5):
+            self.assertEqual([],planner.pacing_actions(game,cycle,director_is_ready=False))
+        self.assertEqual([{'kind':'ensure_speed','speed':0}],planner.pacing_actions(game,6,director_is_ready=False))
+        self.assertEqual([{'kind':'ensure_speed','speed':1}],planner.pacing_actions(game,7,director_is_ready=True,critical_bleeding=True))
+
+    def test_posix_process_probe_handles_alive_missing_and_permission(self):
+        with mock.patch.object(observer.os,'name','posix'), mock.patch.object(observer.os,'kill') as kill:
+            self.assertTrue(observer._process_alive(123));kill.assert_called_with(123,0)
+            kill.side_effect=ProcessLookupError()
+            self.assertFalse(observer._process_alive(123))
+            kill.side_effect=PermissionError()
+            self.assertTrue(observer._process_alive(123))
+    def test_main_missing_heartbeat_pauses_before_failed_observation(self):
+        from types import SimpleNamespace
+        import threading
+        stop=threading.Event(); calls=[]
+        class API:
+            def request(self,path,**kwargs):
+                calls.append(path)
+                if path.endswith('/ending-evidence'): return {}
+                if path.endswith('/game/state'): return {'program_state':'Playing','game_tick':5485,'is_paused':False}
+                if path.endswith('/maps'): return [{'id':1,'is_current_map':True}]
+                if path.startswith('/api/v1/combat/state'):
+                    stop.set();raise RuntimeError('camera input failed')
+                return {}
+        with tempfile.TemporaryDirectory() as folder:
+            args=SimpleNamespace(api_url='unused',status=Path(folder)/'observer-status.json',
+                pid_file=Path(folder)/'observer.pid',log=Path(folder)/'observer.jsonl',interval=.5)
+            with mock.patch.object(observer,'_parse_args',return_value=args), \
+                 mock.patch.object(observer,'RimApi',return_value=API()), \
+                 mock.patch.object(observer.threading,'Event',return_value=stop), \
+                 mock.patch.object(observer.signal,'signal'), \
+                 mock.patch.object(observer.DeathEventReader,'start'), \
+                 mock.patch.object(observer,'_pause_if_colony_ended',return_value=False):
+                observer.main()
+        self.assertIn('/api/v1/game/speed?speed=0',calls)
+        self.assertLess(calls.index('/api/v1/game/speed?speed=0'),
+                        next(i for i,path in enumerate(calls) if path.startswith('/api/v1/combat/state')))
+        self.assertFalse(any('speed=3' in path or 'speed=1' in path for path in calls))
+
+
 if __name__ == "__main__":
     unittest.main()

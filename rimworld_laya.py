@@ -311,12 +311,21 @@ def active_immune_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def active_recovery_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
-    """Include lethal scalar diseases without an immunity race, such as lung rot."""
+    """Illness needing medical recovery, including nonimmune tending diseases.
+
+    A lethal threshold alone also describes cold, heat and toxic exposure.
+    Those require their own environmental response, not blanket bed rest that
+    disqualifies every mobile worker from building the needed shelter. Nullable
+    tending fields identify the native TendDuration component even between
+    treatments; retaining it matters for lung rot's long treatment interval.
+    """
     immune = active_immune_diseases(pawn)
     return [h for h in pawn.get("health_conditions") or [] if isinstance(h, dict)
             and (h in immune or (not h.get("permanent")
                  and first_number(h.get("lethal_severity")) > 0
                  and h.get("immunity") is None
+                 and (h.get("tendable_now") or h.get("tend_quality") is not None
+                      or h.get("tend_ticks_left") is not None)
                  and h.get("def_name") not in {"BloodLoss", "Malnutrition"}))]
 
 

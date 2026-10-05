@@ -52,6 +52,11 @@ namespace RIMAPI.Helpers
             {
                 var map = MapHelper.GetMapByID(mapId);
                 if (map == null) return ApiResult<AugmentationContextDto>.Fail("Map not found.");
+                // MapPawns.FreeColonistsSpawned returns a reused faction scratch list.
+                // A nested getter clears/repopulates that same list, invalidating the
+                // patient enumerator even on the main thread while the game is paused.
+                // Materialize once before native recipe/doctor/stat queries can reenter it.
+                var colonists = map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead).ToArray();
                 var result = new AugmentationContextDto();
                 foreach (RecipeDef recipe in DefDatabase<RecipeDef>.AllDefsListForReading.Where(ImplantRecipe))
                     result.Catalog.Add(new AugmentationRecipeDto { RecipeDef = recipe.defName, Label = recipe.label,
@@ -68,7 +73,7 @@ namespace RIMAPI.Helpers
                 var ingredientTypes = new HashSet<string>(result.Catalog.SelectMany(r => r.ImplantDefs));
                 var materials = map.listerThings.AllThings.Where(t => t.Spawned && !t.IsForbidden(Faction.OfPlayer)
                     && (t.def.IsMedicine || ingredientTypes.Contains(t.def.defName))).ToList();
-                foreach (Pawn patient in map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead))
+                foreach (Pawn patient in colonists)
                 foreach (RecipeDef recipe in patient.def.AllRecipes.Where(r => ImplantRecipe(r) && r.AvailableNow))
                 foreach (BodyPartRecord part in recipe.Worker.GetPartsToApplyOn(patient, recipe))
                 {
@@ -98,7 +103,7 @@ namespace RIMAPI.Helpers
                     foreach (IngredientCount ingredient in recipe.ingredients)
                     {
                         var available = materials.Where(t => ingredient.filter.Allows(t) && (!t.def.IsMedicine || MedicalCareUtility.AllowsMedicine(patient.playerSettings.medCare, t.def))
-                            && map.mapPawns.FreeColonistsSpawned.Any(d => Doctor(d, patient, recipe)
+                            && colonists.Any(d => Doctor(d, patient, recipe)
                                 && d.CanReserveAndReach(t, PathEndMode.Touch, Danger.Some))).ToList();
                         // DoBill normally requires one sufficient type for each non-mixing ingredient.
                         if (!available.GroupBy(t => t.def).Any(g => g.Sum(t => t.stackCount) >= ingredient.CountRequiredOfFor(g.Key, recipe)))
@@ -108,7 +113,7 @@ namespace RIMAPI.Helpers
                         && MedicalCareUtility.AllowsMedicine(patient.playerSettings.medCare, t.def))
                         .GroupBy(t => t.def).Select(g => g.Key.label + " count " + g.Sum(t => t.stackCount)
                             + "; potency " + g.First().GetStatValue(StatDefOf.MedicalPotency) + "; policy " + patient.playerSettings.medCare).ToList();
-                    option.DoctorIds = map.mapPawns.FreeColonistsSpawned.Where(d => Doctor(d, patient, recipe)
+                    option.DoctorIds = colonists.Where(d => Doctor(d, patient, recipe)
                         && IngredientsReachable(d, patient, recipe, materials))
                         .OrderByDescending(d => d.GetStatValue(StatDefOf.MedicalSurgerySuccessChance)).Select(d => d.thingIDNumber).ToList();
                     option.BedIds = map.listerBuildings.allBuildingsColonist.OfType<Building_Bed>()

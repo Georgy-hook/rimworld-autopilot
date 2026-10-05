@@ -7,6 +7,31 @@ import colony_resilience as resilience
 import rimworld_laya as bridge
 
 class RecoveryFaults(unittest.TestCase):
+    def test_mild_environmental_exposure_keeps_shelter_builders_available(self):
+        for condition in ('Hypothermia', 'Heatstroke', 'ToxicBuildup'):
+            p = {'id': 355, 'name': 'Red', 'health': 1, 'downed': False,
+                 'work_priorities': {'Construction': {'disabled': False, 'priority': 3}},
+                 'skills': {'Construction': {'level': 5}},
+                 'health_conditions': [{'def_name': condition, 'severity': .068,
+                     'lethal_severity': 1, 'can_ever_kill': True, 'immunity': None,
+                     'tendable_now': False, 'tend_quality': None, 'tend_ticks_left': None}]}
+            self.assertEqual(bridge.active_recovery_diseases(p), [], condition)
+            self.assertIn('355', director.worker_criteria({'colonists': [p]}, 'Construction'))
+            self.assertEqual(bridge.choose_worker([p], 'Construction'), p)
+            p['downed'] = True
+            self.assertEqual(director.worker_criteria({'colonists': [p]}, 'Construction'), {})
+            self.assertIsNone(bridge.choose_worker([p], 'Construction'))
+
+    def test_nonimmune_disease_between_treatments_still_protects_patient(self):
+        for ticks in (-1, 40000):
+            illness = {'def_name': 'LungRot', 'severity': .5, 'lethal_severity': 1,
+                       'immunity': None, 'tendable_now': False, 'tend_ticks_left': ticks,
+                       'tend_quality': 0 if ticks == -1 else .4}
+            p = {'id': 1, 'health_conditions': [illness],
+                 'work_priorities': {'Construction': {'disabled': False, 'priority': 3}}}
+            self.assertEqual(bridge.active_recovery_diseases(p), [illness])
+            self.assertEqual(director.worker_criteria({'colonists': [p]}, 'Construction'), {})
+
     def snapshot(self):
         return {"combat": {"colonists": [
             {"id": 1, "name": "Yunxin", "tendable_now": True, "is_downed": True, "bleeding_rate": 4.315},

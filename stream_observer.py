@@ -4,7 +4,8 @@ The observer never orders pawns or changes Laya's decisions. Its only game
 writes are camera moves, zoom, an English death caption, and pacing at 3x
 outside a home fire, critical bleeding, dangerous disease, starvation of a patient,
 or an attack on a downed colonist,
-when it slows to 1x.
+when it slows to 1x. Game time is permitted only while a fresh, live director
+heartbeat reports running; otherwise the loaded colony stays paused.
 """
 
 from __future__ import annotations
@@ -24,6 +25,56 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+
+DIRECTOR_HEARTBEAT_SECONDS = 180.0
+
+
+def _process_alive(pid: int) -> bool:
+    """Use the GUI read_pid liveness pattern without modifying its pid file."""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def director_ready(status_path: Path, *, now: float | None = None) -> bool:
+    """Only a fresh running heartbeat from a live director permits game time."""
+    try:
+        with status_path.open(encoding="utf-8-sig") as handle:
+            text = handle.read(65537)
+        if len(text) > 65536:
+            return False
+        row = json.loads(text)
+        if not isinstance(row, dict) or row.get("state") != "running":
+            return False
+        pid = row.get("pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            return False
+        stamp = datetime.fromisoformat(str(row.get("updated_at") or "").replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return False
+        age = (time.time() if now is None else now) - stamp.timestamp()
+        return -5 <= age <= DIRECTOR_HEARTBEAT_SECONDS and _process_alive(pid)
+    except (OSError, ValueError, TypeError, OverflowError):
+        return False
 
 
 CLOSE_ZOOM = 18
@@ -439,9 +490,15 @@ class ObserverPlanner:
     def pacing_actions(self, game: dict[str, Any], now: float, *, home_fire: bool = False,
                        critical_bleeding: bool = False,
                        downed_under_attack: bool = False,
-                       critical_disease: bool = False, critical_starvation: bool = False) -> list[dict[str, Any]]:
+                       critical_disease: bool = False, critical_starvation: bool = False,
+                       director_is_ready: bool = True) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
         target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED
+        if not director_is_ready:
+            target = 0
+            if game.get("is_paused"):
+                self.last_requested_speed = 0
+                return []
         changed = target != self.last_requested_speed
         if game.get("is_paused"):
             if not changed and now - self.last_unpause < SPEED_RETRY_SECONDS:
@@ -609,6 +666,13 @@ def main() -> None:
                     _log(args.log, {"action": {"kind": "colony_ended", "tick": game.get("game_tick")},
                                     "detail": stopped_detail})
                     break
+                runtime_ready = director_ready(args.status.with_name("runtime-status.json"))
+                # Pause before other observation reads: a failed camera/medical
+                # request must not let an unattended colony keep advancing.
+                if not runtime_ready:
+                    for action in planner.pacing_actions(game, now, director_is_ready=False):
+                        _execute(api, action)
+                        _log(args.log, {"action": action, "reason": "director_not_ready"})
                 combat = api.request("/api/v1/combat/state?" + urlencode({"map_id": current_map["id"]})) or {}
                 fires = api.request("/api/v1/map/fire/situation?" + urlencode({"map_id": current_map["id"]})) or {}
                 home_fire = any(fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
@@ -637,11 +701,15 @@ def main() -> None:
                 snapshot = {"game": game, "map": current_map, "colonists": combat.get("colonists") or [],
                             "hostiles": combat.get("hostiles") or [], "corpses": corpses}
                 actions = planner.step(snapshot, events, now)
+                # Observation reads can take time; refresh the small heartbeat
+                # before allowing an unpause or speed increase.
+                runtime_ready = director_ready(args.status.with_name("runtime-status.json"))
                 actions = planner.pacing_actions(game, now, home_fire=home_fire,
                                                  critical_bleeding=critical_bleeding,
                                                  downed_under_attack=downed_under_attack,
                                                  critical_disease=critical_disease,
-                                                 critical_starvation=critical_starvation) + actions
+                                                 critical_starvation=critical_starvation,
+                                                 director_is_ready=runtime_ready) + actions
                 if now >= next_window_scan:
                     windows = api.request("/api/v1/ui/windows") or []
                     actions.extend(window_closer.step(windows, now))
@@ -650,7 +718,8 @@ def main() -> None:
                 shot = planner.shot
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
-                          "target_speed": EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED,
+                          "director_ready": runtime_ready,
+                          "target_speed": 0 if not runtime_ready else EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED,
                           "critical_disease": critical_disease,
                           "critical_starvation": critical_starvation,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,

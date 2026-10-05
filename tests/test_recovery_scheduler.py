@@ -7,6 +7,29 @@ import colony_reasoning as reasoning
 
 
 class RecoverySchedulerTests(unittest.TestCase):
+    def test_native_combat_labels_use_detailed_patient_state_by_id(self):
+        disease = {'def_name': 'LungRot', 'part': 'left lung', 'severity': .55,
+                   'lethal_severity': 1, 'tendable_now': False}
+        snap = {'combat': {'colonists': [
+            {'id': 2, 'health_conditions': ['hypothermia (shivering)']},
+            {'id': 1, 'is_downed': True, 'health_conditions': ['lung rot (left lung)']} ]},
+            'colonists': [{'id': 1, 'health_conditions': [disease]},
+                          {'id': 2, 'health_conditions': []}]}
+        previous, _ = director.clinical_reassessment_due(snap, None)
+        disease['severity'] = .85
+        current, due = director.clinical_reassessment_due(snap, previous)
+        self.assertTrue(due)
+        self.assertNotEqual(previous, current)
+        snap['colonists'].reverse()
+        self.assertEqual(current, director.care_reassessment_signature(snap))
+
+    def test_label_only_combat_snapshot_does_not_crash_or_invent_disease_severity(self):
+        snap = {'combat': {'colonists': [
+            {'id': 1, 'health_conditions': ['hypothermia (shivering)', None]}]}}
+        signature, due = director.clinical_reassessment_due(snap, None)
+        self.assertFalse(due)
+        self.assertEqual(signature[0][-1], ())
+
     def test_overdue_empty_shelter_requires_progress_but_does_not_interrupt_existing_project(self):
         snap = {'map': {'enemies': 0}, 'colonists': [{'id': 1, 'current_job': 'GotoWander'}],
                 'development': {'shelter_exposure_days': 1, 'construction_projects': []}}
