@@ -10,6 +10,7 @@ from unittest import mock
 import colony_combat
 import colony_events
 import colony_growth
+import colony_resilience
 import colony_strategy
 
 
@@ -4863,6 +4864,66 @@ class DirectorTests(unittest.TestCase):
                 p["work_priorities"][work]["priority"] = 1
         self.assertIsNone(director.downed_colonist_care_gate(mock.Mock(), snapshot))
         self.assertEqual(director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]), {})
+
+    def test_rest_sequence_preserves_travel_meal_and_colony_work_after_policy_acceptance(self):
+        snapshot = self.disease_snapshot()
+        patient = snapshot["colonists"][0]
+        live = snapshot["combat"]["colonists"][0]
+        client = mock.Mock()
+        def accept(endpoint, **kwargs):
+            if endpoint == "/api/v1/colonist/work-priority":
+                patient["work_priorities"][kwargs["body"]["work"]]["priority"] = 1
+            return {"success": True}
+        client.post.side_effect = accept
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(director, "publish_post_combat_care_overlay"):
+            first = director.run_post_combat_care_cycle(client, self.FakeAgent([]), snapshot,
+                pathlib.Path(folder) / "care.jsonl", focus_downed=True)
+            self.assertEqual(first["decision"]["choice"], "rest_1_10")
+            calls = client.post.call_count
+            for job in ("LayDown", "Goto", "Ingest", "Wait_Wander", "LayDown"):
+                for pawn in (patient, live):
+                    pawn.update(current_job=job, position={"x": 12, "z": 12})
+                self.assertIsNone(director.downed_colonist_care_gate(client, snapshot), job)
+                self.assertIsNone(director.run_post_combat_care_cycle(client, self.FakeAgent([]), snapshot,
+                    pathlib.Path(folder) / "care.jsonl", focus_downed=True), job)
+            self.assertEqual(client.post.call_count, calls)
+            # New bleeding must remain actionable despite an existing rest policy.
+            live.update(tendable_now=True, bleeding_rate=2.0)
+            self.assertTrue(any(row["kind"] == "tend" for row in
+                director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]).values()))
+
+    def test_rest_does_not_interrupt_eating_before_policy_is_set(self):
+        snapshot = self.disease_snapshot()
+        snapshot["combat"]["colonists"][0]["current_job"] = "Ingest"
+        self.assertEqual(director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]), {})
+        snapshot["combat"]["colonists"][0]["current_job"] = "Wait_Wander"
+        self.assertIn("rest_1_10", director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]))
+
+    def test_native_medical_rest_refusal_suppresses_rest_but_not_urgent_treatment(self):
+        snapshot = self.disease_snapshot()
+        snapshot["colonists"][0]["should_seek_medical_rest"] = False
+        self.assertEqual(director.post_combat_care_options(snapshot, snapshot["development"]["buildings"]), {})
+        snapshot["combat"]["colonists"][0].update(tendable_now=True, bleeding_rate=2.0)
+        self.assertTrue(any(row["kind"] == "tend" for row in director.post_combat_care_options(snapshot).values()))
+
+    def test_chronic_immunizable_component_is_not_an_immunity_race(self):
+        for name, flag in (("HeartArteryBlockage", None), ("ModdedChronicBlockage", False)):
+            h = {"def_name": name, "immunity": 0, "immunity_can_develop": flag,
+                 "can_ever_kill": True, "lethal_severity": 1, "severity": .18}
+            snapshot = self.disease_snapshot()
+            snapshot["colonists"][0]["health_conditions"] = [h]
+            self.assertEqual(director.bridge.active_recovery_diseases(snapshot["colonists"][0]), [])
+            self.assertIsNone(director.downed_colonist_care_gate(mock.Mock(), snapshot))
+            self.assertFalse(colony_resilience._immunity_race(h))
+        h.update(def_name="WoundInfection", immunity_can_develop=True)
+        self.assertEqual(director.bridge.active_immune_diseases({"health_conditions": [h]}), [h])
+
+    def test_normalization_keeps_native_recovery_semantics(self):
+        raw = {"id": 1, "medical_info": {"should_seek_medical_rest": False,
+            "hediffs": [{"def_name": "Chronic", "immunity": 0, "immunity_can_develop": False}]}}
+        result = director.bridge.normalize_colonists([raw])[0]
+        self.assertIs(result["should_seek_medical_rest"], False)
+        self.assertIs(result["health_conditions"][0]["immunity_can_develop"], False)
 
     def test_active_disease_excludes_routine_worker_but_immunity_restores_eligibility(self):
         snapshot = self.disease_snapshot()

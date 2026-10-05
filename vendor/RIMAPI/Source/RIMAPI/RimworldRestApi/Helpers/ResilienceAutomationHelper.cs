@@ -82,6 +82,7 @@ namespace RIMAPI.Helpers
             var record=p.health.immunity.GetImmunityRecord(h.def);
             return new { def_name=h.def.defName, description=h.def.description, visible=h.Visible, severity=h.Severity,
                 immunity=immune == null ? (float?)null : immune.Immunity,
+                immunity_can_develop=PawnHelper.CanDevelopImmunity(h),
                 immunity_per_day=record == null ? (float?)null : record.ImmunityChangePerTick(p,true,h)*60000f,
                 immunity_gain_speed=p.GetStatValue(StatDefOf.ImmunityGainSpeed),
                 severity_modifiers_per_day=(h as HediffWithComps)?.comps?.OfType<HediffComp_SeverityModifierBase>().Sum(c => c.SeverityChangePerDay()),
@@ -102,7 +103,7 @@ namespace RIMAPI.Helpers
             { "interrogate", new[] { "InterrogatePrisoner" } }
         };
         private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Where(h => h.Visible).Any(h => h.TendableNow() || h.IsCurrentlyLifeThreatening
-            || (h.TryGetComp<HediffComp_Immunizable>() is HediffComp_Immunizable c && c.Immunity < 1)
+            || (PawnHelper.CanDevelopImmunity(h) && h.TryGetComp<HediffComp_Immunizable>().Immunity < 1)
             || (h.def.lethalSeverity > 0f && h.TryGetComp<HediffComp_Immunizable>() == null
                 && h.def != HediffDefOf.BloodLoss && !h.IsPermanent()));
         private static bool Idle(Pawn p) => p.IsColonistPlayerControlled && !p.Dead && !p.Downed && !p.Drafted && !p.InMentalState
@@ -250,6 +251,7 @@ namespace RIMAPI.Helpers
                     mental_state = p.MentalStateDef?.defName, current_job = p.CurJobDef?.defName, in_bed = p.InBed(), current_bed_id=p.CurrentBed()?.thingIDNumber,
                     tendable_now = p.health.hediffSet.hediffs.Any(h => h.Visible && h.TendableNow()), life_threatening = p.health.hediffSet.hediffs.Any(h => h.Visible && h.IsCurrentlyLifeThreatening),
                     medical_care = p.playerSettings?.medCare.ToString(), bed_rest_priority = p.workSettings?.GetPriority(RestWork),
+                    should_seek_medical_rest = HealthAIUtility.ShouldSeekMedicalRest(p),
                     temperature = p.Position.GetTemperature(map), roof = map.roofGrid.RoofAt(p.Position)?.defName,
                     comfortable_min=p.GetStatValue(StatDefOf.ComfyTemperatureMin), comfortable_max=p.GetStatValue(StatDefOf.ComfyTemperatureMax),
                     gases=Enum.GetValues(typeof(GasType)).Cast<GasType>().ToDictionary(g => g.ToString(),g => (int)map.gasGrid.DensityAt(p.Position,g)),
@@ -315,7 +317,7 @@ namespace RIMAPI.Helpers
                 foreach (Thing drug in map.listerThings.AllThings.Where(t => t.def.defName == "Penoxycyline"))
                     if (Preventible(worker, drug)) result.Options.Add(new ResilienceOptionDto {Kind="prevent", WorkerId=worker.thingIDNumber,TargetId=drug.thingIDNumber,Worker=worker.LabelShort,Target=drug.LabelShort});
             }
-            foreach (Pawn patient in patients.Where(p => p.IsColonistPlayerControlled && !p.Drafted && !p.InMentalState && NeedsCare(p)
+            foreach (Pawn patient in patients.Where(p => p.IsColonistPlayerControlled && !p.Drafted && !p.InMentalState && HealthAIUtility.ShouldSeekMedicalRest(p)
                 && (p.InBed() || (!p.Downed && RestUtility.FindBedFor(p, p, false, false) != null))
                 && p.workSettings != null && !p.WorkTypeIsDisabled(RestWork) && p.workSettings.GetPriority(RestWork) != 1))
                 result.Options.Add(new ResilienceOptionDto {Kind="rest", WorkerId=patient.thingIDNumber,TargetId=patient.thingIDNumber,Worker=patient.LabelShort,Target=patient.LabelShort});
@@ -357,7 +359,7 @@ namespace RIMAPI.Helpers
                 return ApiResult<CapabilityOrderResultDto>.Ok(result);
             }
             if (request.Kind == "rest" && worker == target && worker.IsColonistPlayerControlled && !worker.Drafted && !worker.InMentalState
-                && NeedsCare(worker) && worker.workSettings != null && !worker.WorkTypeIsDisabled(RestWork)
+                && HealthAIUtility.ShouldSeekMedicalRest(worker) && worker.workSettings != null && !worker.WorkTypeIsDisabled(RestWork)
                 && worker.workSettings.GetPriority(RestWork) != 1)
             { worker.workSettings.SetPriority(RestWork,1); result.Applied=true; result.Reason="bed_rest_prioritized; autonomous_job_required"; }
             else

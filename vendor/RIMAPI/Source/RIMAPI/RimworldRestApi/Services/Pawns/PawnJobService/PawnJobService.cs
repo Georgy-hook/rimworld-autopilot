@@ -308,6 +308,11 @@ namespace RIMAPI.Services
                     return ApiResult.Fail($"Patient pawn not found: {request.PatientPawnId}");
                 }
 
+                if (!HealthAIUtility.ShouldSeekMedicalRest(patient))
+                    return ApiResult.Fail("medical_rest_not_indicated");
+                if (patient.CurJobDef == JobDefOf.Ingest)
+                    return ApiResult.Fail("patient_is_eating");
+
                 Building_Bed bed = null;
                 if (request.BedBuildingId.HasValue)
                 {

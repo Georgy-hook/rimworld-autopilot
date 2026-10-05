@@ -58,6 +58,7 @@ namespace RIMAPI.Models
 
     public class MedicalInfoDto
     {
+        public bool ShouldSeekMedicalRest { get; set; }
         public bool IsDead { get; set; }
         public bool IsDowned { get; set; } // True if crawling or incapacitated
 
@@ -110,6 +111,7 @@ namespace RIMAPI.Models
         public bool IsCurrentlyLifeThreatening { get; set; }
         public bool CanEverKill { get; set; }
         public float? Immunity { get; set; }
+        public bool ImmunityCanDevelop { get; set; }
         public float? LethalSeverity { get; set; }
         public float? TendQuality { get; set; }
         public int? TendTicksLeft { get; set; }

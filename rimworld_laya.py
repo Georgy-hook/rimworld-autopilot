@@ -172,6 +172,7 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "bleeding": bool(item.get("bleeding")),
                 "tendable_now": bool(item.get("tendable_now")),
                 "can_ever_kill": bool(item.get("can_ever_kill")),
+                "immunity_can_develop": item.get("immunity_can_develop"),
                 "immunity": (round(first_number(item["immunity"]), 4)
                              if item.get("immunity") is not None else None),
                 "lethal_severity": item.get("lethal_severity"),
@@ -214,6 +215,7 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "traits": traits,
                 "health_conditions": hediffs,
                 "patient_feeding_eligible": medical.get("patient_feeding_eligible"),
+                "should_seek_medical_rest": medical.get("should_seek_medical_rest"),
                 "patient_raw_food_allowed": medical.get("patient_raw_food_allowed"),
                 "capacities": {
                     "consciousness": round(first_number(medical.get("consciousness"), 1.0), 3),
@@ -348,6 +350,10 @@ def annotate_combat_capability(colonists: list[dict[str, Any]], combat: Any) -> 
 def active_immune_diseases(pawn: dict[str, Any]) -> list[dict[str, Any]]:
     """Keep lethal disease recovery separate from summary wound health."""
     return [h for h in pawn.get("health_conditions") or [] if isinstance(h, dict)
+            and h.get("immunity_can_develop") is not False
+            # Compatibility with recorded snapshots/older DLLs. A numeric zero
+            # alone never made this chronic condition an immunity race.
+            and h.get("def_name") != "HeartArteryBlockage"
             and ((h.get("can_ever_kill") and h.get("immunity") is not None)
                  or "infection" in str(h.get("def_name") or "").lower())
             and (h.get("immunity") is None or first_number(h.get("immunity")) < 1)]

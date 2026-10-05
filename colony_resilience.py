@@ -36,6 +36,8 @@ def collect(client: Any, snapshot: dict) -> dict:
 
 def _immunity_race(condition: dict) -> bool | None:
     """Only observed immunity plus native lethal evidence establishes a race."""
+    if condition.get('immunity_can_develop') is False or condition.get('def_name') == 'HeartArteryBlockage':
+        return False
     def number(value):
         return isinstance(value, (int,float)) and not isinstance(value,bool) and math.isfinite(value)
     lethal = condition.get('lethal_severity')

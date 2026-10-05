@@ -71,6 +71,10 @@ namespace RIMAPI.Helpers
 
         public static bool AssignBedRest(Pawn patient, Building_Bed bed)
         {
+            // Keep the existing journey/lay-down job; accepted is not healed.
+            Building_Bed target = bed ?? patient.ownership.OwnedBed;
+            if (patient.CurJobDef == JobDefOf.LayDown && patient.CurJob?.targetA.Thing == target)
+                return true;
             if (bed != null)
             {
                 patient.ownership.ClaimBedIfNonMedical(bed);
@@ -170,6 +174,7 @@ namespace RIMAPI.Helpers
                     },
                     MedicalInfo = new MedicalInfoDto
                     {
+                        ShouldSeekMedicalRest = !pawn.Dead && HealthAIUtility.ShouldSeekMedicalRest(pawn),
                         IsDead = pawn.Dead,
                         IsDowned = pawn.Downed,
                         Consciousness = pawn.health?.capacities?.GetLevel(PawnCapacityDefOf.Consciousness) ?? 0f,
@@ -238,6 +243,9 @@ namespace RIMAPI.Helpers
             }
         }
 
+        public static bool CanDevelopImmunity(Hediff hediff) =>
+            hediff?.TryGetComp<HediffComp_Immunizable>()?.Props.immunityPerDaySick > 0f;
+
         public static HediffDto HediffToDto(Hediff hediff)
         {
             if (hediff == null)
@@ -272,6 +280,7 @@ namespace RIMAPI.Helpers
                 IsCurrentlyLifeThreatening = hediff.IsCurrentlyLifeThreatening,
                 CanEverKill = hediff.CanEverKill(),
                 Immunity = hediff.TryGetComp<HediffComp_Immunizable>()?.Immunity,
+                ImmunityCanDevelop = CanDevelopImmunity(hediff),
                 LethalSeverity = hediff.def != null && hediff.def.lethalSeverity > 0
                     && !float.IsInfinity(hediff.def.lethalSeverity) ? (float?)hediff.def.lethalSeverity : null,
                 TendQuality = hediff.TryGetComp<HediffComp_TendDuration>()?.tendQuality,

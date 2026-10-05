@@ -11832,7 +11832,8 @@ def post_combat_care_options(snapshot: dict[str, Any],
         details = capabilities.get(patient_id) or {}
         if (patient.get("is_dead") or patient.get("is_downed") or patient.get("is_in_mental_state")
                 or patient_id in active_patients or not bridge.active_recovery_diseases(details)
-                or str(patient.get("current_job") or "").lower() == "tendpatient"):
+                or details.get("should_seek_medical_rest") is False
+                or str(patient.get("current_job") or "").lower() in PROTECTED_CARE_JOBS | {"ingest"}):
             continue
         safe_beds = [bed for bed in beds if int(bed["id"]) in sheltered_ids and not any(
             other.get("id") != patient_id and not other.get("is_dead")
@@ -11844,8 +11845,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
         priorities = details.get("work_priorities") or {}
         recovery_priorities = all(int((priorities.get(work) or {}).get("priority") or 0) == 1
                                   for work in ("Patient", "PatientBedRest"))
-        if (str(patient.get("current_job") or "").lower() == "laydown"
-                and patient_in_completed_bed(details or patient, snapshot, safe_beds) and recovery_priorities):
+        # Once enabled, normal patient work can rest, eat, and return to bed.
+        # Reissuing forced LayDown on every poll restarts travel and meals.
+        if recovery_priorities:
             continue
         bed = min(safe_beds, key=lambda b: (not bool(b.get("medical")),
                                            squared_distance(patient.get("position") or {}, b.get("position") or {})))
@@ -11853,7 +11855,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
             "kind": "rest", "patient_id": patient_id, "doctor_id": patient_id,
             "bed_id": int(bed["id"]), "self_tend": False,
             "summary": f"Rest {patient.get('name')} in roofed bed: {disease_care_summary(details)}. "
-                       "Raise Patient and Bed Rest to 1; remain until healed. Rest supports immunity; it does not replace repeat tending and feeding.",
+                       "Enable Patient and Bed Rest once; allow eating and native recovery work. Rest supports a real immunity response; it does not replace repeat tending and feeding.",
         }
     return options
 
