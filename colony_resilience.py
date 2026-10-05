@@ -1,5 +1,8 @@
 """Native patient care and environmental survival, with live feasibility checks."""
 from __future__ import annotations
+import ast
+import json
+import math
 from typing import Any
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
@@ -31,6 +34,26 @@ def collect(client: Any, snapshot: dict) -> dict:
         patient['conditions'] = [h for h in patient.get('conditions') or [] if h.get('visible', True)]
     return value
 
+def _immunity_race(condition: dict) -> bool | None:
+    """Only observed immunity plus native lethal evidence establishes a race."""
+    def number(value):
+        return isinstance(value, (int,float)) and not isinstance(value,bool) and math.isfinite(value)
+    lethal = condition.get('lethal_severity')
+    can_kill = condition.get('can_ever_kill')
+    if (number(lethal) and lethal > 0) or can_kill is True:
+        dangerous = True
+    elif can_kill is False or (number(lethal) and lethal <= 0):
+        return False
+    else:
+        dangerous = None
+    immunity = condition.get('immunity')
+    if not number(immunity):
+        return None
+    if immunity >= 1:
+        return False
+    return dangerous
+
+
 def summary(snapshot: dict) -> dict:
     context = snapshot.get('development', {}).get('resilience', {})
     patients = [{**p, 'conditions': [h for h in p.get('conditions') or [] if h.get('visible', True)]} for p in context.get('patients') or []]
@@ -41,7 +64,8 @@ def summary(snapshot: dict) -> dict:
         if thermal or any(float(v or 0) > 0 for v in (patient.get('gases') or {}).values()):
             environmental.append(patient)
     return {'resilience_patients': {'count': sum(bool(p.get('tendable_now') or p.get('downed') or p.get('life_threatening')) for p in patients), 'examples': patients[:4]},
-            'immunity_races': {'count': sum(any(h.get('visible', True) and h.get('immunity') is not None and h['immunity'] < 1 for h in p.get('conditions') or []) for p in patients)},
+            'immunity_races': {'count': sum(any(h.get('visible', True) and _immunity_race(h) is True for h in p.get('conditions') or []) for p in patients),
+                               'unknown_count': sum(any(h.get('immunity') is not None and _immunity_race(h) is None for h in p.get('conditions') or []) for p in patients)},
             'environmental_exposure': {'count': len(environmental), 'examples': environmental[:4]},
             'unsafe_roof_removals': {'count': sum(row.get('kind') == 'roof_guard' for row in context.get('options') or [])},
             'environment': context.get('environment') or {}}
@@ -78,9 +102,97 @@ DEFER_WALL_SECONDS = 120
 MAX_DEFERRED_SUBJECTS = 128
 
 
+def _rest_defer_state(rows: list[dict], context: dict) -> dict:
+    """Rest readiness and deterioration, independent of normal eating/sleeping."""
+    patient = next((p for p in context.get('patients') or []
+                    if str(p.get('pawn_id')) == _subject(rows[0])), {})
+    risks = {'downed': int(bool(patient.get('downed'))),
+             'life_threatening': int(bool(patient.get('life_threatening'))),
+             'bleeding': 2 if float(patient.get('bleeding_total') or 0) >= 1.5
+                         else int(float(patient.get('bleeding_total') or 0) > 0),
+             'tendable': int(bool(patient.get('tendable_now')))}
+    for h in patient.get('conditions') or []:
+        if not h.get('visible', True):
+            continue
+        name = str(h.get('def_name') or '')
+        severity = float(h.get('severity') or 0)
+        stage = h.get('cur_stage_index')
+        thresholds = (.04, .2, .35, .62) if name in {'Hypothermia', 'Heatstroke'} else (.5, .75)
+        band = stage if isinstance(stage, int) and not isinstance(stage, bool) and stage >= 0 else sum(severity >= x for x in thresholds)
+        key = name + ':' + str(h.get('part') or '')
+        risks[key + ':stage'] = band
+        risks[key + ':tend'] = int(bool(h.get('tendable_now')))
+        risks[key + ':danger'] = int(bool(h.get('life_threatening')))
+        # Chronic nonlethal asthma reports immunity=0; that is not an infection
+        # racing immunity. Only an actual lethal immunizable disease uses this.
+        if _immunity_race(h) is True:
+            risks[key + ':immunity_behind'] = int(severity - float(h['immunity']) >= .2)
+    readiness = sorted([list(option.get(k) for k in ('kind','worker_id','target_id','giver'))
+                        for option in rows], key=repr)
+    return {'rest_version': 2, 'readiness': readiness, 'risks': risks}
+
+
+def _rest_record_state(value: str, current: dict) -> dict | None:
+    try:
+        old = json.loads(value)
+        if isinstance(old, dict) and old.get('rest_version') == 2:
+            return old
+    except (ValueError, TypeError):
+        pass
+    # Upgrade persisted v1/bare clinical tuples without restarting the floor
+    # just because the patient has eaten or gone to sleep since the defer.
+    try:
+        legacy = ast.literal_eval(value)
+        core = legacy[0] if len(legacy) == 8 else legacy
+        if not isinstance(core, tuple) or len(core) != 7:
+            return None
+        conditions = core[6]
+        risks = {'downed': int(bool(core[0])), 'life_threatening': int(bool(core[1])),
+                 'bleeding': 2 if len(legacy) == 8 and legacy[2] else int(bool(core[2])),
+                 'tendable': int(bool(legacy[3])) if len(legacy) == 8 else current['risks']['tendable']}
+        for key in current['risks']:
+            if ':' not in key:
+                continue
+            name = key.split(':', 1)[0]
+            matching = [h for h in conditions if h[0] == name]
+            if not matching:
+                risks[key] = 0
+            elif key.endswith(':stage'):
+                old_bands = [h[1] for h in legacy[1] if h[0] == name] if len(legacy) == 8 else [h[4] for h in matching]
+                risks[key] = max(old_bands, default=0)
+            elif key.endswith(':tend'): risks[key] = int(any(h[2] for h in matching))
+            elif key.endswith(':danger'): risks[key] = int(any(h[1] for h in matching))
+            elif key.endswith(':immunity_behind'): risks[key] = int(any(h[3] for h in matching))
+        readiness = [list(row[:4]) for row in legacy[-1]] if len(legacy) == 8 else current['readiness']
+        return {'rest_version':2, 'readiness': readiness, 'risks': risks}
+    except (ValueError, TypeError, SyntaxError, IndexError, KeyError):
+        return None
+
+
+def _defer_changed(record: dict, rows: list[dict], context: dict) -> bool:
+    if rows[0].get('kind') != 'rest':
+        return record.get('state') != _defer_state(rows, context)
+    current = _rest_defer_state(rows, context)
+    old = _rest_record_state(record.get('state'), current)
+    if not old or not isinstance(old.get('risks'), dict) or not isinstance(old.get('readiness'), list):
+        return True
+    if any(row not in old['readiness'] for row in current['readiness']):
+        return True
+    for key, rank in current['risks'].items():
+        prior = old['risks'].get(key, 0)
+        if not isinstance(prior, (int,float)) or isinstance(prior, bool) or rank > prior:
+            return True
+    # Retain the deferred risk high-water mark: improvement followed by a
+    # return to the same risk is not a new emergency during this finite floor.
+    record['state'] = json.dumps(old, sort_keys=True)
+    return False
+
+
 def _defer_state(rows: list[dict], context: dict) -> str:
     """Clinical bands and exposed options; autonomous wandering is irrelevant."""
     row = rows[0]
+    if row.get('kind') == 'rest':
+        return json.dumps(_rest_defer_state(rows, context), sort_keys=True)
     patient = next((p for p in context.get('patients') or [] if str(p.get('pawn_id')) == _subject(row)), {})
     conditions = []
     for condition in patient.get('conditions') or []:
@@ -169,7 +281,7 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         if deferred.get('state') == repr(_state(row, context)):
             deferred['state'] = signature  # Migrate a still-matching legacy clinical projection.
         if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
-                or (_defer_recent(deferred, tick, _delay(action)) and deferred.get('state') == signature)
+                or (_defer_recent(deferred, tick, _delay(action)) and not _defer_changed(deferred, subject_rows[subject], context))
                 or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
             continue
         key = ':'.join(str(row.get(k, '')) for k in ('worker_id', 'target_id', 'giver'))
@@ -196,9 +308,10 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
     def effects(row: dict) -> dict:
         patient = people.get(subject(row), {})
-        conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), h.get('immunity') is not None and h['immunity'] < 1, bool(h.get('tendable_now'))), reverse=True)
+        conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), _immunity_race(h) is True, bool(h.get('tendable_now'))), reverse=True)
         h = conditions[0] if conditions else {}
-        clinical = f"{h.get('def_name', row.get('target', row['target_id']))} s={h.get('severity')} i={h.get('immunity')}"
+        race = _immunity_race(h)
+        clinical = f"{h.get('def_name', row.get('target', row['target_id']))} s={h.get('severity')} i={h.get('immunity')} immunity_race={'yes' if race is True else 'no' if race is False else 'unknown'}"
         if row['kind'] == 'feed':
             clinical = f"{patient.get('name', row['target_id'])} food={patient.get('food')} in_bed={patient.get('in_bed')} down={patient.get('downed')}; dependent feeding"
         exposure = f"T={patient.get('temperature')} roof={patient.get('roof')} gas={patient.get('gases')}"

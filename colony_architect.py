@@ -1397,14 +1397,14 @@ def execute_legacy_hospital(client, snapshot, memory, layout, origin, terrain_re
     return _project_failure(project, tick, result)
 
 
-def research_bench_repair_options(development: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def research_bench_repair_options(development: dict[str, Any], *, structural: bool = False) -> dict[str, dict[str, Any]]:
     catalog = catalog_index(development.get("building_catalog") or [])
     projects = development.get("construction_projects") or []
     options = {}
     stock = development.get("item_counts") or {}
     for project in projects:
         name = str(project.get("def_name") or "")
-        if name not in {"SimpleResearchBench", "HiTechResearchBench"} or not project.get("thing_id") or not project.get("position"):
+        if name not in ({"Wall", "Door"} if structural else {"SimpleResearchBench", "HiTechResearchBench"}) or not project.get("thing_id") or not project.get("position"):
             continue
         if not any(int(row.get("required_count") or 0) > int(stock.get(row.get("def_name")) or 0)
                    for row in project.get("materials_needed") or []):
@@ -1420,11 +1420,23 @@ def research_bench_repair_options(development: dict[str, Any]) -> dict[str, dict
             key = f"{project['thing_id']}|{material}"
             options[key] = {"project": copy.deepcopy(project), "material": material, "plan": plan,
                 "summary": f"Cancel only unfinished {name} #{project['thing_id']} at {project['position']}; "
-                           f"replace there with {description}. Refund/lost work is uncertain; existing bench not usable."}
+                           f"replace there with {description}. Refund/lost work is uncertain; replacement requires native placement validation; completed work/material refund uncertain."}
+    if structural:
+        for option in options.values():
+            project = option["project"]
+            option["summary"] = (f"Complete missing {project['def_name']} using {effective_building_cost(catalog[project['def_name']], option['material'])}; "
+                f"at {project['position']['x']},{project['position']['z']}; replace unfinished {project.get('stuff_def_name')}; "
+                "lost work/refund unknown; native place+budget check before cancel")
     return options
 
 
-def execute_research_bench_repair(client, snapshot, key, post_observed):
+def structural_material_repair_options(development):
+    """Affordable alternatives for material-blocked unfinished structural shell only."""
+    return research_bench_repair_options(development, structural=True)
+
+
+def _execute_material_repair(client, snapshot, key, post_observed, *, structural=False):
+    prefix = "structural" if structural else "research_bench"
     map_id = snapshot["map"]["id"]
     projects = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
     stock = Counter()
@@ -1433,20 +1445,35 @@ def execute_research_bench_repair(client, snapshot, key, post_observed):
             stock[str(thing.get("def_name"))] += max(0, int(thing.get("stack_count") or 0))
     fresh = {"construction_projects": projects, "item_counts": dict(stock),
              "building_catalog": client.get("/api/v1/buildings/catalog")}
-    plan = research_bench_repair_options(fresh).get(key)
-    if not plan: return {"applied": False, "reason": "research_bench_repair_stale"}
+    plan = research_bench_repair_options(fresh, structural=structural).get(key)
+    if not plan: return {"applied": False, "reason": prefix + "_repair_stale"}
     project = plan["project"]
+    if structural:
+        expected = ((snapshot.get("development") or {}).get("structural_material_options") or {}).get(key, {}).get("project")
+        identity = ("thing_id", "def_name", "stuff_def_name", "position", "rotation")
+        if not expected or any(expected.get(field) != project.get(field) for field in identity):
+            return {"applied": False, "reason": "structural_replacement_identity_changed"}
+    # Native endpoint previews with this exact original project ignored and checks
+    # unreserved full replacement cost BEFORE cancelling; rejection retains it.
     response = client.post("/api/v1/builder/projects/cancel", body={"map_id": map_id,
         "project_thing_id": project["thing_id"], "expected_def_name": project["def_name"],
         "replacement_stuff_def_name": plan["material"]})
     observed = client.get("/api/v1/builder/projects", map_id=map_id).get("projects", [])
     if any(row.get("thing_id") == project["thing_id"] for row in observed):
-        return {"applied": False, "reason": "research_bench_cancel_unobserved", "response": response}
+        return {"applied": False, "reason": prefix + "_cancel_unobserved", "response": response}
     replacement = next((row for row in observed if row.get("def_name") == project["def_name"]
                         and row.get("stuff_def_name") == plan["material"]
                         and row.get("position") == project["position"]
                         and int(row.get("rotation") or 0) == int(project.get("rotation") or 0)), None)
-    return {"applied": replacement is not None, "reason": "research_bench_replacement_observed" if replacement else "research_bench_replacement_unobserved",
+    return {"applied": replacement is not None, "reason": prefix + "_replacement_observed" if replacement else prefix + "_replacement_unobserved",
             "response": response, "replaced_project_id": project["thing_id"],
             "replacement_project_id": replacement.get("thing_id") if replacement else None,
             "material": plan["material"], "completion": "unverified"}
+
+
+def execute_research_bench_repair(client, snapshot, key, post_observed):
+    return _execute_material_repair(client, snapshot, key, post_observed)
+
+
+def execute_structural_material_repair(client, snapshot, key, post_observed):
+    return _execute_material_repair(client, snapshot, key, post_observed, structural=True)

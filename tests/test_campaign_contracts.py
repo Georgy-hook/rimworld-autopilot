@@ -139,7 +139,7 @@ class CampaignContracts(unittest.TestCase):
         _, raw = laya_decisions.ask_laya_choice(agent, {"decision_facts": {"goal": "archonexus"}, "huge": "x" * 10000},
             "legacy", "Choose a useful step", {"a": "study", "b": "wait"})
         self.assertLessEqual(len(agent.tok(json.dumps(raw["visible_state"]))["input_ids"]), 312)
-        self.assertIn("archonexus", raw["visible_state"]["decision_facts"])
+        self.assertEqual(raw["visible_state"]["decision_facts"], {"goal": "archonexus"})
 
     def test_every_strategy_comparison_sees_intended_goal_and_downside(self):
         agent = Agent()

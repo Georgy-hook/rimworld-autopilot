@@ -174,6 +174,39 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
     return {key: value for key, value in facts.items() if value is not None}
 
 
+def parameter_facts(snapshot: dict[str, Any], action: str,
+                    *, roofed_sleeping_places: int | None = None) -> dict[str, Any]:
+    """Carry measured colony constraints into the selected action's questions.
+
+    A fitted root state is not enough: detailed comparisons reserve only a
+    short prefix for it. Keep these bounded facts independent of JSON order
+    in the broader strategy, history and description fields.
+    """
+    import math
+
+    dev = snapshot.get("development") or {}
+    stock = dev.get("item_counts") or {}
+    people = [p for p in snapshot.get("colonists") or []
+              if not p.get("dead") and not p.get("is_dead")]
+    temperature = (dev.get("weather") or {}).get("temperature")
+    if isinstance(temperature, (int, float)) and math.isfinite(temperature):
+        temperature = round(temperature, 1)
+    else:
+        temperature = None
+    return {
+        "action": action,
+        "wood": stock.get("WoodLog", 0) if "item_counts" in dev else None,
+        "steel": stock.get("Steel", 0) if "item_counts" in dev else None,
+        "roofed_beds": roofed_sleeping_places,
+        "unfinished": len(dev.get("construction_projects") or []),
+        "people": len(people),
+        "meals": ((snapshot.get("map") or {}).get("resources") or {}).get("meals"),
+        "outside_c": temperature,
+        "threats": (snapshot.get("map") or {}).get("enemies", 0),
+        "downed": sum(bool(p.get("downed")) for p in people),
+    }
+
+
 def outcome_summary(feedback: dict[str, Any]) -> str:
     if not feedback:
         return ""

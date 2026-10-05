@@ -3131,13 +3131,13 @@ class DirectorTests(unittest.TestCase):
                                 {**details, "tree_type": "Plant_TreeOak"})
         snapshot["game"]["tick"] = 7001
         choices, _ = director.candidate_actions(None, snapshot, state)
-        self.assertEqual(snapshot["development"]["pending_tree_wood"], 160)
+        self.assertEqual(snapshot["development"]["pending_tree_wood"], 100)
         self.assertNotIn("harvest_nearby_trees", choices)
         snapshot["development"]["plants"] = trees[3:]
         choices, details = director.candidate_actions(None, snapshot, state)
-        self.assertEqual(snapshot["development"]["pending_tree_wood"], 100)
+        self.assertEqual(snapshot["development"]["pending_tree_wood"], 40)
         self.assertIn("harvest_nearby_trees", choices)
-        self.assertEqual(details["tree_options"]["Plant_TreeOak"]["expected_yield"], 160)
+        self.assertEqual(details["tree_options"]["Plant_TreeOak"]["expected_yield"], 220)
 
     def test_real_bed_waits_for_roofed_room_and_needs_only_one_bed_material_cost(self):
         snapshot = {

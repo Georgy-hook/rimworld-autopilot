@@ -79,7 +79,7 @@ class ModuleArchitectureTests(unittest.TestCase):
         decisions.ask_laya_choice(agent, {"decision_facts": {"native_blocker": "missing_reactor"},
                                          "large_colony": "x" * 5000},
                                    "ship", "Choose", {"a": "start", "b": "wait"}, detailed=True)
-        self.assertIn("missing_reactor", agent.calls[-1][0]["decision_facts"])
+        self.assertEqual(agent.calls[-1][0]["decision_facts"], {"native_blocker": "missing_reactor"})
 
     def test_unavailable_domain_cannot_propose_stale_orders(self):
         def forbidden_prepare(*_):

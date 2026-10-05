@@ -141,18 +141,24 @@ def _detailed_state(agent: Any, state: dict[str, Any], options: dict[str, str]) 
                 hi = mid - 1
         return payload[:lo]
 
-    visible = {"decision_facts": clip(facts, budget // 3),
+    # Small explicit facts are a complete record, not prose to cut mid-JSON.
+    # Callers with larger domain context still receive bounded text, while
+    # concise parameter prerequisites survive every narrowing comparison.
+    protected_facts = isinstance(facts, dict) and bool(facts) and size(facts) <= budget // 3
+    visible = {"decision_facts": facts if protected_facts else clip(facts, budget // 3),
                "alternatives": {k: clip(v, budget // 3) for k, v in options.items()},
                "colony": clip(state, budget // 6)}
     # JSON keys/escaping take space too. Shrink the largest text, keeping every
     # option key and a fair prefix of both descriptions in the bounded state.
     while size(visible) > budget:
-        entries = [(visible, "decision_facts"), (visible, "colony")]
+        entries = [(visible, "colony")]
+        if not protected_facts:
+            entries.append((visible, "decision_facts"))
         entries.extend((visible["alternatives"], k) for k in options)
         container, key = max(entries, key=lambda pair: len(pair[0][pair[1]]))
         text = container[key]
         if not text:
-            break
+            raise ValueError("Detailed comparison facts and option identifiers exceed Laya state budget")
         container[key] = text[:max(0, len(text) * 4 // 5)]
     return visible
 

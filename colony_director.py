@@ -52,6 +52,8 @@ PATIENT_FEED_RETRY_TICKS = 12000
 
 
 ACTION_DESCRIPTIONS.update(capabilities.DESCRIPTIONS)
+ACTION_DESCRIPTIONS["replace_blocked_shell_material"] = "Choose an affordable material replacement for an unfinished material-blocked wall or door; native placement/budget must accept before cancellation."
+ACTION_LABELS["replace_blocked_shell_material"] = "Выбрать другой материал незавершённой стены или двери"
 
 
 # The game overlay follows RimWorld's language, independently of the GUI
@@ -2646,7 +2648,7 @@ def requires_builder_now(action: str) -> bool:
     if action.startswith(("build_", "finish_", "floor_", "install_")):
         return True
     return action in {
-        "plan_architecture", "repair_architecture", "repair_research_bench", "improve_room_lighting", "upgrade_workbench",
+        "plan_architecture", "repair_architecture", "repair_research_bench", "replace_blocked_shell_material", "improve_room_lighting", "upgrade_workbench",
         "commission_sculptures", "process_mechanoids", "start_stonecutting",
     }
 
@@ -3572,6 +3574,117 @@ def construction_material_note(project: dict[str, Any]) -> str:
                      f"({cost.get('available_count') or 0} loose)" for cost in costs[:3])
 
 
+def wood_choice_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
+    dev = snapshot.get("development") or {}
+    stock = dev.get("item_counts") or {}
+    gaps = [p for p in dev.get("construction_projects") or [] if p.get("def_name") in {"Wall", "Door"}]
+    required = sum(max(0, int(c.get("required_count") or 0)) for p in gaps
+                   for c in p.get("materials_needed") or [] if c.get("def_name") == "WoodLog")
+    precepts = sorted(str(p) for p in (dev.get("ideology") or {}).get("precepts") or []
+                      if str(p).startswith("TreeCutting_"))
+    return {"wood": int(stock.get("WoodLog") or 0), "shell_wood_required": required,
+            "shell_wood_gap": max(0, required - int(stock.get("WoodLog") or 0)),
+            "unroofed_sleepers": max(0, len(snapshot.get("colonists") or []) - int(sleeping_place_counts(dev)[1] or 0)),
+            "outside_C": (dev.get("weather") or {}).get("temperature"),
+            "cut_precepts": precepts or "unobserved",
+            "fuel_reserve_gap": max(0, 100 - int(stock.get("WoodLog") or 0)) if needs_cooking_fuel_reserve(snapshot) or needs_thermal_fuel_reserve(snapshot) else 0,
+            "replacement_choices": sorted((dev.get("structural_material_options") or {}).keys())[:4]}
+
+
+def wood_leaf_context(snapshot):
+    f = wood_choice_facts(snapshot)
+    return {"wood": f["wood"], "steel": int(((snapshot.get("development") or {}).get("item_counts") or {}).get("Steel") or 0), "shell_need": f["shell_wood_required"], "gap": f["shell_wood_gap"],
+            "unroofed": f["unroofed_sleepers"], "outside_C": round(float(f["outside_C"]), 1) if f["outside_C"] is not None else "unknown",
+            "cut_rule": f["cut_precepts"], "replace": f["replacement_choices"], "demand": wood_supply_demand(snapshot), "why": wood_demand_facts(snapshot)["reason"]}
+
+
+def wood_defer_signature(snapshot: dict[str, Any]) -> str:
+    dev = snapshot.get("development") or {}
+    facts = wood_choice_facts(snapshot)
+    # Clocks, jobs, temperatures and UI drift do not erase a deliberate refusal.
+    return json.dumps({"wood": facts["wood"], "gap": facts["shell_wood_gap"],
+        "projects": sorted((int(p.get("thing_id") or 0), str(p.get("stuff_def_name") or ""),
+                            [(c.get("def_name"), c.get("required_count")) for c in p.get("materials_needed") or []])
+                           for p in dev.get("construction_projects") or [] if p.get("def_name") in {"Wall", "Door"}),
+        "precepts": sorted(str(p) for p in (dev.get("ideology") or {}).get("precepts") or []),
+        "alternatives": sorted((dev.get("structural_material_options") or {}).keys()),
+        "emergency": any((bridge.first_number(h.get("severity")) >= .35 or bridge.first_number(h.get("cur_stage_index")) >= 3) and h.get("def_name") in {"Hypothermia", "Heatstroke"}
+                         for p in snapshot.get("colonists") or [] for h in p.get("health_conditions") or []),
+        "plants": sorted((str(k), int(v.get("planned_batch_count") or 0),
+                          int(v.get("planned_batch_yield", v.get("expected_yield")) or 0) >= (wood_supply_demand(snapshot) or 1))
+                         for k, v in (dev.get("tree_options") or {}).items())}, sort_keys=True)
+
+
+def wood_defer_active(snapshot: dict[str, Any], map_state: dict[str, Any]) -> bool:
+    memory = map_state.get("wood_choice_defer") or {}
+    tick = int((snapshot.get("game") or {}).get("tick") or 0)
+    return (memory.get("signature") == wood_defer_signature(snapshot)
+            and retry_recent(memory, tick, 30000))
+
+
+def structural_retry_signature(snapshot):
+    dev = snapshot.get("development") or {}
+    plans = architect.structural_material_repair_options(dev)
+    materials = sorted({v["material"] for v in plans.values()} | {"WoodLog"})
+    return json.dumps({"projects": [(p.get("thing_id"), p.get("def_name"), p.get("stuff_def_name"),
+                      p.get("position"), p.get("rotation"), p.get("materials_needed"))
+                     for p in dev.get("construction_projects") or [] if p.get("def_name") in {"Wall", "Door"}],
+                     "stock": {k: (dev.get("item_counts") or {}).get(k, 0) for k in materials},
+                     "plans": sorted(plans)}, sort_keys=True)
+
+
+def structural_retry_options(snapshot, map_state, plans):
+    memories = map_state.get("structural_material_retries") or {}
+    legacy = map_state.get("structural_material_retry") or {}
+    if legacy.get("key"):
+        memories = {legacy["key"]: legacy, **memories}
+    tick = int((snapshot.get("game") or {}).get("tick") or 0)
+    signature = structural_retry_signature(snapshot)
+    blocked = {key for key, memory in memories.items()
+               if memory.get("signature") == signature and retry_recent(memory, tick, 30000)}
+    return {} if "defer" in blocked else {key: value for key, value in plans.items() if key not in blocked}
+
+
+def wood_demand_facts(snapshot):
+    dev = snapshot.get("development") or {}
+    stock = int((dev.get("item_counts") or {}).get("WoodLog") or 0)
+    projects = dev.get("construction_projects") or []
+    def required(rows):
+        return sum(max(0, int(c.get("required_count") or 0)) for p in rows
+                   for c in p.get("materials_needed") or [] if c.get("def_name") == "WoodLog")
+    shell = max(0, required([p for p in projects if p.get("def_name") in {"Wall", "Door"}]) - stock)
+    generic = max(0, required(projects) - stock)
+    demand, reason = (shell, "shell") if shell else (generic, "construction")
+    if needs_cooking_fuel_reserve(snapshot) or needs_thermal_fuel_reserve(snapshot):
+        demand = max(demand, 100 - stock)
+        reason = "shell/fuel" if shell else "fuel"
+    if not demand and any("materials_needed" not in p for p in projects):
+        # A legacy/partial snapshot supplies no ingredient counts: retain its
+        # bounded supply option while stating that the exact requirement is unknown.
+        return {"demand": None, "reason": "construction_unknown"}
+    if not demand and dev.get("cold_threat"):
+        # Existing thermal assessment observes a cold occupied bedroom. Gather
+        # the normal campfire construction cost even before a heat project exists.
+        catalog = architect.catalog_index(dev.get("building_catalog") or [])
+        cost = architect.effective_building_cost(catalog.get("Campfire") or {"cost_list":[{"thing_def":"WoodLog","count":20}]}, None)
+        demand, reason = max(0, int(cost.get("WoodLog") or 20) - stock), "indoor_heat"
+    return {"demand": demand, "reason": reason if demand else "none"}
+
+
+def wood_supply_demand(snapshot):
+    return wood_demand_facts(snapshot)["demand"]
+
+
+def wood_batch_ids(ids, plants, anchor, demand):
+    chosen, total = [], 0
+    for plant_id in sorted(ids, key=lambda i: squared_distance((plants.get(i) or {}).get("position") or anchor, anchor)):
+        chosen.append(plant_id)
+        total += max(0, int((plants.get(plant_id) or {}).get("harvest_yield") or 0))
+        if len(chosen) >= 8 or (demand is not None and demand > 0 and total >= demand):
+            break
+    return chosen
+
+
 def focus_shelter_material_choices(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
     dev = snapshot.get("development") or {}
     _, sheltered = sleeping_place_counts(dev)
@@ -3584,7 +3697,7 @@ def focus_shelter_material_choices(snapshot: dict[str, Any], actions: list[str])
     if not any(cost.get("def_name") == "WoodLog" and int(cost.get("required_count") or 0) > 0
                for p in shell for cost in p.get("materials_needed") or []):
         return actions
-    supplies = {"unforbid_supplies", "harvest_nearby_trees", "open_blocked_food_path",
+    supplies = {"replace_blocked_shell_material", "unforbid_supplies", "harvest_nearby_trees", "open_blocked_food_path",
                 "care_for_injured_animal", "build_animal_spots", "prepare_emergency_medical_bed",
                 "prioritize_doctor", "prioritize_rescue"}
     if not any(int(((p.get("work_priorities") or {}).get("PlantCutting") or {}).get("priority") or 0) == 1
@@ -4791,6 +4904,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     catalog_options = {category: plans for category, plans in catalog_options.items() if plans}
     pending_research_bench = any("ResearchBench" in str(row.get("def_name") or "")
                                  for row in pending_projects)
+    structural_repairs = structural_retry_options(snapshot, map_state, architect.structural_material_repair_options(dev))
+    dev["structural_material_options"] = structural_repairs
+    if structural_repairs and can_work("Construction"):
+        details["structural_material_options"] = structural_repairs
+        one_time.append("replace_blocked_shell_material")
     research_repairs = architect.research_bench_repair_options(dev)
     if research_repairs and can_work("Construction"):
         details["research_bench_repair_options"] = research_repairs
@@ -5716,12 +5834,21 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             tree_groups[name] = {**group, "count": len(fresh_ids), "ids": fresh_ids,
                                  "expected_yield": sum(tree_yield_by_id.get(plant_id, 0)
                                                        for plant_id in fresh_ids)}
-    if (tree_groups and pending_tree_wood < 120 and can_work("PlantCutting")
+    tree_rows = {int(p["thing_id"]): p for p in dev.get("plants") or [] if p.get("thing_id") is not None}
+    for group in tree_groups.values():
+        batch = wood_batch_ids(group["ids"], tree_rows, map_state["anchor"], wood_supply_demand(snapshot))
+        group["planned_batch_ids"] = batch
+        group["planned_batch_count"] = len(batch)
+        group["planned_batch_yield"] = sum(max(0, int((tree_rows.get(i) or {}).get("harvest_yield") or 0)) for i in batch)
+        group["wood_demand"] = wood_supply_demand(snapshot)
+    dev["tree_options"] = tree_groups
+    if (tree_groups and not wood_defer_active(snapshot, map_state) and pending_tree_wood < (wood_supply_demand(snapshot) if wood_supply_demand(snapshot) is not None else 120) and can_work("PlantCutting")
             and ((int(item_counts.get("WoodLog") or 0) < 50
                   and (dev.get("construction_projects") or dev.get("cold_threat")))
                  or needs_cooking_fuel_reserve(snapshot)
                  or needs_thermal_fuel_reserve(snapshot))
-            and not issued_recently(map_state, "wood_harvest", tick, retry_ticks=6000)):
+            and (not issued_recently(map_state, "wood_harvest", tick, retry_ticks=6000)
+                 or (map_state.get("wood_choice_defer") and not wood_defer_active(snapshot, map_state)))):
         details["tree_options"] = tree_groups
         dev["tree_options"] = tree_groups
         one_time.append("harvest_nearby_trees")
@@ -6214,7 +6341,7 @@ def action_domain(name: str) -> str:
     if name.startswith(("build_killbox", "build_fallback", "build_turret", "build_mortar", "build_firefoam", "process_mechanoids")): return "defense"
     if name in {"rescue_downed_animal", "care_for_injured_animal", "feed_hungry_animal", "feed_hungry_colonist", "eat_available_meal", "open_sealed_food_store", "open_blocked_food_path", "build_hospital", "build_passive_cooler", "configure_hospital_beds", "build_prison", "assign_real_bed", "prepare_emergency_medical_bed", "rescue_neutral_arrival"}: return "care"
     if name in {"unforbid_corpses", "create_human_corpse_dump", "create_animal_corpse_dump", "build_cemetery", "build_crematorium"}: return "corpse_management"
-    if name.startswith(("build_", "create_", "expand_", "floor_", "install_", "commission_", "excavate_", "finish_")) or name in {"plan_architecture", "repair_architecture", "repair_research_bench", "improve_room_lighting", "upgrade_workbench"}: return "construction"
+    if name.startswith(("build_", "create_", "expand_", "floor_", "install_", "commission_", "excavate_", "finish_")) or name in {"plan_architecture", "repair_architecture", "repair_research_bench", "replace_blocked_shell_material", "improve_room_lighting", "upgrade_workbench"}: return "construction"
     return "strategy"
 
 
@@ -6228,7 +6355,7 @@ def action_family(name: str) -> str:
     if name.startswith("income_"): return "income_strategy"
     if name.startswith("prioritize_") or name in {"set_work_priority", "rebalance_cooking"}: return "work_priority"
     if name.startswith("build_"): return "building_project"
-    if name in {"plan_architecture", "repair_architecture", "repair_research_bench", "improve_room_lighting", "upgrade_workbench"}: return "building_project"
+    if name in {"plan_architecture", "repair_architecture", "repair_research_bench", "replace_blocked_shell_material", "improve_room_lighting", "upgrade_workbench"}: return "building_project"
     if name in {"develop_colonist_skill", "optimize_night_owl_schedule", "schedule_recreation"}: return "workforce_development"
     if name.startswith("create_"): return "zone_or_production"
     return name.split(":", 1)[0]
@@ -6635,9 +6762,9 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
                 "Choose who will cut the selected crops now. Growing priority 1 can keep this worker sowing "
                 "instead; compare the alternative worker's skill and current job."), "criteria": workers}
     elif action == "harvest_nearby_trees" and dev.get("tree_options"):
-        q["tree_type"] = {"type": "choice", "instructions": "Choose a wood-producing plant or defer. Special trees have other functions; preserve them when their loss outweighs fuel or construction. Up to eight plants will be marked.", "criteria": {
-            **{str(k): f"{v.get('label')}: {v.get('count')} plants, up to {v.get('expected_yield')} wood; {v.get('description')}" for k, v in dev["tree_options"].items()},
-            "defer": "Preserve these plants; consider growing fibercorn/trees, purchasing wood, other materials or different power sources."
+        q["tree_type"] = {"type": "choice", "instructions": "Choose material supply or defer using the exact shell shortage. Stumps and living trees differ; compare observed cutting precepts and alternative materials. Mark only a bounded batch to meet demand.", "criteria": {
+            **{str(k): f"Mark {v.get('planned_batch_count', v.get('count'))} for ~{v.get('planned_batch_yield', v.get('expected_yield'))} wood; demand {v.get('wood_demand', wood_supply_demand(snapshot))}; {'dead stump' if k == 'SmashedStump' else 'living plant'} {v.get('label')}; {v.get('count')} total available" for k, v in dev["tree_options"].items()},
+            "defer": "Preserve these plants now; shell remains material-blocked. Only listed affordable replacements are confirmed alternatives."
         }}
         workers = foraging_worker_criteria(snapshot)
         if workers:
@@ -7000,6 +7127,13 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
             material = next(iter(materials), "")
         parsed["research_bench_material"] = material
         raw_details = {"mode": "first_research_bench", "steps": steps}
+    elif choice == "replace_blocked_shell_material":
+        plans = (snapshot.get("development") or {}).get("structural_material_options") or {}
+        selected, raw_details = ask_laya_choice(agent, {**state, "choice_context": wood_leaf_context(snapshot)},
+            "structural_material", "Choose replacement material or preserve the existing unfinished shell. Native placement and full budget revalidate before cancellation.",
+            {**{key: value["summary"] for key, value in plans.items()}, "defer": "Keep original project; its material shortage remains."}, detailed=True)
+        parsed["structural_material"] = selected
+        merged_answers.update(raw_details.get("answers", {}))
     elif choice == "repair_research_bench":
         plans = (snapshot.get("development") or {}).get("research_bench_repair_options") or {}
         selected, raw_details = ask_laya_choice(agent, state, "research_bench_repair",
@@ -7096,10 +7230,16 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
         raw_details = {"steps": [work_raw, pawn_raw, level_raw]}
     else:
         detail_questions = subchoice_questions_for_action(choice, snapshot)
+        parameter_state = {**state, "decision_facts": colony_reasoning.parameter_facts(
+            snapshot, choice, roofed_sleeping_places=sleeping_place_counts(
+                snapshot.get("development") or {})[1])}
         if detail_questions:
             raw_details = {"answers": {}, "steps": []}
             for question_id, question in detail_questions.items():
-                _, question_raw = ask_laya_choice(agent, state, question_id,
+                if question_id == "tree_worker" and str(raw_details["answers"].get("tree_type", {}).get("choice")) == "defer":
+                    continue
+                question_state = {**parameter_state, "choice_context": wood_leaf_context(snapshot)} if question_id == "tree_type" else parameter_state
+                _, question_raw = ask_laya_choice(agent, question_state, question_id,
                     str(question["instructions"]), dict(question["criteria"]), detailed=question_id == "tree_type")
                 raw_details["answers"].update(question_raw.get("answers", {}))
                 raw_details["steps"].append(question_raw)
@@ -7980,6 +8120,19 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             map_state.pop("pending_income_crop", None)
         return result
 
+    if choice == "replace_blocked_shell_material":
+        key = str(details.get("structural_material") or "")
+        if key == "defer":
+            result = {"applied": False, "reason": "laya_preserved_unfinished_shell"}
+        else:
+            result = architect.execute_structural_material_repair(client, snapshot, key, post_observed_blueprint)
+        if not result.get("applied"):
+            map_state.setdefault("structural_material_retries", {})[key] = {**failure_record(tick, 120), "key": key,
+                                                      "signature": structural_retry_signature(snapshot)}
+        else:
+            map_state.pop("structural_material_retry", None)
+            map_state.pop("structural_material_retries", None)
+        return result
     if choice == "repair_research_bench":
         return architect.execute_research_bench_repair(client, snapshot,
             str(details.get("research_bench_repair") or ""), post_observed_blueprint)
@@ -9916,15 +10069,17 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         tree_type = str(details.get("tree_type") or "")
         if tree_type == "defer":
             issued["wood_harvest"] = tick
-            return {"applied": False, "reason": "laya_preserved_wood_producing_plants"}
+            map_state["wood_choice_defer"] = {**failure_record(tick, 120), "signature": wood_defer_signature(snapshot)}
+            return {"applied": False, "reason": "laya_preserved_wood_producing_plants", "retry_after_tick": tick + 30000,
+                    "material_facts": wood_choice_facts(snapshot)}
         selected = (details.get("tree_options") or {}).get(tree_type)
         if not selected:
             return {"applied": False, "reason": "Laya did not select an available nearby tree species"}
         plants_by_id = {int(plant["thing_id"]): plant for plant in snapshot["development"].get("plants", [])
                         if plant.get("thing_id") is not None}
         anchor = map_state["anchor"]
-        ids = sorted((int(plant_id) for plant_id in selected.get("ids", [])), key=lambda plant_id:
-                     squared_distance((plants_by_id.get(plant_id) or {}).get("position") or anchor, anchor))[:8]
+        demand = wood_supply_demand(snapshot)
+        ids = wood_batch_ids([int(i) for i in selected.get("ids", [])], plants_by_id, anchor, demand)
         if not ids:
             return {"applied": False, "reason": "Selected trees have already been cut"}
         live_raw = client.get("/api/v1/map/plants", map_id=map_id)

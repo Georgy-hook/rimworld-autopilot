@@ -346,7 +346,7 @@ class CapabilityTests(unittest.TestCase):
         visible = agent.calls[-1][0]
         self.assertLessEqual(len(agent.tok(json.dumps(visible, ensure_ascii=False))["input_ids"]), 312)
         self.assertEqual(set(visible["alternatives"]), set(options))
-        self.assertIn("BodyPurist", visible["decision_facts"])
+        self.assertIn("BodyPurist", visible["decision_facts"]["patient"])
         self.assertIn("PlantWorkSpeed", visible["alternatives"]["FieldHand"])
         self.assertIn("Manipulation", visible["alternatives"]["ArchotechArm"])
 

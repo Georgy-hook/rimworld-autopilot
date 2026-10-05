@@ -146,7 +146,7 @@ class ResilienceTests(unittest.TestCase):
     def test_immunity_and_nontendable_illness_remain_visible(self):
         self.snapshot['development']['resilience']['patients'] = [
             {'pawn_id': 2, 'downed': True, 'conditions': [{'def_name': 'Heatstroke', 'severity': .8}]},
-            {'pawn_id': 3, 'conditions': [{'def_name': 'Infection', 'severity': .7, 'immunity': .5}]},
+            {'pawn_id': 3, 'conditions': [{'def_name': 'Infection', 'severity': .7, 'immunity': .5, 'lethal_severity': 1.0}]},
             {'pawn_id': 4, 'conditions': [{'def_name': 'FoodPoisoning', 'severity': .3}]},
         ]
         summary = resilience.summary(self.snapshot)
@@ -296,7 +296,7 @@ class ResilienceDeferReplayTests(unittest.TestCase):
     @patch('colony_retry.time.time',return_value=100)
     def test_clinical_new_risk_and_new_target_bypass_floor_immediately(self, clock):
         for field,value in (('downed',True),('life_threatening',True),('tendable_now',True),
-                            ('bleeding_total',1.5),('food',.05),('in_bed',True),('bed_rest_priority',1)):
+                            ('bleeding_total',1.5)):
             with self.subTest(field=field):
                 self.setUp();self.defer_once();self.patient[field]=value
                 self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
@@ -352,6 +352,156 @@ class ResilienceDeferReplayTests(unittest.TestCase):
         self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
         self.snapshot['game']['tick']=15000
         self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+
+class KittyRestClinicalReplayTests(unittest.TestCase):
+    def setUp(self):
+        # Actual Kitty rows from material-defer-paused snapshot tick143482.
+        self.patient={'pawn_id':782,'name':'Kitty','downed':False,'in_bed':False,
+          'tendable_now':False,'life_threatening':False,'bed_rest_priority':3,'medical_care':'Best',
+          'food':.992,'temperature':36.9872742,'comfortable_min':5.9800005,'comfortable_max':29.86,
+          'conditions':[{'def_name':'Asthma','part':'left lung','severity':.001,'immunity':0.,
+                         'lethal_severity':-1.,'tendable_now':False},
+                        {'def_name':'Asthma','part':'right lung','severity':.166625366,'immunity':0.,
+                         'lethal_severity':-1.,'tendable_now':False}]}
+        self.row={'kind':'rest','worker_id':782,'target_id':782,'food_feasible':False}
+        self.snapshot={'game':{'tick':143482},'map':{'id':0},'development':{'resilience':{
+          'patients':[self.patient],'options':[self.row]}}}
+        self.memory={}
+
+    def defer(self):
+        resilience.prepare(self.snapshot,self.memory)
+        with patch.object(resilience,'ask_laya_choice',return_value=('defer',{})):
+            selected,_=resilience.choose(None,{},'resilience_rest',self.snapshot)
+        self.assertFalse(resilience.execute(Client([]),self.snapshot,self.memory,'resilience_rest',selected)['applied'])
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_eight_persisted_cycles_asthma_eating_sleep_and_other_medplans_quiet(self,clock):
+        import json
+        asks=0
+        for cycle in range(8):
+            self.snapshot['game']['tick']=143482+4500*cycle;clock.return_value=100+10*cycle
+            self.patient.update(in_bed=bool(cycle%2), food=.09 if cycle%2 else .99,
+                                current_job='LayDown' if cycle%2 else 'HaulToCell',
+                                bed_rest_priority=1 if cycle%2 else 3,medical_care='Best' if cycle%2 else 'HerbalOrWorse')
+            self.patient['conditions'][1]['severity']=.1666+cycle*.001
+            self.snapshot['development']['resilience']['options'].append(
+                {'kind':'tend','worker_id':767+cycle,'target_id':770,'giver':'DoctorTendHumanlike'})
+            if 'resilience_rest' in resilience.prepare(self.snapshot,self.memory):
+                asks+=1;self.defer()
+            self.memory=json.loads(json.dumps(self.memory))
+        self.assertEqual(asks,1)
+        clock.return_value=221
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_heat_and_hypo_worsening_bypass_but_improvement_does_not(self,clock):
+        for name in ('Heatstroke','Hypothermia'):
+            with self.subTest(name=name):
+                self.setUp()
+                self.patient['conditions'].append({'def_name':name,'severity':.36,'cur_stage_index':3})
+                self.defer();clock.return_value=110
+                self.patient['conditions'][-1].update(severity=.19,cur_stage_index=1)
+                self.assertNotIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+                self.patient['conditions'][-1].update(severity=.36,cur_stage_index=3)
+                self.assertNotIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+                self.patient['conditions'][-1].update(severity=.63,cur_stage_index=4)
+                self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_new_emergency_and_new_subject_or_helper_bypass(self,clock):
+        for field in ('downed','life_threatening','tendable_now','bleeding_total'):
+            with self.subTest(field=field):
+                self.setUp();self.defer();clock.return_value=110
+                self.patient[field]=.2 if field=='bleeding_total' else True
+                self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+        self.setUp();self.defer()
+        self.snapshot['development']['resilience']['options'].append({**self.row,'target_id':770,'worker_id':770})
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_v1_persisted_sleeping_signature_upgrades_without_reasking(self,clock):
+        import json
+        context=self.snapshot['development']['resilience']
+        self.patient['in_bed']=True
+        old=resilience._state(self.row,context)
+        oldsignature=repr((old,(('Asthma',0),('Asthma',0)),False,False,True,3,'Best',[('rest',782,782,None,False)]))
+        self.memory={'resilience_memory':{'deferred':{'resilience_rest:782':{
+          'tick':143482,'retry_started_at':100,'retry_until':220,'state':oldsignature}}}}
+        self.patient.update(in_bed=False,food=.05)
+        clock.return_value=110
+        self.assertNotIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+        record=self.memory['resilience_memory']['deferred']['resilience_rest:782']
+        self.assertEqual(json.loads(record['state'])['rest_version'],2)
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_rest_defer_leaves_blocked_material_action_executable_eight_cycles(self,clock):
+        import copy,json
+        from unittest.mock import Mock
+        import colony_director as director
+        s=self.snapshot;s['colonists']=[];s['combat']={}
+        s['development']['plants']=[{'thing_id':90,'position':{'x':10,'z':10},'harvestable_now':True}]
+        s['development']['construction_projects']=[{'thing_id':12,'def_name':'Wall',
+          'materials_needed':[{'def_name':'WoodLog','required_count':5,'available_count':0}]}]
+        memory={'anchor':{'x':10,'z':10}}
+        self.memory=memory;self.defer()
+        client=Mock();posts=[]
+        client.get.side_effect=lambda ep,**kw:copy.deepcopy(s['development']['plants'])
+        def post(ep,**kw):
+            posts.append((ep,kw))
+            for p in s['development']['plants']:p['is_designated_for_harvest']=True
+            return {'applied':True}
+        client.post.side_effect=post
+        for cycle in range(8):
+            clock.return_value=110+10*cycle;s['game']['tick']+=4500
+            self.patient.update(in_bed=bool(cycle%2),food=.09 if cycle%2 else .99)
+            self.assertNotIn('resilience_rest',resilience.prepare(s,self.memory))
+            if cycle==0:
+                self.assertFalse(director.construction_has_materials(s['development']['construction_projects'][0]))
+                result=director.execute_action(client,s,self.memory,'harvest_nearby_trees',
+                    {'tree_type':'Oak','tree_options':{'Oak':{'ids':[90]}}})
+                self.assertTrue(result['applied'])
+            elif cycle==1:
+                # The following observed harvest supplies the exact blocked wall.
+                s['development']['plants']=[]
+                s['development']['construction_projects'][0]['materials_needed'][0]['available_count']=20
+                self.assertTrue(director.construction_has_materials(s['development']['construction_projects'][0]))
+            self.memory=json.loads(json.dumps(self.memory))
+        self.assertEqual([ep for ep,_ in posts],['/api/v1/map/plants/harvest'])
+
+
+class ResilienceImmunityEvidenceTests(unittest.TestCase):
+    def test_explicit_nonlethal_asthma_is_not_an_immunity_race(self):
+        asthma={'def_name':'Asthma','severity':.166625366,'immunity':0.,'lethal_severity':-1.}
+        for condition in (asthma,{**asthma,'can_ever_kill':False}):
+            snapshot={'development':{'resilience':{'patients':[{'pawn_id':782,'conditions':[condition]}]}}}
+            self.assertEqual(resilience.summary(snapshot)['immunity_races'],{'count':0,'unknown_count':0})
+            self.assertIs(resilience._immunity_race(condition),False)
+
+    def test_lethal_or_native_can_kill_establishes_race_unknown_remains_unknown(self):
+        for evidence in ({'lethal_severity':1.0},{'can_ever_kill':True}):
+            h={'def_name':'Infection','severity':.7,'immunity':.5,**evidence}
+            self.assertIs(resilience._immunity_race(h),True)
+        unknown={'def_name':'ModdedCondition','severity':.7,'immunity':.5}
+        self.assertIsNone(resilience._immunity_race(unknown))
+        s={'development':{'resilience':{'patients':[{'pawn_id':1,'conditions':[unknown]}]}}}
+        self.assertEqual(resilience.summary(s)['immunity_races'],{'count':0,'unknown_count':1})
+
+    def test_chooser_uses_actual_lethal_race_not_asthma_immunity_zero(self):
+        asthma={'def_name':'Asthma','severity':.16,'immunity':0.,'lethal_severity':-1.}
+        infection={'def_name':'WoundInfection','severity':.7,'immunity':.5,'can_ever_kill':True}
+        row={'kind':'rest','worker_id':782,'target_id':782}
+        s={'game':{'tick':100},'map':{'id':1},'development':{'resilience':{
+          'patients':[{'pawn_id':782,'conditions':[asthma,infection]}],'options':[row]}}}
+        resilience.prepare(s,{})
+        with patch.object(resilience,'ask_laya_choice',return_value=('defer',{})) as ask:
+            resilience.choose(None,{},'resilience_rest',s)
+        benefit=ask.call_args.args[1]['option_effects']['782']['benefit']
+        self.assertIn('WoundInfection',benefit);self.assertIn('immunity_race=yes',benefit)
+        s['development']['resilience']['patients'][0]['conditions']=[asthma]
+        with patch.object(resilience,'ask_laya_choice',return_value=('defer',{})) as ask:
+            resilience.choose(None,{},'resilience_rest',s)
+        self.assertIn('immunity_race=no',ask.call_args.args[1]['option_effects']['782']['benefit'])
 
 
 if __name__ == "__main__":
