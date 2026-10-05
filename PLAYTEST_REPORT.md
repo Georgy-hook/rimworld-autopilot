@@ -4,9 +4,39 @@ Current candidate: **0.0.7**. Historical tests below retain their own revision a
 
 This log tracks real runs and explicitly identified technical replays. Death records distinguish native causes, final-save conditions and uncertain observer captions. Wall-clock runtime excludes intentional development pauses when noted.
 
-## 5 October 2026 — Goberium Coalition, material blocker repaired
+## 5 October 2026 — Goberium/Theentbum, material and wildlife repairs
 
-- Latest technical pause: **10:45:27 UTC, tick378997**, all three founders
+- Latest same-colony continuation: **11:59:40.658 UTC**, tick474194, speed3.
+  At12:00:15/tick489278 all three founders were alive, without downed/bleeding;
+  Holster and Kitty actually performed HarvestDesignated, Vega Ingest. The
+  preservation refusal at11:59:45 yielded to rest at11:59:54 and harvesting
+  at12:00:05. Earlier Heatstroke, cooking fuel and food remain observation
+  concerns. One CUDA director/four CPU threads, observer and read-only monitor;
+  hourly review resumes no earlier than13:00 UTC. Technical pauses are excluded.
+
+- Installed source **5bdab53**, native package **688acbf**: **1066 Python
+  tests pass**, native Release-1.6 has zero errors/warnings. Six wildlife and
+  inspiration observations were verified in the actual loaded game. The
+  nonviolent finishing order was rejected without changing Vega's job/draft.
+  No living downed hostile remained for a positive finishing test.
+- Ichabod8483's actual training is Obedience3/3, available Release0/2;
+  Rescue/Haul are blocked by body size. A real CUDA model replay chose Release
+  with Vega, but issued no game orders and is not completed learning.
+- The first continuation at11:42:59 UTC exposed 17 repeated preservation
+  defers. Their 250-tick memory expired before the next ten-second cycle;
+  purpose refusal remembered only representative alternatives. Native storage
+  context also treated standing Plant_Dandelion as stored food. Same progress
+  was preserved at tick473870 for repair. Deferrals now retain stage/subject
+  scope and a120-second/30000-tick floor; actual item food is separated from
+  grazing. Native hunting also survives the emergency food focus and replaces
+  both legacy hunt paths when its endpoint is available.
+- At paused tick474194, installed API reported7.1 nutrition in actual berries
+  and agave, ten separate grazing plant definitions, and zero Plant_* storage
+  options. A real model replay deferred preservation, retained that refusal
+  across a synthetic40000-tick advance, and then chose resilience_rest. This
+  replay sent no game orders. Loading advanced324 technical ticks; no rollback.
+
+- Earlier technical pause: **10:45:27 UTC, tick378997**, all three founders
   alive, upright and not bleeding. Current save filename is **Theentbum
   (Permadeath)**; saved XML verifies the same world seed, tile and founders.
   Director stopped and hourly automation paused for the user's reported

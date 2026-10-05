@@ -92,3 +92,9 @@ JSON persistence, oscillation, conditional cancellation/readback, existing
 low-health attack retention and refusal without Python draft mutation.
 Fake native refusal tests verify request handling, not real native behavior.
 C# compilation and eligible positive live execution remain parent gates.
+
+Parent integration subsequently passed Release-1.6 compilation. On the installed
+paused colony, a deliberately invalid Vega order returned
+`attack_incapable_of_violence` and preserved the observed job, target and draft.
+No living downed hostile remained; positive native damage/completion is still
+unverified. The current combined Python suite passes1066 tests.

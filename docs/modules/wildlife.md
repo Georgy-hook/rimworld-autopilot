@@ -33,4 +33,11 @@ Offline scenarios cover equal retaliation with weak versus strong selected force
 
 Installed damage-event caveat: Pawn_MindState.Notify_DamageTaken invokes GetManhunterOnDamageChance(pawn, instigator) without its optional distance argument. In this inspected build, default -1 reaches the clamped near-distance factor. Current/planned-distance overload values are exported as what-if information, not claimed to be the exact trigger probability. Per-hit confirmation uses the actual damage-event overload.
 
+Parent integration verified the installed GET contexts and the actual terrier
+boundary: Obedience3/3, Release available0/2, Rescue/Haul unavailable. A real CUDA
+model replay selected Release with Vega without sending game orders. Learning
+completion remains pending. An actual candidate_actions regression now covers
+emergency food focus, unavailable-endpoint fallback, corpse/butchery priority
+and preservation of an existing group's cleanup lifecycle.
+
 The first prey-versus-defer comparison already names the best contextual harm label among verified feasible plans and its actual mode, actor count and weapons. It describes an available option, not automatic participation: the next choice still selects the exact hunter/team, followed by confirmation. Unselected bystanders never improve that summary.

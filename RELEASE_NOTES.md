@@ -22,6 +22,10 @@ published installer or a claim of demonstrated autonomous victory. See the
 - Fixed the observed downed-raider order selecting a nonviolent colonist and
   omitting the native finishing flag. Explicit finishing orders validate the
   actor, reobserve the actual job and stop retrying stalled actor/target pairs.
+- Fixed observed preservation deferrals expiring between decisions at fast game
+  speed. Stage/subject memory covers the declined alternatives, while meaningful
+  new conditions permit reconsideration. Storage context separates actual food
+  items from standing grazing plants; emergency food focus uses native hunt plans.
 - Expanded live crop/season, blight, augmentation, equipment, trained-animal,
   medical, kitchen, storage and DLC context with ordinary game executors.
 - Added campaign identity and cross-map goal persistence, staged connected ship
