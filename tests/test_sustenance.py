@@ -354,3 +354,30 @@ class SustenanceRefusalSequenceTests(unittest.TestCase):
         self.assertNotIn('sustenance_animal_welfare',module.prepare(snap,state))
         c['animals'][0]['health'][0]['stage_index']=2
         self.assertIn('sustenance_animal_welfare',module.prepare(snap,state))
+
+
+class HumanFoodLifecycleRegressionTests(unittest.TestCase):
+    def test_hops_not_human_supply_and_down_patient_access_kept_distinct(self):
+        c={'food':[{'def_name':'RawHops','food_type':'Plant','fresh_eligible_nutrition':15.6},
+                   {'def_name':'RawBerries','food_type':'VegetableOrFruit','fresh_eligible_nutrition':.35}],
+           'human_food':[{'def_name':'RawBerries','fresh_eligible_nutrition':.35}],
+           'human_food_access':[{'pawn_id':8,'downed':True,'self_reachable_nutrition':0,'feeder_reachable_nutrition':.35}]}
+        self.assertEqual(module.human_nutrition(c),.35)
+        self.assertEqual(c['food'][0]['fresh_eligible_nutrition'],15.6) # animal/industrial inventory remains
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as ask:
+            module._stage(None,c,[],'sustenance_purpose','choose')
+        facts=ask.call_args.args[1]['decision_facts']
+        self.assertEqual(facts['fresh_nutrition'],.35);self.assertEqual(facts['feed_access'][0]['self'],0)
+        self.assertEqual(facts['feed_access'][0]['feeder'],.35)
+        c.pop('human_food');self.assertEqual(module.human_nutrition(c),.35)
+
+    def test_pause_bill_fresh_identity_change_never_posts(self):
+        plan={'key':'pausefeed:7:Bill_1','kind':'pausefeed','target_id':7,'value':'Bill_1|Forever|1|10','label':'Pause kibble'}
+        c={'options':[plan],'animals':[]};s={'map':{'id':1},'game':{'tick':1000},'development':{'sustenance':c}}
+        self.assertIn('sustenance_food_batch',module.prepare(s,{}))
+        client=Client({'options':[{**plan,'value':'Bill_1|RepeatCount|0|10'}]})
+        result=module.execute(client,s,{},'sustenance_food_batch',{'sustenance_policy':plan['key']})
+        self.assertFalse(result['applied']);self.assertEqual(client.posts,[])
+        # A completed finite bill remains an observation, never a pause candidate.
+        c['options']=[];c['tables']=[{'id':7,'bills':[{'recipe':'Make_Kibble','repeat_count':0,'completed_finite':True}]}]
+        self.assertNotIn('sustenance_food_batch',module.prepare(s,{}))

@@ -8,7 +8,7 @@ The 0.0.7 candidate uses deterministic application code to project state and def
 |---|---|
 | `colony_director.py` | Scheduling, snapshots, emergency ordering and legacy orchestration |
 | `colony_modules.py` | Registered domains and their collect/prepare/choose/execute/assess interface |
-| `colony_{production,society,progression,specialists,sustenance,resilience,affordances,wildlife,inspirations}.py` | Domain observations, typed options, fresh command validation |
+| `colony_{production,society,progression,specialists,sustenance,resilience,affordances,wildlife,inspirations,mental_safety}.py` | Domain observations, typed options, fresh command validation |
 | `colony_downed_combat.py` | Verified finishing jobs, native eligibility, pending acknowledgments and bounded progress checks |
 | `colony_retry.py` | Shared JSON-safe failure clocks; per-option policy stays in domain modules |
 | `colony_medical_recovery.py` | Native patient/helper eligibility, temporary-bed prerequisites, rescue/feed recovery focus and compact triage facts for the director |

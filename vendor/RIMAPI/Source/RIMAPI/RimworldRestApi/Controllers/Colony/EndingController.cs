@@ -103,28 +103,53 @@ namespace RIMAPI.Controllers
         [Get("/api/v1/colony/endings")]
         [EndpointMetadata("Read DLC ending quests, native site jobs, live requirements and verified engine credits")]
         public async Task Context(HttpListenerContext context) {
-            var evidence = Current.Game?.GetComponent<EndingEvidence>();
-            var quests = Find.QuestManager.QuestsListForReading.Where(EndingQuest).Select(q => new {
-                quest_id = q.id, route = q.root.defName, label = q.name, description = q.description.ToString(),
-                state = q.State.ToString(), expires_in_ticks = q.TicksUntilExpiry,
-                requires_accepter = q.RequiresAccepter, acceptance = QuestUtility.CanAcceptQuest(q).Reason,
-                can_accept = q.State == QuestState.NotYetAccepted && QuestUtility.CanAcceptQuest(q).Accepted,
-                accepter_ids = PawnsFinder.AllMaps_FreeColonistsSpawned.Where(p => QuestUtility.CanPawnAcceptQuest(p, q)).Select(p => p.thingIDNumber).ToList(),
-                targets = q.QuestLookTargets.Select(t => t.ToString()).ToList(),
-                part_types = q.PartsListForReading.Select(p => p.GetType().Name).Distinct().ToList()
-            }).ToList();
+            // The queue invokes GET handlers synchronously on Unity's thread up to their first await.
+            // Reject a future off-thread caller rather than copying a concurrently changing game list.
+            if (!UnityData.IsInMainThread || Current.ProgramState != ProgramState.Playing || Current.Game == null) {
+                await context.SendJsonResponse(ApiResult<object>.Fail("ending_context_game_read_unavailable")); return;
+            }
+            var evidence = Current.Game.GetComponent<EndingEvidence>();
+            var maps = EndingReadBoundary.Capture(() => Find.Maps);
+            var pawnSnapshots = maps.ToDictionary(m => m, m => EndingReadBoundary.Capture(() => m.mapPawns.FreeColonistsSpawned));
+            var pawnLabels = pawnSnapshots.ToDictionary(pair => pair.Key,
+                pair => EndingReadBoundary.Project(pair.Value, p => p.LabelShortCap.ToString()));
+            var hostileCounts = maps.ToDictionary(m => m, m => EndingReadBoundary.Capture(() => m.mapPawns.AllPawnsSpawned)
+                .Count(p => p.HostileTo(Faction.OfPlayer) && !p.Dead));
+            var siteSnapshots = maps.ToDictionary(m => m, m => EndingReadBoundary.Capture(() => m.listerThings.AllThings)
+                .Where(t => t.Spawned && (t is Building_ArchonexusCore || t is Building_VoidMonolith
+                    || t.def.defName.Contains("VoidStructure") || t.def.defName == "VoidNode"
+                    || t.def.defName.Contains("Mechhive") || t.TryGetComp<CompCerebrexCore>() != null)).ToArray());
+            var questSnapshot = EndingReadBoundary.Capture(() => Find.QuestManager.QuestsListForReading).Where(EndingQuest).ToArray();
+            var allAccepters = pawnSnapshots.Values.SelectMany(p => p).ToArray();
+            var quests = EndingReadBoundary.Project(questSnapshot, q => {
+                var parts = EndingReadBoundary.Capture(() => q.PartsListForReading);
+                var targets = EndingReadBoundary.Capture(() => q.QuestLookTargets);
+                var acceptance = QuestUtility.CanAcceptQuest(q);
+                return new {
+                    quest_id = q.id, route = q.root.defName, label = q.name, description = q.description.ToString(),
+                    state = q.State.ToString(), expires_in_ticks = q.TicksUntilExpiry,
+                    requires_accepter = q.RequiresAccepter, acceptance = acceptance.Reason,
+                    can_accept = q.State == QuestState.NotYetAccepted && acceptance.Accepted,
+                    accepter_ids = allAccepters.Where(p => QuestUtility.CanPawnAcceptQuest(p, q)).Select(p => p.thingIDNumber).ToArray(),
+                    targets = targets.Select(t => t.ToString()).ToArray(), part_types = parts.Select(p => p.GetType().Name).Distinct().ToArray()
+                };
+            });
             var jobs = new List<object>();
             var blockers = new List<object>();
-            foreach (var site in Sites()) foreach (var pawn in site.Map.mapPawns.FreeColonistsSpawned.Where(p => !SpecialistNativeSafety.Protected(p))) {
-                foreach (var option in Options(site, pawn).Where(o => o.Disabled || o.action == null))
-                    blockers.Add(new { map_id = site.Map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
-                        site = site.def.defName, label = option.Label, inspect = site.GetInspectString() });
-                foreach (var option in Options(site, pawn).Where(o => !o.Disabled && o.action != null))
-                    jobs.Add(new { map_id = site.Map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
-                        label = option.Label, site = site.def.defName, pawn = pawn.LabelShortCap.ToString(),
-                        inspect = site.GetInspectString(), current_job = pawn.CurJob?.def.defName,
-                        hostile_pawns = site.Map.mapPawns.AllPawnsSpawned.Count(p => p.HostileTo(Faction.OfPlayer) && !p.Dead),
-                        colonists = site.Map.mapPawns.FreeColonistsSpawned.Select(p => p.LabelShortCap.ToString()).ToList() });
+            foreach (var map in maps) foreach (var site in siteSnapshots[map])
+            foreach (var pawn in pawnSnapshots[map].Where(p => !SpecialistNativeSafety.Protected(p))) {
+                // Generate the native preview once. Never enumerate a live pawn getter around these callbacks.
+                var options = EndingReadBoundary.Capture(() => Options(site, pawn));
+                var inspect = site.GetInspectString();
+                foreach (var option in options) {
+                    if (option.Disabled || option.action == null)
+                        blockers.Add(new { map_id = map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
+                            site = site.def.defName, label = option.Label, inspect });
+                    else
+                        jobs.Add(new { map_id = map.uniqueID, thing_id = site.thingIDNumber, pawn_id = pawn.thingIDNumber,
+                            label = option.Label, site = site.def.defName, pawn = pawn.LabelShortCap.ToString(), inspect,
+                            current_job = pawn.CurJob?.def.defName, hostile_pawns = hostileCounts[map], colonists = pawnLabels[map] });
+                }
             }
             await context.SendJsonResponse(ApiResult<object>.Ok(new {
                 royalty = ModsConfig.RoyaltyActive, ideology = ModsConfig.IdeologyActive,

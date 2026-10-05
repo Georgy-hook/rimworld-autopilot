@@ -48,6 +48,40 @@ def care_at_bedside(row: dict[str, Any], snapshot: dict[str, Any]) -> bool | Non
     return (origin[0] - destination[0]) ** 2 + (origin[1] - destination[1]) ** 2 <= 4
 
 
+def protected_response_ids(snapshot: dict[str, Any]) -> set[int]:
+    """Verify the actual named response, yielding only to evidenced immediate danger."""
+    combat=snapshot.get('combat') or {}
+    people={p.get('id'):p for p in combat.get('colonists') or []}
+    detailed={p.get('id'):p for p in snapshot.get('colonists') or []}
+    protected=set()
+    for plan in combat.get('protected_response_plans') or []:
+        if not isinstance(plan,dict) or plan.get('kind') not in ('evacuate','arrest','rescue'):continue
+        actor=people.get(plan.get('actor_id')) or {};rage=people.get(plan.get('aggressor_id')) or {}
+        if (actor.get('is_dead') or actor.get('is_downed') or actor.get('is_in_mental_state')
+            or not actor.get('id') or rage.get('mental_state_def')!='MurderousRage'
+            or not rage.get('is_in_mental_state') or not plan.get('session')
+            or rage.get('mental_state_session')!=plan['session']
+            or rage.get('mental_state_target_id')!=plan.get('victim_id')):continue
+        if plan['kind']=='evacuate':
+            cell=actor.get('current_job_cell') or {};wanted=plan.get('cell') or {}
+            exact=actor.get('current_job')=='Goto' and all(k in cell and k in wanted and cell[k]==wanted[k] for k in ('x','z'))
+        else:
+            exact=(actor.get('current_job')==('Arrest' if plan['kind']=='arrest' else 'Rescue')
+                and actor.get('current_job_target_id')==(plan.get('aggressor_id') if plan['kind']=='arrest' else plan.get('victim_id'))
+                and actor.get('current_job_target_id_b')==plan.get('bed_id'))
+        if not exact:continue
+        pos=_cell(actor)
+        if pos is None:continue
+        if any(_cell(e) is not None and math.dist(pos,_cell(e))<=4 for e in live_hostiles(snapshot)):continue
+        medical={**detailed.get(actor['id'],{}),**actor}
+        bleeding=float(medical.get('bleeding_rate') or 0)
+        conditions=[*(detailed.get(actor['id'],{}).get('health_conditions') or []),*(actor.get('health_conditions') or [])]
+        life=any(h.get('is_currently_life_threatening') or h.get('life_threatening') for h in conditions if isinstance(h,dict))
+        if life or (medical.get('tendable_now') and bleeding>=1.5):continue
+        protected.add(actor['id'])
+    return protected
+
+
 def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
     """Protect safe bedside care; an exposed traveling doctor can defend."""
     care_jobs = {'tendpatient', 'rescue', 'feedpatient', 'dobill', 'deathrest', 'breastfeed',
@@ -63,7 +97,7 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
         if bedside is False and errand_exposed(snapshot, row.get('position')):
             continue
         protected.add(int(row['id']))
-    return protected
+    return protected | protected_response_ids(snapshot)
 
 
 def ranged_capable(row: dict[str, Any]) -> bool:

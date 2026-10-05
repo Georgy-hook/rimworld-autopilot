@@ -371,7 +371,7 @@ class UtilityDwellTests(unittest.TestCase):
         b['temperature'] = 33; p.prepare(s, state)
         self.assertIn('2:switch_on', s['development']['production']['options'])
 
-    def test_defer_tracks_only_actually_shown_families(self):
+    def test_building_stage_defer_covers_current_subjects_not_new_building(self):
         s = self.snapshot(); state = {}
         b = s['development']['production']['buildings'][0]
         b.update(can_set_auto_refuel=True, auto_refuel=False)
@@ -379,15 +379,15 @@ class UtilityDwellTests(unittest.TestCase):
         with patch.object(p, 'ask_laya_choice', return_value=('defer', {})):
             selected, _ = p.choose(None, {}, 'production_utilities', s)
         self.assertIn('2:switch_off', selected['shown_utility_options'])
-        self.assertNotIn('2:enable_refuel', selected['shown_utility_options'])
+        self.assertIn('2:enable_refuel', selected['shown_utility_options'])
         p.execute(Client({}), s, state, 'production_utilities', selected)
         s['development']['production']['buildings'].append({'id': 12, 'def_name': 'Heater', 'switch_on': False, 'temperature': -20})
         p.prepare(s, state)
         plans = s['development']['production']['options']
-        self.assertIn('12:switch_on', plans); self.assertIn('2:enable_refuel', plans)
+        self.assertIn('12:switch_on', plans); self.assertNotIn('2:enable_refuel', plans)
         self.assertNotIn('2:switch_off', plans)
         s['game']['tick'] += 250; p.prepare(s, state)
-        self.assertIn('2:switch_off', s['development']['production']['options'])
+        self.assertNotIn('2:switch_off', s['development']['production']['options'])
 
     def test_success_dwell_json_rollback_and_expiry(self):
         import json
@@ -404,3 +404,36 @@ class UtilityDwellTests(unittest.TestCase):
         self.assertNotIn('production:production_utilities', state['issued'])
 
 if __name__=='__main__':unittest.main()
+
+
+class UtilityRuntimeRegressionTests(unittest.TestCase):
+    def fixture(self):
+        b={'id':7,'def_name':'Cooler','label':'Cooler','power_output':-200,'connected':True,
+           'net_has_active_source':True,'net_stored_energy':0,'switch_on':True,'temperature':20,
+           'fuel':5,'capacity':20,'eligible_fuel_count':0,'auto_refuel':True,'can_set_auto_refuel':True}
+        c={'available':True,'buildings':[b],'stocks':[],'animals':[],'feed_tables':[]}
+        return {'map':{'id':1},'game':{'tick':1000},'development':{'production':c,'sustenance':{'human_food':[{'fresh_eligible_nutrition':.35}]}}},b
+    def test_disconnected_lamp_cannot_claim_restored_service(self):
+        s,b=self.fixture();b.update(def_name='StandingLamp',switch_on=False,connected=False,fuel=None)
+        self.assertNotIn('7:switch_on',p.options(s['development']['production']))
+        b.update(connected=True,net_has_active_source=False)
+        self.assertNotIn('7:switch_on',p.options(s['development']['production']))
+        b['net_stored_energy']=.1
+        self.assertIn('7:switch_on',p.options(s['development']['production']))
+    @patch('colony_retry.time.time')
+    def test_eight_defer_cycles_persist_both_clocks_and_new_fuel_resets(self,clock):
+        import json
+        s,b=self.fixture();state={};clock.return_value=100;p.prepare(s,state)
+        p.execute(Client({}),s,state,'production_utilities',{'production_policy':'defer','shown_utility_options':list(s['development']['production']['options'])})
+        for i in range(8):
+            state=json.loads(json.dumps(state));clock.return_value=110+i*10;s['game']['tick']=40000+i*1000
+            b.update(fuel=4-i*.1,temperature=20+i*.01)
+            self.assertNotIn('production_utilities',p.prepare(s,state))
+        b['eligible_fuel_count']=5
+        self.assertIn('production_utilities',p.prepare(s,state))
+    def test_first_comparison_exposes_human_food_and_empty_fuel(self):
+        s,b=self.fixture();b['fuel']=0;p.prepare(s,{})
+        with patch.object(p,'ask_laya_choice',return_value=('defer',{})) as ask:
+            p.choose(None,{},'production_utilities',s)
+        facts=ask.call_args.args[1]['decision_facts']
+        self.assertEqual(facts['human_food'],.35);self.assertEqual(facts['animals'],0);self.assertEqual(facts['empty_fuel'],1)

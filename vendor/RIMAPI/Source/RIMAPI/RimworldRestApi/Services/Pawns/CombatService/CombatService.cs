@@ -131,6 +131,12 @@ namespace RIMAPI.Services
                 IsDrafted = pawn.drafter?.Drafted ?? false,
                 IsDowned = pawn.Downed,
                 IsInMentalState = pawn.InMentalState,
+                MentalStateDef = pawn.MentalState?.def?.defName,
+                MentalStateSession = pawn.InMentalState ? MentalSafetyHelper.Session(pawn) : null,
+                MentalStateLabel = pawn.MentalState?.def?.label,
+                MentalStateTargetId = MentalSafetyHelper.Victim(pawn)?.thingIDNumber,
+                MentalStateTargetPosition = MentalSafetyHelper.Victim(pawn) is Pawn mentalVictim && mentalVictim.Spawned && mentalVictim.Map == pawn.Map
+                    ? new PositionDto { X = mentalVictim.Position.x, Y = mentalVictim.Position.y, Z = mentalVictim.Position.z } : null,
                 IsDead = pawn.Dead,
                 Health = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f,
                 Position = new PositionDto
@@ -150,6 +156,7 @@ namespace RIMAPI.Services
                 CurrentJobKillIncappedTarget = pawn.CurJob?.killIncappedTarget,
                 CurrentJobTargetId = pawn.CurJob?.targetA.Thing?.thingIDNumber,
                 CurrentJobTargetIdB = pawn.CurJob?.targetB.Thing?.thingIDNumber,
+                CurrentJobCell = pawn.CurJob?.targetA.Cell.IsValid == true ? new PositionDto { X = pawn.CurJob.targetA.Cell.x, Y = pawn.CurJob.targetA.Cell.y, Z = pawn.CurJob.targetA.Cell.z } : null,
                 CurrentJobTargetPosition = pawn.CurJob?.targetA.Thing is Thing jobTarget && jobTarget.Spawned
                     ? new PositionDto { X = jobTarget.Position.x, Y = jobTarget.Position.y, Z = jobTarget.Position.z } : null,
                 CareAtBedside = CombatNativeHelper.CareAtBedside(pawn),

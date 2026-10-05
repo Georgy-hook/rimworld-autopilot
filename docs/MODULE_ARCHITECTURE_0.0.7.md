@@ -35,6 +35,7 @@ flowchart TD
 | `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Subject history, native atomic command guards and repair of partial auxiliary steps |
 | `colony_expeditions` | Shared trade, raid and rescue planning outside the domain registry | Native two-leg ETA, nutrition, mass, home reserves, exact confirmation and persisted formation identity |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
+| `colony_mental_safety` | Protection of a named allied murderous-rage victim alongside raid defense | Native session, actual Goto/Arrest/Rescue, resistance and path risks; scoped observation and progress leases |
 | `colony_downed_combat` | Explicit finishing of a selected downed hostile | Native violence/verb/target guards before atomic drafting; observed kill flag; pending and stalled job reconciliation |
 | `colony_wildlife` | Selected hunters, contextual harm assessment and group job lifecycle | Actual actor equipment and retaliation chance; scoped pending orders, observed progress and cleanup |
 | `colony_inspirations` | Current professional opportunities and exact worker/target choice | Loaded inspiration definitions, expiration and consumption identity; normal taming, recruitment and worker-restricted production |
@@ -74,6 +75,12 @@ Proposal preparation errors also clear only that domain's partial context,
 record the failing phase, and allow unrelated modules to continue. A fresh
 collection is required before retrying it. Registration errors remain explicit.
 All new runtime modules are included in `install_payload.py`.
+
+An empty dynamic parameter set raises the typed `NoFeasibleChoice`. Development
+records `selection_unavailable` with the selected action/question/work type,
+issues no incomplete order and continues scheduling. Invalid model answers and
+unexpected inference errors remain errors. Generic work proposals, worker
+choices and execution use the same care protection criteria.
 
 ## What “consider negative outcomes” means here
 

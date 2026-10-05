@@ -28,6 +28,11 @@ namespace RIMAPI.Models
         public bool IsDrafted { get; set; }
         public bool IsDowned { get; set; }
         public bool IsInMentalState { get; set; }
+        public string MentalStateDef { get; set; }
+        public string MentalStateSession { get; set; }
+        public string MentalStateLabel { get; set; }
+        public int? MentalStateTargetId { get; set; }
+        public PositionDto MentalStateTargetPosition { get; set; }
         public bool IsDead { get; set; }
         public float Health { get; set; }
         public PositionDto Position { get; set; }
@@ -43,6 +48,7 @@ namespace RIMAPI.Models
         public int? CurrentJobTargetId { get; set; }
         public int? CurrentJobTargetIdB { get; set; }
         public PositionDto CurrentJobTargetPosition { get; set; }
+        public PositionDto CurrentJobCell { get; set; }
         public bool CareAtBedside { get; set; }
         public int? CareTargetId { get; set; }
         public PositionDto CareTargetPosition { get; set; }

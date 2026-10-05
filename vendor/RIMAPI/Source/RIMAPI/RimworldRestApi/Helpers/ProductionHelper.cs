@@ -37,11 +37,14 @@ namespace RIMAPI.Helpers {
    if(map == null) return ApiResult<object>.Fail("Map not found");
    var stockPool=map.listerThings.AllThings.Where(t=>t.def.category==ThingCategory.Item && EligibleStock(t)).ToArray();
    var reachable=new Dictionary<Pawn,Thing[]>();
+   var fuelStocks=map.listerThings.AllThings.Where(t=>t.def.category==ThingCategory.Item && EligibleStock(t)).GroupBy(t=>t.def).ToDictionary(g=>g.Key,g=>g.Sum(t=>t.stackCount));
    var buildings = map.listerBuildings.allBuildingsColonist.Select(b => {
     var fuel = b.TryGetComp<CompRefuelable>(); var power = b.TryGetComp<CompPowerTrader>(); var flick = b.TryGetComp<CompFlickable>();
     return new { id=b.thingIDNumber, def_name=b.def.defName, label=b.LabelShortCap,
      temperature=b.AmbientTemperature, power_output=power?.PowerOutput, powered=power?.PowerOn,
      connected=power?.PowerNet != null, net_energy_gain_per_tick=power?.PowerNet?.CurrentEnergyGainRate(), net_stored_energy=power?.PowerNet?.CurrentStoredEnergy(), net_has_active_source=power?.PowerNet?.HasActivePowerSource, switch_on=flick?.SwitchIsOn, flick_pending=flick?.WantsFlick() ?? false,
+     eligible_fuel_count=fuel==null?0:fuel.Props.fuelFilter.AllowedThingDefs.Sum(d=>fuelStocks.TryGetValue(d,out int count)?count:0),
+     service_block_reason=power!=null && power.PowerOutput<0 && power.PowerNet==null?"no_connected_power_network":power!=null && power.PowerOutput<0 && !(power.PowerNet?.HasActivePowerSource ?? false) && (power.PowerNet?.CurrentStoredEnergy() ?? 0)<=0?"no_power_source_or_storage":fuel!=null && !fuel.HasFuel?"fuel_empty":"none",
      fuel=fuel?.Fuel, capacity=fuel?.Props.fuelCapacity, fuel_per_day=fuel?.Props.fuelConsumptionRate,
      consume_only_when_used=fuel?.Props.consumeFuelOnlyWhenUsed, auto_refuel=fuel?.allowAutoRefuel,
      can_set_auto_refuel=fuel?.Props.showAllowAutoRefuelToggle ?? false,
@@ -94,6 +97,10 @@ namespace RIMAPI.Helpers {
    } else if(r.Policy=="switch_on" || r.Policy=="switch_off") {
     if(flick==null || flick.WantsFlick()) {result.Reason="missing_switch_or_pending_flick";return ApiResult<CapabilityOrderResultDto>.Ok(result);}
     bool wanted=r.Policy=="switch_on";
+    var power=b.TryGetComp<CompPowerTrader>();
+    if(wanted && ((power!=null && power.PowerOutput<0 && (power.PowerNet==null || !power.PowerNet.HasActivePowerSource && power.PowerNet.CurrentStoredEnergy()<=0)) || fuel!=null && !fuel.HasFuel)) {
+     result.Reason="service_unavailable_without_power_or_fuel";return ApiResult<CapabilityOrderResultDto>.Ok(result);
+    }
     if(flick.SwitchIsOn==wanted) {result.Reason="already_configured";return ApiResult<CapabilityOrderResultDto>.Ok(result);}
     var command=flick.CompGetGizmosExtra().OfType<Command_Toggle>().FirstOrDefault();
     if(command!=null) {command.toggleAction();result.Applied=true;result.Reason="flick_designation_requested";}

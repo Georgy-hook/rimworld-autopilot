@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 import colony_retry as retry
 import colony_combat as combat
-from laya_decisions import ask_laya_choice
+from laya_decisions import NoFeasibleChoice, ask_laya_choice
 
 DESCRIPTIONS = {
     "create_growing_zone": "Choose a live sowable crop and a verified plot. Compare food urgency, soil, biome, seasonal harvest time and skill; crops can die before harvest.",
@@ -314,6 +314,44 @@ def founder_weapon_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         **(dev.get("capability_plans") or {}), "improve_weapon_loadout": plans}}}
 
 
+def _active_harvest_targets(snapshot):
+    actors, targets = set(), set()
+    for pawn in [*(snapshot.get("colonists") or []), *(snapshot.get("combat", {}).get("colonists") or [])]:
+        if str(pawn.get("current_job") or "") in {"Harvest", "HarvestDesignated", "HarvestPlant"}:
+            actors.add(str(pawn.get("id")))
+            if pawn.get("current_job_target_id") is not None: targets.add(str(pawn["current_job_target_id"]))
+    return actors, targets
+
+
+def _harvest_guard(snapshot, plant):
+    hp, maximum = plant.get("hit_points"), plant.get("max_hit_points")
+    fraction = hp / maximum if isinstance(hp, (int, float)) and isinstance(maximum, (int, float)) and maximum > 0 else None
+    starvation = max((float(h.get("severity") or 0) for p in snapshot.get("colonists") or []
+                      for h in p.get("health_conditions") or [] if h.get("def_name") == "Malnutrition"), default=0)
+    return {"product": plant.get("harvested_thing_def"), "dying": bool(plant.get("dying")),
+            "pollution": bool(plant.get("dying_from_pollution")), "clean_air": bool(plant.get("dying_from_no_pollution")),
+            "plant_danger": None if fraction is None else 2 if fraction < .25 else 1 if fraction < .5 else 0,
+            "starvation_danger": 2 if starvation >= .8 else 1 if starvation >= .5 else 0}
+
+
+def _at_risk_ready(snapshot, memory, plants):
+    actors, targets = _active_harvest_targets(snapshot)
+    history = memory["capability_history"]
+    current = {str(p.get("thing_id")): p for p in snapshot["development"].get("plants") or []}
+    for key in list(history):
+        if not key.startswith("harvest_at_risk_crops:"): continue
+        subject = key.split(":", 1)[1]; plant = current.get(subject)
+        old = history[key]
+        if not plant or not plant.get("harvestable_now") or ("harvest_guard" in old and old["harvest_guard"] != _harvest_guard(snapshot, plant)):
+            del history[key]
+    ready = [p for p in plants if str(p.get("thing_id")) not in targets]
+    snapshot["development"]["at_risk_harvest_status"] = {
+        "active_actor_ids": sorted(actors), "active_target_ids": sorted(targets),
+        "pending_subject_ids": sorted(k.split(":", 1)[1] for k in history if k.startswith("harvest_at_risk_crops:")),
+        "outcome": "designation accepted; no delivered nutrition inferred"}
+    return ready, [p for p in workers(snapshot, "PlantCutting") if str(p.get("id")) not in actors]
+
+
 def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     _prune(snapshot, map_state)
     dev = snapshot["development"]
@@ -334,8 +372,9 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     at_risk = [p for p in dev.get("plants") or [] if p.get("harvestable_now") and not p.get("blighted")
                and not p.get("is_designated_for_harvest") and (p.get("dying") or p.get("dying_from_pollution") or p.get("dying_from_no_pollution"))
                and not combat.errand_exposed(snapshot, p.get("position"))]
-    if at_risk and workers(snapshot, "PlantCutting"):
-        plans["harvest_at_risk_crops"] = {"plants": at_risk, "workers": workers(snapshot, "PlantCutting")}
+    at_risk, harvest_workers = _at_risk_ready(snapshot, map_state, at_risk)
+    if at_risk and harvest_workers:
+        plans["harvest_at_risk_crops"] = {"plants": at_risk, "workers": harvest_workers}
         actions.append("harvest_at_risk_crops")
     greenhouse = dev.get("greenhouse_context") or {}
     tree = {r["name"]: r for r in dev.get("research_tree") or []}
@@ -463,7 +502,7 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
 
     def pick(question: str, instruction: str, criteria: dict[str, str]) -> str:
         if not criteria:
-            raise ValueError(f"No feasible {question} options")
+            raise NoFeasibleChoice(question)
         selected, result = ask_laya_choice(agent, state, question, instruction, criteria, detailed=True)
         if selected not in criteria:
             raise ValueError(f"Infeasible {question}: {selected}")
@@ -622,6 +661,9 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
                 order("/api/v1/colonist/work-priority", {"id": worker, "work": "Growing", "priority": 3})
     elif action == "harvest_at_risk_crops":
         worker = int(selected.get("harvest_worker") or 0)
+        active_actors, _ = _active_harvest_targets(snapshot)
+        if str(worker) in active_actors:
+            return {"applied": False, "reason": "harvest_worker_already_active", "fulfilled": True}
         if worker not in {int(p["id"]) for p in plans.get("workers") or []}:
             return {"applied": False, "reason": "No eligible harvester selected"}
         response = order("/api/v1/map/plants/harvest", {"map_id": map_id, "plant_ids": [p["thing_id"] for p in plans["plants"]]})
@@ -710,6 +752,8 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
     if response is None:
         return {"applied": False, "reason": "No capability order prepared"}
     applied = accepted(response)
+    if action == "harvest_at_risk_crops" and applied:
+        return {"applied": True, "reason": "harvest_designation_accepted_not_delivered", "response": response, "subject_ids": [p["thing_id"] for p in plans["plants"]], "expected_yield": sum(int(p.get("harvest_yield") or 0) for p in plans["plants"]), "expected_products": sorted({str(p.get("harvested_thing_def") or "unknown") for p in plans["plants"]}), "delivered_nutrition": None, "selection": selected}
     return {"applied": applied, "reason": response.get("reason") if isinstance(response, dict) else "invalid_response", "response": response, "selection": selected}
 
 
@@ -769,7 +813,11 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
                     _remember(snapshot, map_state, _scope(action, target), 250)
         elif action in {"clear_plant_blight", "harvest_at_risk_crops"}:
             for plant in snapshot["development"].get("capability_plans", {}).get(action, {}).get("plants", [])[:200]:
-                _remember(snapshot, map_state, _scope(action, str(plant["thing_id"])), 250, not result.get("applied"))
+                subject = _scope(action, str(plant["thing_id"]))
+                dwell = 15000 if action == "harvest_at_risk_crops" and result.get("applied") else 250
+                _remember(snapshot, map_state, subject, dwell, not result.get("applied"))
+                if action == "harvest_at_risk_crops" and result.get("applied"):
+                    map_state["capability_history"][subject].update({**retry.failure_record(int(snapshot["game"].get("tick") or 0), 120), "harvest_guard": _harvest_guard(snapshot, plant)})
         else:
             _remember(snapshot, map_state, _scope(action, key) if result.get("applied") else action + ":failed:" + key,
                       15000 if result.get("applied") else 250, not result.get("applied"))

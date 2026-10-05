@@ -330,6 +330,19 @@ def annotate_mental_states(colonists: list[dict[str, Any]], fighters: Any) -> No
     }
     for colonist in colonists:
         colonist["in_mental_state"] = by_id.get(int(colonist.get("id") or 0), False)
+        live = next((p for p in fighters if isinstance(p, dict) and p.get("id") == colonist.get("id")), {}) if isinstance(fighters, list) else {}
+        for key in ("mental_state_def", "mental_state_session", "mental_state_label", "mental_state_target_id", "mental_state_target_position"):
+            colonist[key] = live.get(key)
+
+
+
+def murderous_rage_context(combat):
+    """Observed named violence within the colony, separate from enemy targets."""
+    return [{"aggressor_id":p.get("id"),"name":p.get("name"),"victim_id":p.get("mental_state_target_id"),
+             "state":p.get("mental_state_def"),"job":p.get("current_job")}
+            for p in (combat or {}).get("colonists") or []
+            if not p.get("is_dead") and not p.get("is_downed") and p.get("is_in_mental_state")
+            and p.get("mental_state_def")=="MurderousRage" and p.get("mental_state_target_id") is not None][:16]
 
 
 def annotate_combat_capability(colonists: list[dict[str, Any]], combat: Any) -> None:
@@ -1629,6 +1642,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         protected = set(snapshot["combat"].get("protected_noncombat_pawn_ids") or [])
         if combat_planner.live_hostiles(snapshot):
             protected.clear()
+        protected.update(combat_planner.protected_response_ids(snapshot))
         drafted = [c for c in snapshot["combat"]["colonists"]
                    if c.get("is_drafted") and c.get("id") not in protected]
         commands = [
@@ -2497,6 +2511,21 @@ def _combat_retry_record(memory, signature, decision, action, result):
         memory.pop(next(key for key in memory if key != '_timeline'))
 
 
+def protect_response_commands(snapshot: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    """Keep native explicit actor lists scoped; empty lists never expand to all."""
+    protected=combat_planner.protected_response_ids(snapshot)
+    if not protected or action.get('kind')!='commands':return action
+    commands=[]
+    for original in action.get('commands') or []:
+        command={**original};body=dict(command.get('body') or {})
+        if any(body.get(k) in protected for k in ('pawn_id','fighter_id','master_pawn_id')):continue
+        if 'fighter_ids' in body:
+            body['fighter_ids']=[pid for pid in body['fighter_ids'] if pid not in protected]
+            if not body['fighter_ids']:continue
+        command['body']=body;commands.append(command)
+    return {**action,'commands':commands,'kind':'commands' if commands else 'noop'}
+
+
 def run_cycle(
     client: RimApiClient,
     agent: Any,
@@ -2507,8 +2536,10 @@ def run_cycle(
     combat_memory: dict | None = None,
     combat_signature: Any = None,
     protected_noncombat_pawn_ids: set[int] | None = None,
+    protected_response_plans: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     snapshot = collect_snapshot(client)
+    snapshot['combat']['protected_response_plans'] = protected_response_plans or []
     if protected_noncombat_pawn_ids and not combat_planner.live_hostiles(snapshot):
         # An observed neutral hunt can own drafted actors while unrelated
         # soldiers stand down. A fresh hostile always restores combat authority.
@@ -2517,7 +2548,7 @@ def run_cycle(
     if combat_memory is not None and signature is not None:
         _combat_retry_prepare(snapshot, combat_memory, signature)
     decision = decide(agent, snapshot, confidence)
-    action = plan_action(snapshot, decision)
+    action = protect_response_commands(snapshot, plan_action(snapshot, decision))
     if decision.get('choice') == 'hold_and_observe' and not combat_planner.available_tactics(snapshot) and combat_planner.live_hostiles(snapshot):
         action = {'kind': 'noop', 'description': 'No controllable fighter can execute a verified defense order',
                   'combat_unavailable': True, 'reason': 'no_controllable_fighter'}

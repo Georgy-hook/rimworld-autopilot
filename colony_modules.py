@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 
-MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations")
+MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations", "mental_safety")
 
 
 @lru_cache(maxsize=1)

@@ -2,9 +2,9 @@
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 
-_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
+_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
-    "sustenance_food_batch": "Choose one loaded food, preservation or butcher recipe batch at a usable table with skilled enabled workers and fresh reachable ingredients. Compare human reserves, animal feed, ingredient efficiency, spoilage, kitchen cleanliness and poisoning; production remains ordinary work.",
+    "sustenance_food_batch": "Choose one loaded food, preservation or butcher recipe batch at a usable table with skilled enabled workers and fresh reachable ingredients. Compare human reserves, animal feed, ingredient efficiency, spoilage, kitchen cleanliness and poisoning; production remains ordinary work. Existing unused feed bills can be paused deliberately, preserving human emergency kibble alternatives.",
     "sustenance_food_policy": "Choose an existing food policy for one colonist. Compare allowed reachable foods, scarcity, raw-food poisoning, ideology and mood; changing policy does not feed the pawn.",
     "sustenance_preservation": "Choose an existing cooler target or food-storage priority. Compare power, room temperature, spoiling stock, hauling and access; a setpoint is not proof of a frozen room.",
     "sustenance_animal_welfare": "Choose one animal medicine policy or existing allowed area. Compare illness, pregnancy, nutrition, rest, reachable feed, beds and human medicine reserves. Pen animals use pens rather than allowed areas.",
@@ -60,6 +60,8 @@ def _clinical(pawn):
 
 def _guard(context, plan):
     kind, target = plan["kind"], plan.get("target_id")
+    if kind == "pausefeed":
+        return {"compatible_animals": sum(bool(a.get("can_eat_kibble")) for a in context.get("animals") or []), "identity": plan.get("value")}
     if kind in {"care", "area", "sterilize", "release", "gather", "diet", "customdiet"}:
         pawns = context.get("food_pawns") if kind in {"diet", "customdiet"} else context.get("animals")
         pawn = next((p for p in pawns or [] if p.get("id") == target), {})
@@ -165,6 +167,11 @@ def _effects(context, plan):
     evidence = (f"food={animal.get('food')} rest={animal.get('rest')} medicine={animal.get('medical_care')}" if animal else
                 f"cleanliness={table.get('cleanliness')}" if table else
                 f"temperature={storage.get('temperature')} priority={storage.get('priority')}" if storage else "")
+    if kind == "pausefeed":
+        evidence = "Compatible owned animals=0; requested existing bill; human emergency kibble remains a possible use"
+    if kind in {"bill", "pausefeed"}:
+        relevant = [b for b in table.get("bills") or [] if b.get("recipe") == plan.get("value") or b.get("identity") == plan.get("value")]
+        evidence += "; " + ",".join(f"{b.get('recipe')}:{b.get('block_reason')} count={b.get('repeat_count')}" for b in relevant)
     if kind == "fish":
         zone_id = str(plan.get("value") or "").split(":")[-1]
         zone = next((z for z in context.get("fishing") or [] if str(z.get("id")) == zone_id), {})
@@ -194,11 +201,20 @@ def _effects(context, plan):
     if kind == "diet":
         diet = next((d for d in context.get("diets") or [] if str(d.get("id")) == str(plan.get("value"))), {})
         allowed = set(diet.get("allowed") or [])
-        usable = [f"{f.get('def_name')}:{f.get('fresh_eligible_nutrition')}" for f in context.get("food") or [] if f.get("def_name") in allowed]
+        usable = [f"{f.get('def_name')}:{f.get('fresh_eligible_nutrition')}" for f in context.get("human_food", context.get("food")) or [] if f.get("def_name") in allowed and f.get("food_type") != "Plant"]
         evidence = "allowed_fresh_nutrition=" + ",".join(usable)
     return {"benefit": str(plan.get("label") or kind), "risk": clinical_risk or str(plan.get("risk") or risks.get(kind) or "Vanilla consequences remain"),
             "cost": evidence + "; " + str(plan.get("cost") or "labor/resources"), "inaction": "Hunger/rot/breeding/current policies continue",
             "uncertainty": "Live option; normal work/outcome still pending"}
+
+
+def human_nutrition(context):
+    food = context.get("human_food", context.get("food"))
+    if food is None: return None
+    # Legacy observations cannot turn known rough grazing items into human food.
+    food = [f for f in food if f.get("food_type") != "Plant"]
+    if not all(isinstance(f.get("fresh_eligible_nutrition"), (int, float)) for f in food): return None
+    return sum(float(f["fresh_eligible_nutrition"]) for f in food)
 
 
 def _stage(agent, context, rows, question, instructions, state=None):
@@ -209,13 +225,12 @@ def _stage(agent, context, rows, question, instructions, state=None):
     choices["defer"] = "Keep current policy; defer"
     effects["defer"] = {"benefit": "Preserve resources/current services", "risk": "Hunger/rot/illness/breeding continue", "cost": "No added labor/resources", "inaction": "Current policy continues", "uncertainty": "No completed care or production"}
     # Preserve aggregate supply and rot urgency before purpose text in the small facts budget.
-    food = context.get("food")
-    nutrition = (sum(float(f["fresh_eligible_nutrition"]) for f in food)
-                 if food is not None and all(isinstance(f.get("fresh_eligible_nutrition"), (int, float)) for f in food) else None)
+    nutrition = human_nutrition(context)
     rot = [p["ticks_until_rot"] for p in context.get("perishables") or []
            if isinstance(p.get("ticks_until_rot"), (int, float)) and p.get("eligible") is True]
     state = state or {}
     facts = {"endgame": state.get("endgame"), "fresh_nutrition": nutrition, "first_rot_ticks": min(rot) if rot else None,
+             "feed_access": [{"id": p.get("pawn_id"), "self": p.get("self_reachable_nutrition"), "feeder": p.get("feeder_reachable_nutrition")} for p in sorted(context.get("human_food_access") or [], key=lambda p: (not bool(p.get("downed")), float(p.get("food_level") or 0)))][:2],
              "goal_requirements": state.get("goal_requirements") or {}, "purpose": question}
     selected, raw = ask_laya_choice(agent, {"decision_facts": facts, "option_effects": effects}, question, instructions, choices, detailed=True)
     if selected not in choices:

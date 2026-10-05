@@ -13,6 +13,26 @@ namespace RIMAPI.Helpers {
   static bool Safe(Thing t) => !t.IsForbidden(Faction.OfPlayer) && !t.IsBurning() && (t.TryGetComp<CompRottable>()==null || t.TryGetComp<CompRottable>().Stage==RotStage.Fresh)
   ;
   static bool StorableFood(ThingDef d) => d.category==ThingCategory.Item && d.EverHaulable && !d.IsCorpse && d.ingestible!=null;
+  static bool BillRequested(Bill_Production b) {
+   if(b.suspended)return false;
+   if(b.repeatMode==BillRepeatModeDefOf.RepeatCount)return b.repeatCount>0;
+   if(b.repeatMode==BillRepeatModeDefOf.Forever)return true;
+   int count=b.recipe.WorkerCounter.CountProducts(b);
+   bool paused=b.pauseWhenSatisfied && count>b.unpauseWhenYouHave && (b.paused || count>=b.targetCount);
+   return !paused && count<b.targetCount;
+  }
+  static string BillIdentity(Bill_Production b) => b.GetUniqueLoadID()+"|"+b.repeatMode.defName+"|"+b.repeatCount+"|"+b.targetCount;
+  static bool BillRunning(Map m,Bill b) => m.mapPawns.FreeColonistsSpawned.Any(p=>p.CurJobDef==JobDefOf.DoBill && p.CurJob.bill==b);
+  static object BillObservation(Map m,Building_WorkTable t,Bill_Production b,Thing[] stock,Dictionary<Pawn,Thing[]> reachable) {
+   var workers=m.mapPawns.FreeColonistsSpawned.Where(p=>Worker(p,t,b.recipe) && b.PawnAllowedToStartAnew(p)).ToArray();
+   var active=m.mapPawns.FreeColonistsSpawned.Where(p=>p.CurJobDef==JobDefOf.DoBill && p.CurJob.bill==b).Select(p=>p.thingIDNumber).ToArray();
+   bool ingredients=ProductionRecipeHelper.Supplies(stock,b);
+   bool ready=t.CurrentlyUsableForBills(); bool requested=BillRequested(b);
+   var fuel=t.TryGetComp<CompRefuelable>(); var power=t.TryGetComp<CompPowerTrader>();
+   Func<Pawn,bool> supplied=p=>{if(!reachable.TryGetValue(p,out Thing[] pool)){pool=stock.Where(x=>!x.IsForbidden(p) && p.CanReserveAndReach(x,PathEndMode.ClosestTouch,Danger.Some)).ToArray();reachable[p]=pool;}return ProductionRecipeHelper.Supplies(pool,b);};
+   string reason=active.Any()?"ordinary_job_in_progress":!requested?"not_requested":!ready?(fuel!=null && !fuel.HasFuel?"fuel_empty":power!=null && !power.PowerOn?"power_unavailable":"table_unusable"):!ingredients?"ingredients_short":!workers.Any()?"no_eligible_worker":!workers.Any(supplied)?"ingredients_unreachable":"ready_for_ordinary_work";
+   return new{bill_id=b.GetUniqueLoadID(),identity=BillIdentity(b),recipe=b.recipe.defName,repeat_mode=b.repeatMode.defName,repeat_count=b.repeatCount,target_count=b.targetCount,suspended=b.suspended,requested,completed_finite=b.repeatMode==BillRepeatModeDefOf.RepeatCount && b.repeatCount==0,active_worker_ids=active,eligible_worker_ids=workers.Select(p=>p.thingIDNumber).ToArray(),ingredients_sufficient=ingredients,block_reason=reason,ingredient_requirements=b.recipe.ingredients.Select(i=>new{count=i.GetBaseCount(),summary=i.SummaryFor(b.recipe)}).ToArray(),products=b.recipe.products.Select(p=>new{def_name=p.thingDef.defName,count=p.count}).ToArray()};
+  }
   static bool FoodRecipe(RecipeDef r) => r.products.Any(p=>p.thingDef.ingestible!=null && p.thingDef.ingestible.foodType!=FoodTypeFlags.None && !p.thingDef.IsDrug) || r.defName=="ButcherCorpseFlesh";
   static bool Pending(Bill b) => !(b is Bill_Production p && p.repeatMode==BillRepeatModeDefOf.RepeatCount && p.repeatCount==0);
   static bool Worker(Pawn p, Building_WorkTable t, RecipeDef r) {
@@ -48,6 +68,10 @@ namespace RIMAPI.Helpers {
    var list=new List<Plan>();
    var stock=m.listerThings.AllThings.Where(t=>(t.def.category==ThingCategory.Item || t is Corpse) && Safe(t)).ToArray();
    var reachable=new Dictionary<Pawn,Thing[]>();
+   bool compatibleAnimals=m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Any(p=>p.RaceProps.Animal && p.RaceProps.CanEverEat(DefDatabase<ThingDef>.GetNamed("Kibble")));
+   if(!compatibleAnimals)foreach(var table in m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>())
+    foreach(var b in table.BillStack.Bills.OfType<Bill_Production>().Where(b=>b.recipe.defName=="Make_Kibble" && BillRequested(b) && !BillRunning(m,b)))
+     list.Add(new Plan{key="pausefeed:"+table.thingIDNumber+":"+b.GetUniqueLoadID(),kind="pausefeed",target_id=table.thingIDNumber,value=BillIdentity(b),label=table.LabelShortCap+": pause active kibble bill",cost="No ingredients spent by this bill while suspended; preserves existing repeat settings",risk="No compatible owned animals observed; humans can eat kibble as a poor emergency food. Pausing removes that alternative; no current bill job is interrupted"});
    foreach(var t in m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().Where(t=>t.CurrentlyUsableForBills()))
     foreach(var r in t.def.AllRecipes.Where(r=>r.AvailableNow && r.AvailableOnNow(t) && FoodRecipe(r) && r.defName!="Make_Kibble" && !t.BillStack.Bills.Any(b=>b.recipe==r && Pending(b)))) {
      var bill=FoodBill(t,r);
@@ -182,22 +206,40 @@ namespace RIMAPI.Helpers {
    var doctors=m.mapPawns.FreeColonistsSpawned.Where(p=>p.workSettings!=null && !p.WorkTypeIsDisabled(WorkTypeDefOf.Doctor) && p.workSettings.GetPriority(WorkTypeDefOf.Doctor)>0 && !Protected(p)).Select(p=>new{id=p.thingIDNumber,label=p.LabelShortCap,medicine_skill=p.skills?.GetSkill(SkillDefOf.Medicine)?.Level}).ToArray();
    var cooks=m.mapPawns.FreeColonistsSpawned.Where(p=>cooking!=null && p.workSettings!=null && !p.WorkTypeIsDisabled(cooking)).Select(p=>new{id=p.thingIDNumber,label=p.LabelShortCap,cooking_skill=p.skills?.GetSkill(SkillDefOf.Cooking)?.Level,priority=p.workSettings.GetPriority(cooking),poison_chance=p.GetStatValue(StatDefOf.FoodPoisonChance),protected_care_job=Protected(p)}).ToArray();
    var perishables=m.listerThings.AllThings.Where(t=>t.TryGetComp<CompRottable>()!=null && (t.def.ingestible!=null || t is Corpse)).Select(t=>new{id=t.thingIDNumber,def_name=t.def.defName,count=t.stackCount,temperature=t.AmbientTemperature,ticks_until_rot=t.TryGetComp<CompRottable>().TicksUntilRotAtCurrentTemp,stage=t.TryGetComp<CompRottable>().Stage.ToString(),eligible=Safe(t)}).ToArray();
-   var tables=m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().Where(t=>t.def.AllRecipes.Any(FoodRecipe)).Select(t=>new{id=t.thingIDNumber,label=t.LabelShortCap,temperature=t.AmbientTemperature,cleanliness=t.InteractionCell.GetRoom(m)?.GetStat(RoomStatDefOf.Cleanliness),home_cells=t.InteractionCell.GetRoom(m)?.Cells.Count(c=>m.areaManager.Home[c]),bills=t.BillStack.Bills.Select(b=>new{recipe=b.recipe.defName,suspended=b.suspended}).ToArray()}).ToArray();
+   var billReachable=new Dictionary<Pawn,Thing[]>();
+   var billStocks=m.listerThings.AllThings.Where(x=>(x.def.category==ThingCategory.Item || x is Corpse) && Safe(x)).ToArray();
+   var tables=m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().Where(t=>t.def.AllRecipes.Any(FoodRecipe)).Select(t=>new{id=t.thingIDNumber,label=t.LabelShortCap,temperature=t.AmbientTemperature,cleanliness=t.InteractionCell.GetRoom(m)?.GetStat(RoomStatDefOf.Cleanliness),home_cells=t.InteractionCell.GetRoom(m)?.Cells.Count(c=>m.areaManager.Home[c]),fuel=t.TryGetComp<CompRefuelable>()?.Fuel,fuel_capacity=t.TryGetComp<CompRefuelable>()?.Props.fuelCapacity,powered=t.TryGetComp<CompPowerTrader>()?.PowerOn,usable=t.CurrentlyUsableForBills(),bills=t.BillStack.Bills.OfType<Bill_Production>().Select(b=>BillObservation(m,t,b,billStocks,billReachable)).ToArray()}).ToArray();
    var grazing_food=m.listerThings.AllThings.Where(t=>t is Plant && t.def.ingestible!=null).GroupBy(t=>t.def).Select(g=>new{def_name=g.Key.defName,nutrition=g.Sum(t=>t.GetStatValue(StatDefOf.Nutrition)*t.stackCount)}).ToArray();
    var food=m.listerThings.AllThings.Where(t=>StorableFood(t.def)).GroupBy(t=>t.def).Select(g=>new{def_name=g.Key.defName,nutrition=g.Sum(t=>t.GetStatValue(StatDefOf.Nutrition)*t.stackCount),fresh_eligible_nutrition=g.Where(Safe).Sum(t=>t.GetStatValue(StatDefOf.Nutrition)*t.stackCount),food_type=g.Key.ingestible.foodType.ToString()}).ToArray();
+   var humanItems=m.listerThings.AllThings.Where(t=>StorableFood(t.def) && !t.def.IsDrug && Safe(t)).ToArray();
+   var humans=m.mapPawns.FreeColonistsSpawned.ToArray();
+   var human_food=humanItems.Where(t=>humans.Any(p=>p.RaceProps.CanEverEat(t.def))).GroupBy(t=>t.def).Select(g=>new{def_name=g.Key.defName,fresh_eligible_nutrition=g.Sum(t=>t.GetStatValue(StatDefOf.Nutrition)*t.stackCount)}).ToArray();
+   var feedGiver=DefDatabase<WorkGiverDef>.AllDefs.Select(d=>d.Worker).OfType<WorkGiver_FeedPatient>().FirstOrDefault();
+   var human_food_access=humans.Select(p=> {
+    var permitted=humanItems.Where(t=>p.WillEat(t) && p.RaceProps.CanEverEat(t.def) && (p.foodRestriction?.CurrentFoodPolicy==null || p.foodRestriction.CurrentFoodPolicy.Allows(t))).ToArray();
+    var feeders=humans.Where(h=>h!=p && !h.Dead && !h.Downed && !h.Drafted && !h.InMentalState && h.workSettings!=null && !h.WorkTypeIsDisabled(WorkTypeDefOf.Doctor) && h.workSettings.GetPriority(WorkTypeDefOf.Doctor)>0 && h.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation) && (!Protected(h) || h.CurJobDef==JobDefOf.FeedPatient && h.CurJob.targetA.Thing==p) && h.CanReserveAndReach(p,PathEndMode.ClosestTouch,Danger.Some)).ToArray();
+    var self=permitted.Where(t=>!p.Downed && !p.InMentalState && !t.IsForbidden(p) && p.CanReserveAndReach(t,PathEndMode.ClosestTouch,Danger.Some)).ToArray();
+    var feed=permitted.Where(t=>feeders.Any(h=>!t.IsForbidden(h) && h.CanReserveAndReach(t,PathEndMode.ClosestTouch,Danger.Some))).ToArray();
+    Func<Thing[],float> nutrition=items=>items.Sum(t=>t.GetStatValue(StatDefOf.Nutrition)*t.stackCount);
+    return new{pawn_id=p.thingIDNumber,food_level=p.needs?.food?.CurLevelPercentage,downed=p.Downed,allowed_nutrition=nutrition(permitted),self_reachable_nutrition=nutrition(self),feeder_reachable_nutrition=nutrition(feed),potential_feeder_ids=feeders.Select(h=>h.thingIDNumber).ToArray(),native_feed_ready_ids=feeders.Where(h=>feedGiver!=null && feedGiver.HasJobOnThing(h,p,false)).Select(h=>h.thingIDNumber).ToArray(),active_feed_worker_ids=humans.Where(h=>h.CurJobDef==JobDefOf.FeedPatient && h.CurJob.targetA.Thing==p).Select(h=>h.thingIDNumber).ToArray(),feedability="reach_policy_estimate; native_ready_is_job_availability_not_delivery",allowed_defs=permitted.Select(t=>t.def.defName).Distinct().ToArray()};
+   }).ToArray();
    var storages=m.listerBuildings.allBuildingsColonist.OfType<Building_Storage>().Select(b=>new{id=b.thingIDNumber,label=b.LabelShortCap,temperature=b.AmbientTemperature,priority=(int)b.GetStoreSettings().Priority,linked_storage_count=m.listerBuildings.allBuildingsColonist.OfType<Building_Storage>().Count(other=>other.GetStoreSettings()==b.GetStoreSettings()),allowed_food=b.GetStoreSettings().filter.AllowedThingDefs.Where(d=>d.ingestible!=null).Select(d=>d.defName).ToArray()}).ToArray();
    var areas=m.areaManager.AllAreas.OfType<Area_Allowed>().Select(a=>new{id=a.ID,label=a.Label,cells=a.TrueCount,fire_cells=a.ActiveCells.Count(c=>c.GetFirstThing<Fire>(m)!=null),min_temperature=a.ActiveCells.Any() ? a.ActiveCells.Min(c=>c.GetTemperature(m)) : 0f,max_temperature=a.ActiveCells.Any() ? a.ActiveCells.Max(c=>c.GetTemperature(m)) : 0f,foods=m.listerThings.AllThings.Where(t=>a[t.Position] && t.def.ingestible!=null && Safe(t)).Select(t=>t.def.defName).Distinct().ToArray(),animal_beds=m.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().Count(b=>b.def.building.bed_humanlike==false && a[b.Position])}).ToArray();
    var stockpiles=m.zoneManager.AllZones.OfType<Zone_Stockpile>().Where(z=>z.Cells.Any()).Select(z=>new{id=z.ID,label=z.label,cells=z.Cells.Count,space_remaining=z.SpaceRemaining,priority=(int)z.settings.Priority,temperature=z.Cells.Average(c=>c.GetTemperature(m)),roofed_fraction=z.Cells.Count(c=>c.Roofed(m))/(float)z.Cells.Count,allowed_food=z.settings.filter.AllowedThingDefs.Where(d=>d.ingestible!=null).Select(d=>d.defName).ToArray()}).ToArray();
    var diets=Current.Game.foodRestrictionDatabase.AllFoodRestrictions.Select(p=>new{id=p.id,label=p.label,allowed=p.filter.AllowedThingDefs.Select(d=>d.defName).ToArray()}).ToArray();
    var coolers=m.listerBuildings.allBuildingsColonist.Where(b=>b.TryGetComp<CompTempControl>()!=null).Select(b=>new{id=b.thingIDNumber,label=b.LabelShortCap,temperature=b.AmbientTemperature,target=b.TryGetComp<CompTempControl>().targetTemperature,powered=b.TryGetComp<CompPowerTrader>()?.PowerOn}).ToArray();
    var fishing=ModsConfig.OdysseyActive ? m.zoneManager.AllZones.OfType<Zone_Fishing>().Select(z=>new{id=z.ID,label=z.label,allowed=z.Allowed,should_fish=z.ShouldFishNow,fishable=z.HasAnyFishableCells,frozen=z.AllFishableCellsFrozen,mode=z.repeatMode.ToString(),repeat=z.repeatCount,target=z.targetCount,population_floor=z.targetPopulationPct,population=z.Cells.Count>0?m.waterBodyTracker.PopulationPercentAt(z.Cells[0]):0,owned_fish=z.OwnedFishCount}).ToArray() : null;
-   return ApiResult<object>.Ok(new {available=true,options=Plans(m),fishing,odyssey_active=ModsConfig.OdysseyActive,animals,food_pawns,pens,tables,cooks,doctors,medicines,perishables,food,grazing_food,storages,stockpiles,areas,diets,coolers,outdoor_temperature=m.mapTemperature.OutdoorTemp,herds=m.autoSlaughterManager.configs.Select(c=>new{species=c.animal.defName,total=c.maxTotal,males=c.maxMales,females=c.maxFemales,young_males=c.maxMalesYoung,young_females=c.maxFemalesYoung,allow_pregnant=c.allowSlaughterPregnant,allow_bonded=c.allowSlaughterBonded}).ToArray()});
+   return ApiResult<object>.Ok(new {available=true,options=Plans(m),fishing,odyssey_active=ModsConfig.OdysseyActive,animals,food_pawns,pens,tables,cooks,doctors,medicines,perishables,food,human_food,human_food_access,grazing_food,storages,stockpiles,areas,diets,coolers,outdoor_temperature=m.mapTemperature.OutdoorTemp,herds=m.autoSlaughterManager.configs.Select(c=>new{species=c.animal.defName,total=c.maxTotal,males=c.maxMales,females=c.maxFemales,young_males=c.maxMalesYoung,young_females=c.maxFemalesYoung,allow_pregnant=c.allowSlaughterPregnant,allow_bonded=c.allowSlaughterBonded}).ToArray()});
   }
   public static ApiResult<object> Policy(SustenancePolicyDto request) {
    var m=MapHelper.GetMapByID(request.MapId);if(m==null)return ApiResult<object>.Fail("Map missing");
    var plan=Plans(m).FirstOrDefault(p=>p.key==request.Key);if(plan==null)return ApiResult<object>.Ok(new{applied=false,reason="live_option_unavailable"});
    var thing=m.listerThings.AllThings.FirstOrDefault(t=>t.thingIDNumber==plan.target_id);
    switch(plan.kind) {
+    case "pausefeed":
+     var feedTable=(Building_WorkTable)thing;var feedBill=feedTable.BillStack.Bills.OfType<Bill_Production>().FirstOrDefault(b=>BillIdentity(b)==plan.value);
+     if(feedBill==null || !BillRequested(feedBill) || BillRunning(m,feedBill))return ApiResult<object>.Ok(new{applied=false,reason="feed_bill_changed_or_running"});
+     feedBill.suspended=true;break;
     case "kitchenhome":foreach(var cell in ((Building_WorkTable)thing).InteractionCell.GetRoom(m).Cells)m.areaManager.Home[cell]=true;break;
     case "bill":
      var table=(Building_WorkTable)thing;var recipe=DefDatabase<RecipeDef>.GetNamed(plan.value);

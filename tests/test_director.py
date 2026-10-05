@@ -3071,6 +3071,8 @@ class DirectorTests(unittest.TestCase):
         self.assertFalse(director.needs_cooking_fuel_reserve(snapshot))
         snapshot["development"]["item_counts"]["WoodLog"] = 90
         snapshot["development"]["building_counts"] = {"Campfire": 1, "ElectricStove": 1}
+        self.assertTrue(director.needs_cooking_fuel_reserve(snapshot))
+        snapshot["development"]["buildings"] = [{"def": "ElectricStove", "power_on": True}]
         self.assertFalse(director.needs_cooking_fuel_reserve(snapshot))
 
     def test_low_cooking_fuel_keeps_food_choices_without_repeat_noop_orders(self):

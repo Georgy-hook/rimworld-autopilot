@@ -11,6 +11,14 @@ import json
 from typing import Any
 
 
+class NoFeasibleChoice(ValueError):
+    """An affordance expired; this is not a failed model inference."""
+
+    def __init__(self, question_id: str):
+        self.question_id = question_id
+        super().__init__(f"No feasible options for {question_id}")
+
+
 def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
     """Pack both upside and downside for each compared option, within budget.
 
@@ -167,7 +175,7 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
                     instructions: str, options: dict[str, str], *, detailed: bool = False) -> tuple[str, dict[str, Any]]:
     """Run a bounded tournament: every offered option is actually seen by Laya."""
     if not options:
-        raise ValueError(f"No feasible options for {question_id}")
+        raise NoFeasibleChoice(question_id)
     if len(options) == 1:
         selected = next(iter(options))
         return selected, {"question": {"id": question_id, "instructions": instructions, "criteria": options},

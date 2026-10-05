@@ -14,6 +14,8 @@ DOMAINS = {a: "work_orders" for a in ACTIONS}
 
 ENDPOINTS = {"context": "/api/v1/production/context", "recipes": "/api/v1/production/recipes", "logistics": "/api/v1/production/logistics"}
 BACKOFF_TICKS = 250
+UTILITY_DEFER_TICKS = 30000
+UTILITY_DEFER_SECONDS = 120
 
 
 def _read(client, snapshot, endpoint):
@@ -99,25 +101,33 @@ def _utility_scope(plan):
     return f"{plan['building']['id']}:{family}"
 
 
-def _remember_utility(map_state, snapshot, plans, duration):
+def _utility_guard(building):
+    return {"thermal_band": _thermal_band(building), "connected": building.get("connected"),
+            "source": building.get("net_has_active_source"), "stored_power": bool(building.get("net_stored_energy", 0)),
+            "fuel_present": (float(building["fuel"]) > 0) if building.get("fuel") is not None else None,
+            "fuel_available": bool(building.get("eligible_fuel_count")),
+            "switch": building.get("switch_on"), "auto_refuel": building.get("auto_refuel")}
+
+
+def _remember_utility(map_state, snapshot, plans, duration, *, deferred=False):
     tick = int(snapshot.get("game", {}).get("tick") or 0)
     history = map_state.setdefault("production_utility_dwell", {})
     for plan in plans:
-        history[_utility_scope(plan)] = {"tick": tick, "duration": duration,
-            "thermal_band": _thermal_band(plan["building"]), "policy": plan["policy"]}
+        history[_utility_scope(plan)] = {**(failure_record(tick, UTILITY_DEFER_SECONDS) if deferred else {"tick": tick}), "duration": duration,
+            "thermal_band": _thermal_band(plan["building"]), "policy": plan["policy"], **({"guard": _utility_guard(plan["building"])} if deferred else {})}
 
 
 def _utility_ready(plans, map_state, tick):
     history = map_state.get("production_utility_dwell") or {}
     for scope in list(history):
         entry = history[scope]
-        if tick < entry["tick"] or tick - entry["tick"] >= entry["duration"]:
+        if not retry_recent(entry, tick, entry["duration"]):
             del history[scope]
     ready = {}
     for key, plan in plans.items():
         scope = _utility_scope(plan)
         entry = history.get(scope)
-        if entry and entry["thermal_band"] != _thermal_band(plan["building"]):
+        if entry and (entry["thermal_band"] != _thermal_band(plan["building"]) or "guard" in entry and entry["guard"] != _utility_guard(plan["building"])):
             del history[scope]
             entry = None
         if entry is None:
@@ -255,6 +265,10 @@ def options(context):
         if b.get("can_set_auto_refuel") and isinstance(b.get("auto_refuel"), bool):
             policies.append("disable_refuel" if b["auto_refuel"] else "enable_refuel")
         for policy in policies:
+            if policy == "switch_on":
+                consumer = isinstance(b.get("power_output"), (int, float)) and b["power_output"] < 0
+                if consumer and (b.get("connected") is False or b.get("net_has_active_source") is False and not float(b.get("net_stored_energy") or 0)): continue
+                if b.get("fuel") is not None and float(b["fuel"]) <= 0: continue
             plans[f"{b['id']}:{policy}"] = {"building": b, "policy": policy}
     return plans
 
@@ -288,6 +302,18 @@ def prepare(snapshot, map_state):
         (map_state.get("issued") or {}).pop("production:" + action, None)
     return available
 
+def utility_facts(snapshot):
+    dev = snapshot.get("development") or {}
+    c = dev.get("production") or {}
+    human = (dev.get("sustenance") or {}).get("human_food")
+    nutrition = sum(float(f.get("fresh_eligible_nutrition") or 0) for f in human) if isinstance(human, list) else None
+    stocks = {s.get("def_name"): s.get("count") for s in c.get("stocks") or []}
+    facts = {"human_food": nutrition, "animals": len(c.get("animals") or []), "wood": stocks.get("WoodLog", 0),
+            "unpowered": sum(b.get("powered") is False for b in c.get("buildings") or []),
+            "empty_fuel": sum(b.get("fuel") == 0 for b in c.get("buildings") or [])}
+    return {k: v for k, v in facts.items() if v is not None and (k not in {"unpowered", "empty_fuel"} or v)}
+
+
 def choose(agent, state, action, snapshot):
     context = snapshot["development"]["production"]
     if action == "production_recipe_batch":
@@ -308,7 +334,7 @@ def choose(agent, state, action, snapshot):
         risk = {"switch_off":"Freezing/heating/defense service may stop", "switch_on":"Consumes network power/fuel", "disable_refuel":"Service fails after remaining fuel burns", "enable_refuel":"Consumes shared future hauled fuel"}[policy]
         return {"benefit": f"{policy} {building.get('def_name')} #{building.get('id')}",
                 "risk": risk + f"; temperature={building.get('temperature')}",
-                "cost": f"net_gain={building.get('net_energy_gain_per_tick')} stored={building.get('net_stored_energy')} fuel={building.get('fuel')}/{building.get('capacity')}",
+                "cost": f"connected={building.get('connected')} source={building.get('net_has_active_source')} net_gain={building.get('net_energy_gain_per_tick')} stored={building.get('net_stored_energy')} fuel={building.get('fuel')}/{building.get('capacity')}",
                 "inaction": "Current consumption and service/refueling continue", "uncertainty": "Native flick/hauling work required; actual service not completed"}
     def stage(rows, question):
         if action == "production_utilities":
@@ -318,7 +344,7 @@ def choose(agent, state, action, snapshot):
         effects={alias:effect(plan) for alias,(_,plan) in indexed.items()}
         choices['defer']='Keep current services, fuel and food; defer'
         effects['defer']={"benefit":"Preserve services/resources", "risk":"Existing shortages/rot/fuel burn continue", "cost":"No added labor/resources", "inaction":"Current policies continue", "uncertainty":"No produced feed/restored service"}
-        selected,raw=ask_laya_choice(agent,{"decision_facts":_facts(state, question),"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
+        selected,raw=ask_laya_choice(agent,{"decision_facts": {**utility_facts(snapshot), **_facts(state, question)} if action == "production_utilities" else _facts(state, question),"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
         stages.append(raw)
         if selected not in choices: raise ValueError('Unverified production policy')
         return None if selected=='defer' else indexed[selected][0]
@@ -326,7 +352,8 @@ def choose(agent, state, action, snapshot):
         buildings={}
         for key,plan in plans.items():buildings.setdefault(str(plan['building']['id']),[]).append((key,plan))
         subject=stage([(subject,items[0][1]) for subject,items in buildings.items()],'production_utility_building')
-        if subject is None:return {'production_policy':'defer', 'shown_utility_options':list(dict.fromkeys(shown_utilities))},{'stages':stages}
+        if subject is None:return {'production_policy':'defer', 'shown_utility_options':list(plans)},{'stages':stages}
+        shown_utilities.clear()
         key=stage(buildings[subject],'production_utility_policy')
     else:
         key=stage(list(plans.items()),'production_feed_table')
@@ -341,7 +368,7 @@ def execute(client, snapshot, map_state, action, selected):
         if action == "production_utilities":
             observed = snapshot.get("development", {}).get("production", {}).get("options", {})
             shown = selected.get("shown_utility_options") or []
-            _remember_utility(map_state, snapshot, [observed[k] for k in shown if k in observed], BACKOFF_TICKS)
+            _remember_utility(map_state, snapshot, [observed[k] for k in shown if k in observed], UTILITY_DEFER_TICKS, deferred=True)
         else:
             context = snapshot.get("development", {}).get("production", {})
             observed = (recipe_options(context) if action == "production_recipe_batch" else

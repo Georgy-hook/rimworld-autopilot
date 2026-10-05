@@ -25,6 +25,10 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Worker-choice stall, food context and utility repairs, 2026-10-05](audits/worker-food-utility-recovery-2026-10-05.md)
+- [Named allied murderous-rage protection](audits/murderous-rage-protection-2026-10-05.md)
+- [Ending API reentrant list failure](audits/endings-reentrant-read-boundary-2026-10-05.md)
+
 - [Requader founder losses and postmortem, 2026-10-03](audits/requader-postmortem-2026-10-03.md):
   user-ended outcome, medical/development/combat failures and offline repair limits.
 - [Startup loop incident and sequence verification, 2026-10-03](audits/startup-loop-replay-2026-10-03.md):

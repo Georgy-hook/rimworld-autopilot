@@ -25,6 +25,7 @@ RUNTIME_FILES = (
     "colony_sustenance.py",
     "colony_resilience.py",
     "colony_medical_recovery.py",
+    "colony_mental_safety.py",
     "colony_downed_combat.py",
     "colony_wildlife.py",
     "colony_inspirations.py",
