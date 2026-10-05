@@ -74,6 +74,34 @@ def _state(row: dict, context: dict) -> tuple:
                          for h in conditions if h.get('visible', True))))
 
 
+DEFER_WALL_SECONDS = 120
+MAX_DEFERRED_SUBJECTS = 128
+
+
+def _defer_state(rows: list[dict], context: dict) -> str:
+    """Clinical bands and exposed options; autonomous wandering is irrelevant."""
+    row = rows[0]
+    patient = next((p for p in context.get('patients') or [] if str(p.get('pawn_id')) == _subject(row)), {})
+    conditions = []
+    for condition in patient.get('conditions') or []:
+        if not condition.get('visible', True): continue
+        name = str(condition.get('def_name') or '')
+        severity = float(condition.get('severity') or 0)
+        # Hypothermia stages change ability to work before severe .5/.75 bands.
+        thresholds = (.04, .2, .35, .62) if name == 'Hypothermia' else (.5, .75)
+        conditions.append((name, sum(severity >= boundary for boundary in thresholds)))
+    readiness = sorted((tuple(option.get(field) for field in
+        ('kind', 'worker_id', 'target_id', 'giver', 'food_feasible')) for option in rows), key=repr)
+    return repr((_state(row, context), tuple(sorted(conditions)),
+                 float(patient.get('bleeding_total') or 0) >= 1.5,
+                 bool(patient.get('tendable_now')), bool(patient.get('in_bed')),
+                 patient.get('bed_rest_priority'), patient.get('medical_care'), readiness))
+
+
+def _defer_recent(record: dict, tick: int, delay: int) -> bool:
+    return isinstance(record, dict) and isinstance(record.get('state'), str) and _recent(record, tick, delay)
+
+
 def _recent(record: dict, tick: int, delay: int) -> bool:
     return retry_recent(record, tick, delay)
 
@@ -86,13 +114,38 @@ def _active_targets(context):
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault('development', {}).setdefault('resilience', {})
     memory = map_state.get('resilience_memory') or {}
+    if not isinstance(memory, dict): memory = {}
     tick = int(snapshot.get('game', {}).get('tick') or 0)
+    prior = map_state.get('resilience_defer_timeline') or {}
+    if isinstance(prior, dict) and (prior.get('map_id') not in (None, snapshot.get('map', {}).get('id'))
+            or (isinstance(prior.get('tick'), int) and tick < prior['tick'])):
+        memory.pop('deferred', None)
+    map_state['resilience_defer_timeline'] = {'map_id': snapshot.get('map', {}).get('id'), 'tick': tick}
     for bucket in ('issued', 'deferred', 'failed'):
         rows = memory.get(bucket) or {}
+        if not isinstance(rows, dict):
+            memory.pop(bucket, None)
+            continue
         for key, record in list(rows.items()):
-            horizon = 60 if bucket == 'failed' else _delay(key.split(':', 1)[0])
+            horizon = 60 if bucket == 'failed' else _delay(str(key).split(':', 1)[0])
+            if bucket == 'deferred':
+                if (not isinstance(key, str) or not isinstance(record, dict)
+                        or not isinstance(record.get('state'), str)
+                        or isinstance(record.get('tick'), bool) or not isinstance(record.get('tick'), int)
+                        or record['tick'] > tick):
+                    del rows[key]
+                    continue
+                if 'retry_started_at' not in record and 'retry_until' not in record:
+                    if not _recent(record, tick, horizon):
+                        del rows[key]
+                        continue
+                    # Legacy defer records get one real-time floor on load.
+                    record.update(failure_record(record['tick'], seconds=DEFER_WALL_SECONDS))
             if not _recent(record, tick, horizon):
                 del rows[key]
+        if bucket == 'deferred':
+            while len(rows) > MAX_DEFERRED_SUBJECTS:
+                rows.pop(next(iter(rows)))
         if not rows:
             memory.pop(bucket, None)
     if not memory:
@@ -100,6 +153,10 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
     options = {a: {} for a in ACTIONS}
     active = _active_targets(context)
     active_hauls = {row.get('target_id') for row in context.get('active_orders') or [] if row.get('kind') == 'haul'}
+    subject_rows = {}
+    for row in context.get('options') or []:
+        if 'resilience_' + str(row.get('kind')) in options:
+            subject_rows.setdefault('resilience_' + str(row['kind']) + ':' + _subject(row), []).append(row)
     for row in context.get('options') or []:
         action = 'resilience_' + str(row.get('kind'))
         if action not in options:
@@ -108,8 +165,11 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             continue
         subject = action + ':' + _subject(row)
         deferred = (memory.get('deferred') or {}).get(subject, {})
+        signature = _defer_state(subject_rows[subject], context)
+        if deferred.get('state') == repr(_state(row, context)):
+            deferred['state'] = signature  # Migrate a still-matching legacy clinical projection.
         if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
-                or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == repr(_state(row, context)))
+                or (_defer_recent(deferred, tick, _delay(action)) and deferred.get('state') == signature)
                 or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
             continue
         key = ':'.join(str(row.get(k, '')) for k in ('worker_id', 'target_id', 'giver'))
@@ -201,7 +261,13 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         for row in (context.get('plans', {}).get(action) or {}).values():
             if 'deferred_subjects' in selected and _subject(row) not in selected['deferred_subjects']:
                 continue
-            memory.setdefault('deferred', {})[action + ':' + _subject(row)] = {'tick': tick, 'state': repr(_state(row, context))}
+            same_subject = [option for option in context.get('options') or []
+                            if 'resilience_' + str(option.get('kind')) == action
+                            and _subject(option) == _subject(row)]
+            memory.setdefault('deferred', {})[action + ':' + _subject(row)] = {
+                **failure_record(tick, seconds=DEFER_WALL_SECONDS), 'state': _defer_state(same_subject, context)}
+        while len(memory.get('deferred') or {}) > MAX_DEFERRED_SUBJECTS:
+            memory['deferred'].pop(next(iter(memory['deferred'])))
         return {'applied': False, 'reason': 'laya_deferred'}
     payload = {k: selected[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in selected}
     def failed() -> None:

@@ -93,7 +93,8 @@ class ResilienceTests(unittest.TestCase):
         self.assertNotIn('.Take(3)', diagnosis)
         self.assertIn('beds.Where(b => doctor.CanReach', diagnosis)
 
-    def test_memory_json_roundtrip_rollback_and_expired_history_pruning(self):
+    @patch("colony_retry.time.time", return_value=100)
+    def test_memory_json_roundtrip_rollback_and_expired_history_pruning(self, clock):
         import json
         state = {}
         resilience.prepare(self.snapshot, state)
@@ -111,6 +112,7 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(set(state['resilience_memory']), {'deferred'})
         self.assertEqual(set(state['resilience_memory']['deferred']), {'resilience_inspect:7'})
         self.snapshot['game']['tick'] = 69900
+        clock.return_value = 221  # Expire both the game horizon and new wall floor.
         resilience.prepare(self.snapshot, state)
         self.assertNotIn('resilience_memory', state)
 
@@ -248,5 +250,109 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(resilience.prepare(self.snapshot, {'resilience_memory': {'issued': {'resilience_inspect:2': {'tick': 9000}}}}), [])
 
 
-if __name__ == '__main__':
+
+
+class ResilienceDeferReplayTests(unittest.TestCase):
+    def setUp(self):
+        self.row = {'kind':'rest','worker_id':361,'target_id':361,'food_feasible':False}
+        self.patient = {'pawn_id':361,'downed':False,'life_threatening':False,'in_bed':False,
+                        'bed_rest_priority':3,'food':.9,'bleeding_total':.1,'temperature':0,
+                        'comfortable_min':5.88,'comfortable_max':29.96,'current_job':'GotoWander',
+                        'conditions':[{'def_name':'Bite','severity':2,'tendable_now':False},
+                                      {'def_name':'Hypothermia','severity':.25}]}
+        self.snapshot={'game':{'tick':10000},'map':{'id':0},'development':{'resilience':{
+            'patients':[self.patient],'options':[self.row]}}}
+        self.memory={}
+
+    def defer_once(self):
+        resilience.prepare(self.snapshot,self.memory)
+        with patch.object(resilience,'ask_laya_choice',return_value=('defer',{})):
+            selected,_=resilience.choose(None,{},'resilience_rest',self.snapshot)
+        client=Client([])
+        result=resilience.execute(client,self.snapshot,self.memory,'resilience_rest',selected)
+        self.assertEqual('laya_deferred',result['reason']);self.assertFalse(client.posts)
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_eight_accelerated_prepare_choose_execute_cycles_persisted_and_drift_quiet(self, clock):
+        import json
+        asks=0
+        for cycle in range(9):
+            clock.return_value=100+cycle*10
+            self.snapshot['game']['tick']=10000+cycle*4500
+            self.patient['current_job']='GotoWander' if cycle%2 else 'WaitWander'
+            self.patient['mood']=.4+cycle*.01
+            self.patient['bleeding_total']=.1+cycle*.001
+            next(row for row in self.patient['conditions'] if row['def_name']=='Hypothermia')['severity']=.25+cycle*.001
+            self.patient['conditions'].reverse() if cycle%2 else None
+            actions=resilience.prepare(self.snapshot,self.memory)
+            if 'resilience_rest' in actions:
+                asks+=1
+                self.defer_once()
+            self.memory=json.loads(json.dumps(self.memory))
+        self.assertEqual(1,asks)
+        clock.return_value=220
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_clinical_new_risk_and_new_target_bypass_floor_immediately(self, clock):
+        for field,value in (('downed',True),('life_threatening',True),('tendable_now',True),
+                            ('bleeding_total',1.5),('food',.05),('in_bed',True),('bed_rest_priority',1)):
+            with self.subTest(field=field):
+                self.setUp();self.defer_once();self.patient[field]=value
+                self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+        self.setUp();self.defer_once()
+        self.patient['conditions'][1]['severity']=.36
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+        self.setUp();self.defer_once()
+        self.snapshot['development']['resilience']['options'].append({**self.row,'worker_id':99,'target_id':99})
+        resilience.prepare(self.snapshot,self.memory)
+        plans=self.snapshot['development']['resilience']['plans']['resilience_rest']
+        self.assertEqual([99],[row['target_id'] for row in plans.values()])
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_legacy_defer_migrates_once_and_rollback_or_bad_record_cannot_hide_patient(self, clock):
+        import json
+        legacy={'tick':9999,'state':repr(resilience._state(self.row,self.snapshot['development']['resilience']))}
+        self.memory={'resilience_memory':{'deferred':{'resilience_rest:361':legacy}}}
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+        self.memory=json.loads(json.dumps(self.memory))
+        self.snapshot['game']['tick']+=4500;clock.return_value=110
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+        self.snapshot['game']['tick']=9998
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+        for bad in ({'tick':'bad','state':'old'}, {'tick':100,'state':'old','retry_until':'bad'},
+                    {'tick':True,'state':'old'}, {'tick':100,'state':None}):
+            self.memory={'resilience_memory':{'deferred':{'resilience_rest:361':bad}}}
+            self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_readiness_new_worker_and_option_order(self, clock):
+        context=self.snapshot['development']['resilience']
+        context['options'].append({**self.row,'worker_id':362})
+        self.defer_once();context['options'].reverse()
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+        context['options'].append({**self.row,'worker_id':363})
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_temporarily_failed_helper_does_not_change_defer_fingerprint(self, clock):
+        context=self.snapshot['development']['resilience']
+        blocked={**self.row,'worker_id':362}
+        context['options'].append(blocked)
+        self.memory={'resilience_memory':{'failed':{resilience._option(blocked):resilience.failure_record(10000,15)}}}
+        self.defer_once()
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+        clock.return_value=116;self.snapshot['game']['tick']+=4500
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_tick_rewind_above_issue_tick_still_reopens_deferred_patient(self, clock):
+        self.defer_once()
+        self.snapshot['game']['tick']=20000
+        self.assertEqual([],resilience.prepare(self.snapshot,self.memory))
+        self.snapshot['game']['tick']=15000
+        self.assertIn('resilience_rest',resilience.prepare(self.snapshot,self.memory))
+
+
+if __name__ == "__main__":
     unittest.main()

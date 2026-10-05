@@ -2740,6 +2740,29 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(decision["choice"], "create_stockpile")
         self.assertEqual(decision["raw"]["mode"], "single_feasible_action")
 
+    def test_starter_site_in_dense_forest_keeps_shell_buildable(self):
+        terrain = {"width": 30, "height": 30, "palette": ["Soil"], "grid": [900, 0]}
+        trees = [{"def_name": "Plant_TreePine", "harvested_thing_def": "WoodLog",
+                  "position": {"x": x, "z": z}}
+                 for x in range(30) for z in range(30)]
+        dev = {"plants": trees, "construction_projects": [
+            {"position": {"x": 10, "z": 10}}]}
+        site = director.find_dry_starter_site(terrain, {"x": 10, "z": 10}, dev)
+        self.assertIsNotNone(site)
+        self.assertFalse(site["x"] - 2 <= 10 <= site["x"] + 8
+                         and site["z"] - 2 <= 10 <= site["z"] + 8)
+
+    def test_starter_forest_fallback_preserves_protected_and_unknown_trees(self):
+        terrain = {"width": 20, "height": 20, "palette": ["Soil"], "grid": [400, 0]}
+        for extra in ({"is_cultivated": True}, {"is_forbidden": True},
+                      {"harvested_thing_def": None}, {"def_name": "Plant_TreeAnima"}):
+            with self.subTest(extra=extra):
+                trees = [{"def_name": "Plant_TreePine", "harvested_thing_def": "WoodLog",
+                          "position": {"x": x, "z": z}, **extra}
+                         for x in range(20) for z in range(20)]
+                self.assertIsNone(director.find_dry_starter_site(
+                    terrain, {"x": 8, "z": 8}, {"plants": trees}))
+
     def test_domain_choice_describes_feasible_actions_not_generic_promise(self):
         snapshot = {"map": {"resources": {"food": 53}, "enemies": 0},
                     "colonists": [], "animals": [], "development": {"corpses": [], "trade_value": 0}}

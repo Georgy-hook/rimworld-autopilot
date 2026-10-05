@@ -1111,31 +1111,59 @@ def architecture_occupied_cells(development: dict[str, Any], map_state: dict[str
     return occupied
 
 
+def forest_site_obstacles(terrain: dict[str, Any], development: dict[str, Any],
+                          map_state: dict[str, Any]) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """Keep real obstacles/protected trees; ordinary wild timber can be cleared."""
+    blocked = architecture_occupied_cells(development, map_state)
+    trees, protected = set(), set()
+    for plant in development.get("plants") or []:
+        pos = plant.get("position") or {}
+        if "Tree" not in str(plant.get("def_name") or "") or pos.get("x") is None or pos.get("z") is None:
+            continue
+        cell = (int(pos["x"]), int(pos["z"]))
+        trees.add(cell)
+        if (plant.get("harvested_thing_def") != "WoodLog"
+                or plant.get("is_cultivated") or plant.get("is_forbidden")
+                or any(name in str(plant.get("def_name") or "") for name in ("Anima", "Gauranlen", "Polux"))):
+            protected.add(cell)
+    grid = terrain.get("edifice_grid") or []
+    if grid:
+        width, height, _ = decode_terrain(terrain)
+        if len(grid) % 2 or any(int(grid[i]) < 0 for i in range(0, len(grid), 2)):
+            raise ValueError("Invalid edifice grid returned by RIMAPI")
+        cells = []
+        for i in range(0, len(grid), 2):
+            cells.extend([int(grid[i + 1])] * int(grid[i]))
+        if len(cells) != width * height:
+            raise ValueError("Invalid edifice grid returned by RIMAPI")
+        blocked.update((i % width, i // width) for i, occupied in enumerate(cells) if occupied)
+    return blocked | protected, trees
+
+
+def find_forest_building_site(terrain: dict[str, Any], desired: dict[str, int],
+                              width: int, height: int, allowed: set[str],
+                              development: dict[str, Any], map_state: dict[str, Any],
+                              *, radius: int, clearance: int) -> dict[str, int] | None:
+    blocked, trees = forest_site_obstacles(terrain, development, map_state)
+    clear = find_terrain_rect(terrain, desired, width, height, allowed, radius=radius,
+                              blocked=blocked | trees, clearance=clearance)
+    if clear is not None:
+        return clear
+    return find_terrain_rect(terrain, desired, width, height, allowed, radius=radius,
+                             blocked=blocked, clearance=clearance)
+
+
 def find_clear_layout_site(client: bridge.RimApiClient, map_id: int,
                            desired: dict[str, int], layout: dict[str, Any],
                            development: dict[str, Any], map_state: dict[str, Any],
                            *, radius: int = 30) -> dict[str, int] | None:
-    """Find stable ground without old plans, natural edifices or trees."""
+    """Prefer clear stable ground, allowing ordinary timber clearing if needed."""
     terrain = client.get("/api/v1/map/terrain", map_id=map_id)
-    blocked = architecture_occupied_cells(development, map_state)
-    blocked.update((int((plant.get("position") or {}).get("x") or -1),
-                    int((plant.get("position") or {}).get("z") or -1))
-                   for plant in development.get("plants") or []
-                   if "Tree" in str(plant.get("def_name") or ""))
-    edifice_grid = terrain.get("edifice_grid") or []
-    if edifice_grid:
-        width, height, _ = decode_terrain(terrain)
-        edifice_cells = []
-        for index in range(0, len(edifice_grid), 2):
-            edifice_cells.extend([int(edifice_grid[index + 1])] * int(edifice_grid[index]))
-        if len(edifice_cells) == width * height:
-            blocked.update((index % width, index // width)
-                           for index, occupied in enumerate(edifice_cells) if occupied)
     allowed = {str(name) for name in terrain.get("palette") or [] if
                str(name) in {"Soil", "SoilRich", "Gravel", "Sand"}
                or str(name).startswith(("Rough", "Smooth", "Flagstone", "Paved", "Concrete"))}
-    return find_terrain_rect(terrain, desired, int(layout["width"]), int(layout["height"]),
-                             allowed, radius=radius, blocked=blocked, clearance=2)
+    return find_forest_building_site(terrain, desired, int(layout["width"]), int(layout["height"]),
+        allowed, development, map_state, radius=radius, clearance=2)
 
 
 def can_fight(pawn: dict[str, Any]) -> bool:
@@ -1149,30 +1177,18 @@ def can_fight(pawn: dict[str, Any]) -> bool:
 def find_dry_starter_site(terrain: dict[str, Any], center: dict[str, int],
                           development: dict[str, Any] | None = None,
                           map_state: dict[str, Any] | None = None) -> dict[str, int] | None:
-    """Keep the first house dry, clear of other plans, and accessible on all sides."""
+    """Prefer a clearing, but let builders clear ordinary wild timber for shelter.
+
+    RimWorld's construction jobs cut blocking plants before delivering materials.
+    Trees are therefore a preparation cost, not an absolute terrain prohibition.
+    Buildings, rocks, protected/unknown trees and dangerous ruins remain excluded.
+    """
     dry_ground = {str(name) for name in terrain.get("palette") or [] if (
         str(name) in {"Soil", "SoilRich", "Gravel", "Sand"}
         or str(name).startswith(("Rough", "Smooth", "Flagstone", "Paved", "Concrete"))
     )}
-    blocked = architecture_occupied_cells(development or {}, map_state or {})
-    blocked.update((int((plant.get("position") or {})["x"]),
-                    int((plant.get("position") or {})["z"]))
-                   for plant in (development or {}).get("plants") or []
-                   if "Tree" in str(plant.get("def_name") or "")
-                   and (plant.get("position") or {}).get("x") is not None
-                   and (plant.get("position") or {}).get("z") is not None)
-    edifice_grid = terrain.get("edifice_grid") or []
-    if edifice_grid:
-        width, height, _ = decode_terrain(terrain)
-        edifice_cells = []
-        for index in range(0, len(edifice_grid), 2):
-            edifice_cells.extend([int(edifice_grid[index + 1])] * int(edifice_grid[index]))
-        if len(edifice_cells) != width * height:
-            raise ValueError("Invalid edifice grid returned by RIMAPI")
-        blocked.update((index % width, index // width)
-                       for index, occupied in enumerate(edifice_cells) if occupied)
-    return find_terrain_rect(terrain, center, 7, 7, dry_ground, radius=45,
-                             blocked=blocked, clearance=2)
+    return find_forest_building_site(terrain, center, 7, 7, dry_ground,
+        development or {}, map_state or {}, radius=45, clearance=2)
 
 
 def find_starter_food_site(terrain: dict[str, Any], anchor: dict[str, int],
@@ -2494,8 +2510,8 @@ def choose_prison_site(terrain: dict[str, Any], anchor: dict[str, int],
         or str(name).startswith(("Rough", "Smooth", "Flagstone", "Paved", "Concrete"))
     )}
     preferred = {"x": int(anchor["x"]) - 12, "z": int(anchor["z"]) - 8}
-    return find_terrain_rect(terrain, preferred, 7, 7, stable, radius=25,
-                             blocked=architecture_occupied_cells(dev, map_state), clearance=1)
+    return find_forest_building_site(terrain, preferred, 7, 7, stable, dev, map_state,
+        radius=25, clearance=1)
 
 
 def empty_indoor_sleeping_spot(dev: dict[str, Any],
@@ -3210,6 +3226,7 @@ def model_decision_context(snapshot: dict[str, Any]) -> dict[str, Any]:
                          "greenhouse_research": (dev.get("greenhouse_context") or {}).get("missing_research")},
         "home": {"roofed_sleepers": sheltered_beds, "real_beds": real_beds,
                  "roofed_real_beds": sheltered_real_beds,
+                 "starter_preparation": dev.get("starter_preparation"),
                  "exposed_days": exposed_days, "target": len(people),
                  "threatened_fires": len(threatened_fires),
                  "prison_beds": sum(bool(b.get("for_prisoners")) for b in dev.get("buildings") or []),
@@ -9689,6 +9706,76 @@ def expedition_candidates(candidates: list[str]) -> list[str]:
     return [name for name in candidates if name in support or colony_modules.owner(name) is not None]
 
 
+def result_for_logging(choice: str, result: Any, decision: dict[str, Any]) -> Any:
+    """Project only diagnostic duplication; execution/outcome inputs stay intact."""
+    if choice not in {"equip_colonists", "improve_weapon_loadout"} or not isinstance(result, dict):
+        return result
+    selected = result.get("selection")
+    if not isinstance(selected, dict):
+        selected = decision
+    selection = {key: selected[key] for key in ("weapon_pawn", "weapon_item", "weapon_defer") if key in selected}
+    # Evidence comes from recorded final questions actually presented to Laya,
+    # never from the larger live catalog or unrelated merged candidate contexts.
+    raw = decision.get("raw")
+    raw = raw if isinstance(raw, dict) else {}
+    detail = raw.get("details")
+    detail = detail if isinstance(detail, dict) else {}
+    steps = detail.get("steps")
+    steps = steps if isinstance(steps, list) else []
+    evidence, shown = [], {}
+    for step in steps:
+        question = step.get("question") if isinstance(step, dict) else None
+        if not isinstance(question, dict):
+            continue
+        identifier = str(question.get("id") or "")
+        if identifier not in {"weapon_pawn", "weapon_item"}:
+            continue
+        criteria = question.get("criteria")
+        if not isinstance(criteria, dict):
+            continue
+        shown[identifier] = [key for key in criteria if key != "defer"]
+        key = str(selection.get(identifier) or "")
+        if key in criteria:
+            evidence.append({"question_id": identifier, "selected": key, "evidence": criteria[key]})
+    if shown:
+        selection["shown_subjects"] = shown
+    if evidence:
+        selection["shown_evidence"] = evidence
+    if steps:
+        selection["evidence_reference"] = "decision.raw.details"
+    return {**result, "selection": selection}
+
+
+def stdout_result(result: Any) -> str:
+    """Bound every console result; full diagnostics belong in opt-in disk logs."""
+    def scalar(value: Any) -> Any:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return value if len(value) <= 180 else value[:180] + f"… ({len(value)} chars)"
+        if isinstance(value, dict):
+            return {"count": len(value), "keys": [str(k)[:48] for _, k in zip(range(6), value)]}
+        if isinstance(value, (list, tuple, set)):
+            return {"count": len(value)}
+        return type(value).__name__
+    if isinstance(result, dict):
+        summary = {key: scalar(result[key]) for key in ("applied", "reason", "error", "completion", "outcome_unknown", "placed", "requested", "count") if key in result}
+        selected = result.get("selection")
+        if isinstance(selected, dict):
+            summary["selection"] = {key: scalar(selected[key]) for key in ("weapon_pawn", "weapon_item", "weapon_defer") if key in selected}
+        for key in result:
+            if key not in summary and key != "selection":
+                summary[str(key)[:48]] = scalar(result[key])
+            if len(summary) >= 12:
+                break
+        if len(result) > 12:
+            summary["result_key_count"] = len(result)
+    else:
+        summary = scalar(result)
+    text = json.dumps(summary, ensure_ascii=False, default=str)
+    return text if len(text) <= 1600 else text[:1560] + "… (console summary truncated)"
+
+
 def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[str, Any], state_path: Path, log_path: Path, *, expedition: bool = False) -> dict[str, Any]:
     snapshot = collect_development(client, bridge.collect_snapshot(client))
     player_preferences = laya_preferences.load_preferences()
@@ -9738,6 +9825,18 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
             find_terrain_rect(terrain, growing_center, 10, 8, {"Soil", "SoilRich"}, radius=45) or growing_center,
         )
     snapshot["development"]["base_anchor"] = map_state["anchor"]
+    if not existing_house_plan and map_state.get("starter_site_verified"):
+        ax, az = map_state["anchor"]["x"], map_state["anchor"]["z"]
+        timber_count = sum(
+            1 for plant in snapshot["development"].get("plants") or []
+            if "Tree" in str(plant.get("def_name") or "")
+            and ax <= (plant.get("position") or {}).get("x", -1) < ax + 7
+            and az <= (plant.get("position") or {}).get("z", -1) < az + 7)
+        if timber_count:
+            snapshot["development"]["starter_preparation"] = {
+                "trees_on_site": timber_count,
+                "work": "Builders must cut blocking ordinary trees through normal construction jobs; no instant clearing.",
+                "risk": "Extra work delays enclosure; observe actual cutting and completion before assuming shelter."}
     retire_starter_sleeping_spots(client, snapshot, map_state, log_path)
     candidates, details = candidate_actions(client, snapshot, map_state)
     if expedition:
@@ -9829,7 +9928,8 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     })
     map_state["recent_decisions"] = map_state["recent_decisions"][-4:]
     if player_preferences.get("technical_logging"):
-        record["technical"] = {"snapshot": snapshot, "details": details}
+        record["technical"] = {"snapshot": snapshot, "details": details, "result": result}
+    record["result"] = result_for_logging(choice, result, decision)
     save_state(state_path, state)
     bridge.append_log(log_path, record)
     return record
@@ -12149,7 +12249,7 @@ def main() -> int:
                 if caravan_trade_record is not None:
                     save_state(args.state, state)
                     print(f"[{caravan_trade_record['timestamp']}] caravan trade: "
-                          f"{caravan_trade_record['decision']['choice']} | {caravan_trade_record['result']}", flush=True)
+                          f"{caravan_trade_record['decision']['choice']} | {stdout_result(caravan_trade_record['result'])}", flush=True)
                     elapsed = time.monotonic() - started
                     time.sleep(max(0.0, 2.0 - elapsed))
                     continue
@@ -12157,7 +12257,7 @@ def main() -> int:
                 if dialogue_record is not None:
                     save_state(args.state, state)
                     print(f"[{dialogue_record['timestamp']}] dialogue: "
-                          f"{dialogue_record['decision']['choice']} | {dialogue_record['result']}", flush=True)
+                          f"{dialogue_record['decision']['choice']} | {stdout_result(dialogue_record['result'])}", flush=True)
                     if dialogue_record["result"].get("applied", False) or dialogue_record["decision"]["choice"] != "defer":
                         elapsed = time.monotonic() - started
                         time.sleep(max(0.0, 2.0 - elapsed))
@@ -12175,7 +12275,7 @@ def main() -> int:
                 if letter_record is not None:
                     save_state(args.state, state)
                     print(f"[{letter_record['timestamp']}] letter: "
-                          f"{letter_record['decision']['choice']} | {letter_record['result']}", flush=True)
+                          f"{letter_record['decision']['choice']} | {stdout_result(letter_record['result'])}", flush=True)
                     if letter_record.get("mode") == "game-over":
                         state["outcome"] = letter_record
                         runtime_state, runtime_detail = "completed", "Native game over confirmed"
@@ -12207,7 +12307,7 @@ def main() -> int:
                             if care_record["result"].get("applied"):
                                 care_assignment_time = now
                             print(f"[{care_record['timestamp']}] downed colonist care: "
-                                  f"{care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                                  f"{care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
                     elif care_gate == "wait" and snapshot["game"].get("is_paused"):
                         client.post("/api/v1/game/speed", query={"speed": 1})
                     elapsed = time.monotonic() - started
@@ -12228,7 +12328,7 @@ def main() -> int:
                             else 4.0 if care_record and care_record["result"].get("applied") else 8.0)
                         if care_record is not None:
                             print(f"[{care_record['timestamp']}] live-threat care: "
-                                  f"{care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                                  f"{care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
                             elapsed = time.monotonic() - started
                             time.sleep(max(0.0, 2.0 - elapsed))
                             continue
@@ -12254,7 +12354,7 @@ def main() -> int:
                                         care_assignment_time = now
                                 if post_combat_care_failures >= 3:
                                     post_combat_pending = False
-                                print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                                print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
                                 elapsed = time.monotonic() - started
                                 time.sleep(max(0.0, 2.0 - elapsed))
                                 continue
@@ -12270,7 +12370,7 @@ def main() -> int:
                                                        if downed_choice in {"leave_downed_raiders", "wait_for_prison"}
                                                        else args.interval)
                             last_combat_record = record
-                            print(f"[{record['timestamp']}] downed raider: {record['decision']['choice']} | {record['result']}", flush=True)
+                            print(f"[{record['timestamp']}] downed raider: {record['decision']['choice']} | {stdout_result(record['result'])}", flush=True)
                         elif last_combat_record is not None:
                             publish_combat_overlay(client, last_combat_record, repeated=True)
                         if ((last_combat_record or {}).get("decision") or {}).get("choice") in {
@@ -12361,7 +12461,7 @@ def main() -> int:
                         fire_record = run_development_cycle(client, agent, state, args.state, args.log)
                         next_colony_cycle = time.monotonic() + 2.0
                         print(f"[{fire_record['timestamp']}] fire emergency: "
-                              f"{fire_record['decision']['choice']} | {fire_record['result']}", flush=True)
+                              f"{fire_record['decision']['choice']} | {stdout_result(fire_record['result'])}", flush=True)
                         if (fire_record["decision"]["choice"] == "prioritize_firefighting"
                                 and fire_record["result"].get("applied")):
                             continue
@@ -12397,7 +12497,7 @@ def main() -> int:
                                     care_assignment_time = now
                             if post_combat_care_failures >= 3:
                                 post_combat_pending = False
-                            print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {care_record['result']}", flush=True)
+                            print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
                             if urgent_care_actionable(snapshot):
                                 elapsed = time.monotonic() - started
                                 time.sleep(max(0.0, 2.0 - elapsed))
@@ -12407,7 +12507,7 @@ def main() -> int:
                     if rescue_record is not None:
                         if interrupt_blocks_development(rescue_record):
                             next_colony_cycle = now + args.interval
-                        print(f"[{rescue_record['timestamp']}] rescue site: {rescue_record['phase']} | {rescue_record['result']}", flush=True)
+                        print(f"[{rescue_record['timestamp']}] rescue site: {rescue_record['phase']} | {stdout_result(rescue_record['result'])}", flush=True)
                     ancient = get_ancient_danger(client, snapshot["map"]["id"]) if rescue_record is None and not away_site else {}
                     ancient_record = None
                     event_record = None
@@ -12422,12 +12522,12 @@ def main() -> int:
                         if event_record is not None:
                             if interrupt_blocks_development(event_record):
                                 next_colony_cycle = now + args.interval
-                            print(f"[{event_record['timestamp']}] event: {event_record['decision']['choice']} | {event_record['result']}", flush=True)
+                            print(f"[{event_record['timestamp']}] event: {event_record['decision']['choice']} | {stdout_result(event_record['result'])}", flush=True)
                     if (not interrupt_blocks_development(rescue_record) and ancient_record is None
                             and not interrupt_blocks_development(event_record) and now >= next_colony_cycle):
                         record = run_development_cycle(client, agent, state, args.state, args.log, expedition=away_site)
                         next_colony_cycle = now + (2.0 if active_home_fire else args.interval)
-                        print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {record['result']}", flush=True)
+                        print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {stdout_result(record['result'])}", flush=True)
                 runtime_state = "running"
                 runtime_detail = "Last decision cycle completed"
                 consecutive_cycle_errors = 0
