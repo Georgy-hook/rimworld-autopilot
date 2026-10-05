@@ -37,3 +37,17 @@ Two independent blockers were reproduced:
 A separate logging defect duplicated the entire merged candidate context in weapon selection results, including ~781 KB of doctrine and ~597 KB of architecture data. Default logging now retains the selected IDs and actually shown evidence; full execution results are available under technical logging. Execution, model input and outcome accounting are unchanged. Console output is bounded for every result.
 
 The common forest placement rules also cover hospitals/freezers and prison placement; prison sites now respect the native edifice grid and protected trees. All 22 positions of the cold shelter also passed native read-only site validation. A replay through real candidate generation now exposes `build_starter_base` alongside `resilience_rest`, instead of hiding shelter altogether. The complete integrated suite passes 937 tests; source changes were reviewed before installation.
+
+## Thermal work and care scheduling
+
+On source `fe94871`, autonomy resumed at 09:03:35.369122 UTC. One rest defer was followed by `build_starter_base` at 09:03:50, then actual construction: seven walls and a door were finished by tick 184175. This verified that forest placement and rest retry had been unblocked.
+
+Cold exposure nevertheless deteriorated while the house was incomplete. At 09:05:39 the director was stopped and the map was paused/saved at tick 184175. Red/Furr/Moon had Hypothermia 0.517/0.566/0.516. All three were standing. Furr had lost a toe to frostbite and was bleeding at 0.96. Red was lying outdoors with rest 0.94, Furr was finishing a wall, and Moon was tending. These injuries are real and have not been reverted.
+
+The next layer of failure was global work suppression: the nominal downed-care gate returned `wait` for any active treatment, even with no downed pawn; main then skipped the entire development cycle. A second post-combat-care branch did the same while noncritical treatment continued. Independently, cold construction focus chose a colony-wide wait whenever even one builder was working. Ongoing care/building must protect its actors and patients without preventing a separate capable colonist from finishing shelter.
+
+The observer had correctly slowed from 3x to 1x at 09:04:38.401 UTC, but only after the old thermal threshold of 0.5. The threshold is now based on native serious stage (index 3, Core threshold 0.35) for both Hypothermia and Heatstroke. Native stage fields survive Python normalization, and observer status records thermal facts and the reason for slowing. No wrong installation was found: all 34 runtime hashes matched before continuation.
+
+Native construction dispatch also checked reservations with `forced=true`, which can ignore another worker's reservation. An explicit non-forced reservation check now precedes the ordered job; forced dispatch can still wake a resting eligible worker, but cannot steal an occupied project. Native compilation succeeded with no warnings or errors.
+
+The integrated thermal/care/worker changes pass 952 tests. Main-loop replay executes eight real priority orders/readbacks while ongoing care is protected; another series makes a builder newly downed and critically bleeding and verifies immediate medical reassessment and construction moving only to the remaining capable worker. Thermal regression now checks actual pacing through native DTO normalization rather than asserting that thermal injury belongs to the immunity-disease helper.

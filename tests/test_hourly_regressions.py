@@ -122,11 +122,17 @@ class HourlyRegressionTests(unittest.TestCase):
 
     def test_dangerous_nonimmune_temperature_condition_slows_the_observer(self):
         for name in ("Heatstroke", "Hypothermia"):
-            rows = [{"health": 1, "detailes": {"medical_info": {"hediffs": [{
+            rows = [{"pawn": {"id": 355, "health": 1}, "detailes": {"medical_info": {"hediffs": [{
                 "def_name": name, "severity": 0.6, "immunity": None}]}}}]
-            self.assertTrue(observer._critical_disease(rows))
+            thermal = bool(bridge.thermal_emergency_context(bridge.normalize_colonists(rows)))
+            self.assertEqual(observer.ObserverPlanner().pacing_actions(
+                {"is_paused": False}, 0, critical_thermal=thermal),
+                [{"kind": "ensure_speed", "speed": 1}])
             rows[0]["detailes"]["medical_info"]["hediffs"][0]["severity"] = 0.1
-            self.assertFalse(observer._critical_disease(rows))
+            thermal = bool(bridge.thermal_emergency_context(bridge.normalize_colonists(rows)))
+            self.assertEqual(observer.ObserverPlanner().pacing_actions(
+                {"is_paused": False}, 0, critical_thermal=thermal),
+                [{"kind": "ensure_speed", "speed": 3}])
 
     def test_advancing_shooter_is_not_undrafted_on_the_next_distant_raid_cycle(self):
         hostile = {"id": 99, "current_job": "Wait_Wander", "lord_toil_name": "LordToil_Stage",

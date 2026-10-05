@@ -74,9 +74,14 @@ namespace RIMAPI.Services
                     t.thingIDNumber == request.ProjectThingId && (t is Blueprint || t is Frame));
                 if (project == null) return ConstructionNotApplied("Construction project no longer exists.");
                 var pawn = map.mapPawns.FreeColonists.FirstOrDefault(p => p.thingIDNumber == request.PawnId);
-                if (pawn == null || pawn.Dead || pawn.Downed) return ConstructionNotApplied("Selected builder is unavailable.");
+                if (pawn == null || pawn.Dead || pawn.Downed || pawn.InMentalState || pawn.Drafted)
+                    return ConstructionNotApplied("Selected builder is unavailable.");
                 if (pawn.WorkTypeIsDisabled(WorkTypeDefOf.Construction))
                     return ConstructionNotApplied("Selected pawn cannot do Construction.");
+                // Forced construction may wake a rested pawn, but must not steal
+                // another builder's reserved work between observation and order.
+                if (!pawn.CanReserve(project, 1, -1, null, false))
+                    return ConstructionNotApplied("Construction project is reserved by another worker.");
 
                 Job job = null;
                 if (project is Frame)

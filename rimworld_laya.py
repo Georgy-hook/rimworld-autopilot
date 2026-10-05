@@ -165,6 +165,8 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "label": str(item.get("label") or item.get("label_cap") or ""),
                 "part": str(item.get("part_label") or item.get("part_def_name") or ""),
                 "severity": round(first_number(item.get("severity")), 3),
+                "cur_stage_index": item.get("cur_stage_index"),
+                "cur_stage_label": item.get("cur_stage_label"),
                 "permanent": bool(item.get("is_permanent")),
                 "life_threatening": bool(item.get("is_currently_life_threatening")),
                 "bleeding": bool(item.get("bleeding")),
@@ -202,6 +204,7 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "pain": round(first_number(medical.get("pain")), 3),
                 "comfort": round(first_number(details.get("comfort"), 0.5), 3),
                 "beauty": round(first_number(details.get("beauty"), 0.5), 3),
+                "is_dead": bool(medical.get("is_dead")),
                 "downed": bool(medical.get("is_downed")),
                 "current_job": str(work.get("current_job") or work.get("job") or "unknown"),
                 "inspiration": str(work.get("inspiration_def_name") or ""),
@@ -223,6 +226,46 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+
+def thermal_emergency_context(colonists: Any) -> list[dict[str, Any]]:
+    """Observed serious thermal illness, independently of medical tending.
+
+    Installed Core Heatstroke/Hypothermia stages 3/4 are serious/extreme.
+    Labels are evidence only; localized text never determines urgency.
+    """
+    import math
+
+    evidence = []
+    for pawn in colonists if isinstance(colonists, list) else []:
+        if not isinstance(pawn, dict) or pawn.get("is_dead"):
+            continue
+        for condition in pawn.get("health_conditions") or []:
+            if not isinstance(condition, dict) or condition.get("def_name") not in {"Hypothermia", "Heatstroke"}:
+                continue
+            stage = condition.get("cur_stage_index")
+            valid_stage = isinstance(stage, int) and not isinstance(stage, bool) and stage >= 0
+            try:
+                severity = float(condition.get("severity") or 0)
+            except (TypeError, ValueError, OverflowError):
+                severity = 0.0
+            if not math.isfinite(severity):
+                severity = 0.0
+            threatening = bool(condition.get("life_threatening"))
+            serious = stage >= 3 if valid_stage else severity >= 0.35
+            if not (threatening or serious):
+                continue
+            evidence.append({"pawn_id": pawn.get("id"), "pawn_name": str(pawn.get("name") or "")[:80],
+                             "def_name": condition["def_name"], "severity": severity,
+                             "cur_stage_index": stage if valid_stage else None,
+                             "cur_stage_label": str(condition.get("cur_stage_label") or "")[:80],
+                             "life_threatening": threatening, "tendable_now": bool(condition.get("tendable_now")),
+                             "current_job": str(pawn.get("current_job") or "")[:80],
+                             "reason": "life_threatening" if threatening else "serious_native_stage" if valid_stage else "serious_severity_fallback"})
+            if len(evidence) >= 16:
+                return evidence
+    return evidence
 
 
 def summarize_resources(things: Any) -> dict[str, int]:

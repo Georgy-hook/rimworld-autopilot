@@ -2672,6 +2672,38 @@ def focus_active_fire_choices(actions: list[str], home_fire: bool = False) -> li
     return actions
 
 
+def cold_shelter_worker_state(snapshot: dict[str, Any], pawn: dict[str, Any]) -> dict[str, Any]:
+    live = next((p for p in (snapshot.get("combat") or {}).get("colonists") or []
+                 if str(p.get("id")) == str(pawn.get("id"))), {})
+    return {**pawn, "current_job": live.get("current_job") or pawn.get("current_job"),
+            "current_job_target_id": live.get("current_job_target_id") or pawn.get("current_job_target_id")}
+
+
+def cold_shelter_available_workers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Additional builders only; preserve ongoing building, care and recovery."""
+    result = []
+    protected = active_care_pawn_ids(snapshot)
+    for original in snapshot.get("colonists") or []:
+        if str(original.get("id")) in protected:
+            continue
+        pawn = cold_shelter_worker_state(snapshot, original)
+        priority = (pawn.get("work_priorities") or {}).get("Construction")
+        job = str(pawn.get("current_job") or "").lower()
+        if (pawn.get("dead") or pawn.get("downed") or pawn.get("in_mental_state") or pawn.get("is_drafted")
+                or bridge.active_recovery_diseases(pawn) or not isinstance(priority, dict) or priority.get("disabled")
+                or bridge.first_number(pawn.get("bleeding_rate")) >= 0.05
+                or bridge.first_number(pawn.get("rest"), 1) < 0.3
+                or bridge.first_number(pawn.get("hunger"), 1) < 0.1
+                or bridge.first_number((pawn.get("capacities") or {}).get("moving"), 1) <= 0
+                or bridge.first_number((pawn.get("capacities") or {}).get("manipulation"), 1) <= 0
+                or job in {"finishframe", "haultocontainer", "constructdeliverresourcestoframes",
+                           "constructdeliverresourcestoblueprints", "constructfinishframes",
+                           "tendpatient", "rescue", "feedpatient", "dobill"}):
+            continue
+        result.append(pawn)
+    return result
+
+
 def focus_cold_start_choices(snapshot: dict[str, Any], actions: list[str],
                              details: dict[str, Any]) -> list[str]:
     """Finish a heated first room before exposure makes every builder collapse."""
@@ -2709,27 +2741,38 @@ def focus_cold_start_choices(snapshot: dict[str, Any], actions: list[str],
         dev["cold_start_focus"] = "place_heated_shelter"
         return preserve_immediate_care(actions, ["build_starter_base"])
     projects = details.get("construction_project_options") or []
+    occupied_targets = {str(p.get("current_job_target_id"))
+        for original in snapshot.get("colonists") or []
+        if (p := cold_shelter_worker_state(snapshot, original)).get("current_job_target_id") is not None
+        and str(p.get("current_job") or "").lower() in {
+            "finishframe", "haultocontainer", "constructdeliverresourcestoframes",
+            "constructdeliverresourcestoblueprints", "constructfinishframes"}}
+    projects = [row for row in projects if str(row.get("thing_id")) not in occupied_targets]
     shell = [row for row in projects if str(row.get("def_name") or "") in {"Wall", "Door"}]
     urgent_projects = shell or [row for row in projects
                                 if str(row.get("def_name") or "") in {"Campfire", "Heater"}]
     if urgent_projects:
         details["construction_project_options"] = urgent_projects
         dev["construction_project_options"] = urgent_projects
-    if "prioritize_construction" in actions and urgent_projects:
+    spare_builders = cold_shelter_available_workers(snapshot)
+    known_workers = any(isinstance(p.get("work_priorities"), dict) for p in snapshot.get("colonists") or [])
+    if "prioritize_construction" in actions and urgent_projects and (spare_builders or not known_workers):
         dev["cold_start_focus"] = "assign_builder"
         return preserve_immediate_care(actions, ["prioritize_construction"])
-    if urgent_projects and any(
+    builders_working = any(
         str(pawn.get("current_job") or "").lower() in {
             "finishframe", "haultocontainer", "constructdeliverresourcestoframes",
             "constructdeliverresourcestoblueprints", "constructfinishframes",
         }
-        for pawn in snapshot.get("colonists") or [] if not pawn.get("downed")
-    ):
+        for original in snapshot.get("colonists") or [] if not original.get("downed")
+        for pawn in [cold_shelter_worker_state(snapshot, original)])
+    if builders_working and (not spare_builders or not urgent_projects):
         dev["cold_start_focus"] = "builders_working"
         return preserve_immediate_care(actions, ["hold_survival"])
-    if "prioritize_construction_project" in actions and urgent_projects:
+    if "prioritize_construction_project" in actions and urgent_projects and (spare_builders or not known_workers):
         dev["cold_start_focus"] = "finish_shell" if shell else "finish_heat"
-        return preserve_immediate_care(actions, ["prioritize_construction_project"])
+        focused = ["prioritize_construction_project"] + (["hold_survival"] if builders_working else [])
+        return preserve_immediate_care(actions, focused)
     for name in ("prioritize_thermal_project", "build_room_campfire",
                  "connect_room_heater_power", "build_room_heater",
                  "harvest_nearby_trees"):
@@ -6116,12 +6159,37 @@ def action_family(name: str) -> str:
     return name.split(":", 1)[0]
 
 
+def active_care_pawn_ids(snapshot: dict[str, Any]) -> set[str]:
+    """An observed care job reserves its executor and actual pawn target."""
+    result: set[str] = set()
+    pawn_ids = {str(p.get("id")) for p in snapshot.get("colonists") or []}
+    live = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
+    for original in snapshot.get("colonists") or []:
+        pawn = {**original, **live.get(str(original.get("id")), {})}
+        if str(pawn.get("current_job") or "").casefold() not in PROTECTED_CARE_JOBS:
+            continue
+        result.add(str(pawn.get("id")))
+        target = pawn.get("care_target_id") or pawn.get("current_job_target_id")
+        if target is not None and str(target) in pawn_ids:
+            result.add(str(target))
+    return result
+
+
 def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]:
     result: dict[str, str] = {}
     work_def = next((row for row in (snapshot.get("development") or {}).get("work_types") or []
                      if isinstance(row, dict) and str(row.get("def_name") or row.get("name")) == skill_name), {})
     relevant_skills = list(work_def.get("relevant_skills") or []) or [skill_name]
-    for pawn in snapshot.get("colonists", []):
+    cold = (snapshot.get("development") or {}).get("cold_threat") or {}
+    cold_building = skill_name == "Construction" and (cold.get("patients") or bridge.first_number(cold.get("outside_c"), 20) <= -5)
+    eligible_cold = {str(p.get("id")) for p in cold_shelter_available_workers(snapshot)} if cold_building else None
+    protected = active_care_pawn_ids(snapshot)
+    for original in snapshot.get("colonists", []):
+        if str(original.get("id")) in protected:
+            continue
+        pawn = cold_shelter_worker_state(snapshot, original) if cold_building else original
+        if eligible_cold is not None and str(pawn.get("id")) not in eligible_cold:
+            continue
         if pawn.get("downed") or pawn.get("in_mental_state") or bridge.active_recovery_diseases(pawn):
             continue
         work_name = "Hauling" if skill_name == "Hauling" else skill_name
@@ -6136,8 +6204,17 @@ def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]
         traits = ", ".join(str(t.get("label") or t.get("name")) for t in pawn.get("traits", [])) or "no notable traits"
         conditions = ", ".join(f"{h.get('label') or h.get('def_name')} {h.get('part')}" for h in pawn.get("health_conditions", [])) or "no visible injury"
         caps = pawn.get("capacities") or {}
+        exposure = ""
+        if cold_building:
+            hypo = max((bridge.first_number(h.get("severity")) for h in pawn.get("health_conditions") or []
+                        if h.get("def_name") == "Hypothermia"), default=0)
+            blood_loss = max((bridge.first_number(h.get("severity")) for h in pawn.get("health_conditions") or []
+                              if h.get("def_name") == "BloodLoss"), default=0)
+            exposure = (f"rest {pawn.get('rest')}; hunger {pawn.get('hunger')}; job {pawn.get('current_job')}; "
+                        f"cold {cold.get('outside_c')}C, hypothermia {hypo:.2f}; bleeding {pawn.get('bleeding_rate')}, blood loss {blood_loss:.2f}; "
+                        "cost interrupt current rest/work for one shelter job; continued exposure slows building; ")
         result[str(pawn["id"])] = (
-            f"{pawn.get('name')}: {skill_name}; {', '.join(skills)}; current priority {priority.get('priority')}; "
+            f"{pawn.get('name')}: {exposure}{skill_name}; {', '.join(skills)}; current priority {priority.get('priority')}; "
             f"job {pawn.get('current_job')}; traits {traits}; health {pawn.get('health')}; pain {pawn.get('pain')}; "
             f"moving {caps.get('moving', 1)}, manipulation {caps.get('manipulation', 1)}, sight {caps.get('sight', 1)}; {conditions}"
         )
@@ -7452,8 +7529,9 @@ def dedicate_researcher(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
 def priority_deficit_workers(snapshot: dict[str, Any], work: str, *,
                              preferred_ids: set[int] | None = None,
                              avoid_ids: set[int] | None = None) -> list[dict[str, Any]]:
+    protected = active_care_pawn_ids(snapshot) if work not in {"Doctor", "Patient", "PatientBedRest"} else set()
     eligible = [pawn for pawn in snapshot.get("colonists") or []
-                if not pawn.get("in_mental_state")
+                if str(pawn.get("id")) not in protected and not pawn.get("in_mental_state")
                 and (preferred_ids is None or int(pawn.get("id") or 0) in preferred_ids)]
     if avoid_ids:
         alternatives = [pawn for pawn in eligible if int(pawn.get("id") or 0) not in avoid_ids]
@@ -7474,6 +7552,8 @@ def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str,
                *, avoid_ids: set[int] | None = None) -> Any:
     eligible = priority_deficit_workers(snapshot, work,
         preferred_ids={int(pawn_id)} if pawn_id is not None else None, avoid_ids=avoid_ids)
+    if work not in {"Doctor", "Patient", "PatientBedRest"} and str(pawn_id) in active_care_pawn_ids(snapshot):
+        return {"applied": False, "reason": "Selected pawn is reserved by an active care job"}
     selected = next((p for p in snapshot["colonists"]
                      if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)), None)
     if selected is not None and int((((selected.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1:
@@ -9407,6 +9487,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 int(((worker.get("skills") or {}).get("Construction") or {}).get("level") or 0)
                 < int(project.get("minimum_construction_skill") or 0)):
             return {"applied": False, "reason": "Selected builder cannot complete this project's skill requirement"}
+        if str(worker_id) in active_care_pawn_ids(snapshot):
+            return {"applied": False, "reason": "Selected builder is reserved by an active care job"}
         doctor_change = free_cold_shelter_builder(client, snapshot, int(worker_id))
         priority = prioritize(client, snapshot, "Construction", int(worker_id))
         response = client.post("/api/v1/builder/prioritize", body={
@@ -12310,9 +12392,8 @@ def main() -> int:
                                   f"{care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
                     elif care_gate == "wait" and snapshot["game"].get("is_paused"):
                         client.post("/api/v1/game/speed", query={"speed": 1})
-                    elapsed = time.monotonic() - started
-                    time.sleep(max(0.0, 2.0 - elapsed))
-                    continue
+                    # A care job owns its actor and patient, not the whole colony.
+                    # Continue into development while other workers remain available.
                 if snapshot["map"]["enemies"] > 0 or any(c.get("is_drafted") for c in snapshot["combat"]["colonists"]):
                     living_hostiles = [h for h in snapshot["combat"]["hostiles"] if not h.get("is_dead")]
                     living_hostiles.extend(h for h in snapshot["combat"].get("hostile_buildings") or [] if h.get("active_threat"))
@@ -12465,19 +12546,13 @@ def main() -> int:
                         if (fire_record["decision"]["choice"] == "prioritize_firefighting"
                                 and fire_record["result"].get("applied")):
                             continue
-                    if (post_combat_pending and care_assignment_time > 0
-                            and any(row.get("tendable_now") or row.get("is_downed")
-                                    for row in snapshot["combat"]["colonists"])
-                            and not urgent_care_actionable(snapshot)
-                            and (now - care_assignment_time < 15.0
-                                 or ((treatment_job_in_progress(snapshot) or rescue_job_in_progress(snapshot))
-                                     and now - care_assignment_time < 120.0))):
-                        if snapshot["game"].get("is_paused"):
-                            client.post("/api/v1/game/speed", query={"speed": 1})
-                        elapsed = time.monotonic() - started
-                        time.sleep(max(0.0, min(args.interval, 2.0) - elapsed))
-                        continue
-                    if post_combat_pending and now >= next_post_combat_care_cycle:
+                    care_in_progress = (treatment_job_in_progress(snapshot)
+                                        or rescue_job_in_progress(snapshot))
+                    # Keep the accepted job intact; only new actionable critical
+                    # patients bypass this wait. Shelter work still runs below.
+                    if (post_combat_pending and care_gate != "assign"
+                            and (not care_in_progress or urgent_care_actionable(snapshot))
+                            and now >= next_post_combat_care_cycle):
                         care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log)
                         if care_record is None:
                             post_combat_pending = False
@@ -12498,10 +12573,6 @@ def main() -> int:
                             if post_combat_care_failures >= 3:
                                 post_combat_pending = False
                             print(f"[{care_record['timestamp']}] post-combat care: {care_record['decision']['choice']} | {stdout_result(care_record['result'])}", flush=True)
-                            if urgent_care_actionable(snapshot):
-                                elapsed = time.monotonic() - started
-                                time.sleep(max(0.0, 2.0 - elapsed))
-                                continue
                     rescue_record = run_rescue_site_cycle(client, state, args.state, args.log, snapshot)
                     away_site = bool(snapshot.get("map", {}).get("is_temp_incident_map"))
                     if rescue_record is not None:

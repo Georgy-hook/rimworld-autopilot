@@ -2,7 +2,7 @@
 
 The observer never orders pawns or changes Laya's decisions. Its only game
 writes are camera moves, zoom, an English death caption, and pacing at 3x
-outside a home fire, critical bleeding, dangerous disease, starvation of a patient,
+outside a home fire, critical bleeding, dangerous disease, serious thermal illness, starvation of a patient,
 or an attack on a downed colonist,
 when it slows to 1x. Game time is permitted only while a fresh, live director
 heartbeat reports running; otherwise the loaded colony stays paused.
@@ -25,6 +25,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+from rimworld_laya import normalize_colonists, thermal_emergency_context
 
 
 DIRECTOR_HEARTBEAT_SECONDS = 180.0
@@ -149,10 +151,6 @@ def _critical_disease(rows: Any) -> bool:
         if medical.get("is_dead"):
             continue
         for h in medical.get("hediffs") or []:
-            if (str(h.get("def_name") or "") in {"Heatstroke", "Hypothermia"}
-                    and (h.get("is_currently_life_threatening")
-                         or float(h.get("severity") or 0) >= 0.5)):
-                return True
             immunity = h.get("immunity")
             if not h.get("can_ever_kill") or not isinstance(immunity, (float, int)) or immunity >= 1:
                 continue
@@ -491,9 +489,10 @@ class ObserverPlanner:
                        critical_bleeding: bool = False,
                        downed_under_attack: bool = False,
                        critical_disease: bool = False, critical_starvation: bool = False,
+                       critical_thermal: bool = False,
                        director_is_ready: bool = True) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
-        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED
+        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal else TARGET_GAME_SPEED
         if not director_is_ready:
             target = 0
             if game.get("is_paused"):
@@ -632,6 +631,8 @@ def main() -> None:
     next_window_scan = 0.0
     next_medical_scan = 0.0
     critical_disease = False
+    critical_thermal = False
+    thermal_context: list[dict[str, Any]] = []
     critical_starvation = False
     outbox: queue.Queue[dict[str, Any]] = queue.Queue()
     DeathEventReader(args.api_url, outbox, stop).start()
@@ -683,6 +684,8 @@ def main() -> None:
                 if now >= next_medical_scan:
                     medical_rows = api.request("/api/v2/colonists/detailed")
                     critical_disease = _critical_disease(medical_rows)
+                    thermal_context = thermal_emergency_context(normalize_colonists(medical_rows))
+                    critical_thermal = bool(thermal_context)
                     critical_starvation = _critical_starvation(medical_rows)
                     next_medical_scan = now + MEDICAL_SCAN_SECONDS
                 downed_under_attack = _downed_under_attack(
@@ -709,6 +712,7 @@ def main() -> None:
                                                  downed_under_attack=downed_under_attack,
                                                  critical_disease=critical_disease,
                                                  critical_starvation=critical_starvation,
+                                                 critical_thermal=critical_thermal,
                                                  director_is_ready=runtime_ready) + actions
                 if now >= next_window_scan:
                     windows = api.request("/api/v1/ui/windows") or []
@@ -719,8 +723,11 @@ def main() -> None:
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
                           "director_ready": runtime_ready,
-                          "target_speed": 0 if not runtime_ready else EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else TARGET_GAME_SPEED,
+                          "target_speed": 0 if not runtime_ready else EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal else TARGET_GAME_SPEED,
                           "critical_disease": critical_disease,
+                          "critical_thermal": critical_thermal,
+                          "thermal_context": thermal_context,
+                          "speed_reason": "director_not_ready" if not runtime_ready else "thermal_emergency" if critical_thermal else "other_emergency" if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else "normal",
                           "critical_starvation": critical_starvation,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}
@@ -731,7 +738,9 @@ def main() -> None:
                     try:
                         _execute(api, action)
                         if action["kind"] not in {"follow"}:
-                            _log(args.log, {"action": action, "shot": status["shot"]})
+                            _log(args.log, {"action": action, "shot": status["shot"],
+                                            **({"reason": status["speed_reason"], "thermal_context": thermal_context}
+                                               if action["kind"] == "ensure_speed" else {})})
                     except (OSError, RuntimeError, ValueError) as exc:
                         _log(args.log, {"action": action, "error": str(exc)[:300]})
             except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
