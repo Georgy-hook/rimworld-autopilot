@@ -4,6 +4,35 @@ Current candidate: **0.0.7**. Historical tests below retain their own revision a
 
 This log tracks real runs and explicitly identified technical replays. Death records distinguish native causes, final-save conditions and uncertain observer captions. Wall-clock runtime excludes intentional development pauses when noted.
 
+## 5 October 2026 — Goberium Coalition, material blocker repaired
+
+- One fresh random generation: tile **55904**, world seed
+  `laya-thermal-progress-20261005`, Cassandra/Medium/permadeath; baseline tick40.
+  Founders Holster767, Vega770 and Kitty782. Kitty arrived with nonlethal Asthma.
+- Speed3 autonomy began **10:03:28 UTC** on Python5876caf/native0927d3c.
+  At **10:09:31**, technical pause/save tick143482 preserved all three alive.
+  The last wooden wall lacked four logs; 776 steel was available, but no beds
+  were roofed. Timber leaves omitted measured demand and repeatedly deferred;
+  sleep/work changes also reopened the same rest defer.
+- Python **a724457**, **1004 passing tests**, preserves complete parameter facts,
+  presents actual bounded harvest cost and validated structural replacements,
+  and remembers clinical/material refusals across normal state drift. Native
+  DLL unchanged. A real CUDA replay locally persisted a rest defer and then
+  selected steel replacement; it sent no game orders.
+- The **same colony** resumed **10:34:51.965 UTC**, tick143482. At10:35:06 Laya
+  autonomously selected replacement of Wall20213 with Steel. Native readback
+  observed Blueprint20651. At **10:35:38, tick159558**, there were **23 finished
+  walls, one door, three roofed beds and no unfinished projects**. Room52 had
+  open_roof_count0, temperature33.22C; outside30.92C. All three founders were
+  alive, upright and not bleeding;33 survival meals remained. Laya next selected
+  equipment. Roof completion does not establish cooling or long-term survival.
+- Hourly observation re-enabled, first review no earlier than **11:38 UTC**.
+  Run evidence: `work/longrun-007-thermal-progress-20261005` outside the repo.
+  [Material context and defer audit](docs/audits/material-parameter-context-2026-10-05.md).
+- Esia remains a separate suspended technical run at saved tick200289 with all
+  three alive, two downed. Its later21-tick native reassignment check is technical
+  verification, not recovery or a new autonomous outcome. Neither save was rerolled.
+
 ## 3 October 2026 — Requader startup loop, paused
 
 - Fresh Crashlanded colony, Cassandra/Medium/permadeath, random tile 40061.
