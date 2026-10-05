@@ -254,6 +254,10 @@ namespace RIMAPI.Models
     {
         public int? MapId { get; set; }
         public bool AllowUnforbidEquip { get; set; }
+        // Explicit finishing intent only; ordinary attacks keep the native false default.
+        public bool KillIncappedTarget { get; set; }
+        public bool RequestDraftForFinishing { get; set; }
+        public int? CancelFinishingTargetId { get; set; }
         public int PawnId { get; set; }
         public string JobDef { get; set; }
         public int? TargetThingId { get; set; }

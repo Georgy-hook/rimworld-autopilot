@@ -9,6 +9,19 @@ published installer or a claim of demonstrated autonomous victory. See the
   specialist and affordance domains. Laya receives bounded benefit, risk, cost,
   inaction and uncertainty for choices; subsequent observations remain distinct
   from command acceptance.
+- Added wildlife and inspiration modules. Hunting compares actual eligible
+  hunters or selected groups, weapons, worn armor, health and native animal
+  retaliation separately from a comparative injury-risk estimate. Scoped group
+  ownership and observed jobs protect hunting from peaceful stand-down loops.
+- Animal training now exposes every loaded trainable, prerequisites, learned
+  steps, decay, handler readiness and master/follow policy. A requested training
+  policy remains distinct from completed learning.
+- Timed and single-use inspirations reach profession and exact-worker choices
+  for taming, recruitment, production, surgery and trade. Native session identity
+  prevents spending an expired or replaced inspiration on a stale choice.
+- Fixed the observed downed-raider order selecting a nonviolent colonist and
+  omitting the native finishing flag. Explicit finishing orders validate the
+  actor, reobserve the actual job and stop retrying stalled actor/target pairs.
 - Expanded live crop/season, blight, augmentation, equipment, trained-animal,
   medical, kitchen, storage and DLC context with ordinary game executors.
 - Added campaign identity and cross-map goal persistence, staged connected ship

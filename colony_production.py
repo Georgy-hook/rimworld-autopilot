@@ -133,7 +133,14 @@ def _facts(state, question):
     state = state or {}
     # The caller supplies compact requirements. Goal facts precede stage names
     # in the bounded adapter; catalogs and inventory stay outside this envelope.
-    return {"endgame": state.get("endgame"), "goal_requirements": state.get("goal_requirements") or {}, "purpose": question}
+    facts = {}
+    if state.get("production_inspirations"):facts["inspiration"]=state["production_inspirations"]
+    facts.update(endgame=state.get("endgame"),goal_requirements=state.get("goal_requirements") or {},purpose=question)
+    observed=state.get("decision_facts") or state.get("attention_facts") or {}
+    care = observed.get("care_risks") or state.get("care_risks")
+    if care: facts["care_risks"]=care
+    if state.get("production_inspirations"):facts["inspiration"]=state["production_inspirations"]
+    return facts
 
 
 def _stage(agent, state, rows, question, instructions):
@@ -150,16 +157,35 @@ def _stage(agent, state, rows, question, instructions):
     return (None if selected == "defer" else indexed[selected][0]), raw
 
 
+def recipe_cost(plan):
+    budget = plan.get("ingredient_budget")
+    if not isinstance(budget, list): return plan.get("cost", "Ingredients/labor")
+    parts = []
+    for ingredient in budget[:4]:
+        alternatives = ingredient.get("alternatives") or []
+        parts.append(" / ".join(f"{a.get('required')} {a.get('def_name')} (reservable {a.get('reservable_count')}; unit value {a.get('unit_value')})" for a in alternatives[:3]))
+    return "; ".join(parts) + f"; work {plan.get('work_amount')}; other pending bills may compete"
+
+
 def recipe_choose(agent, context, state=None):
     plans = recipe_options(context)
+    active = {}
+    for plan in plans.values():
+        for worker in plan.get("workers") or []:
+            if worker.get("expected_inspiration"):
+                info=worker.get("inspiration") or {}
+                active[worker.get("worker_id")]={"id":worker.get("worker_id"),"def":worker.get("expected_inspiration"),"left":info.get("remaining_ticks")}
+    state={**(state or {}),"production_inspirations":list(active.values())[:8]}
     stages = []
     def effect(p):
-        return {"benefit": f"{p.get('products') or p.get('recipe')} material={p.get('material') or 'default'} table={p.get('building_id')}", "cost": p.get("cost", "Ingredients/labor"),
+        creative=[w for w in p.get("workers") or [] if w.get("expected_inspiration")=="Inspired_Creativity" and p.get("quality_bearing") is True]
+        uplift=f"Inspired_Creativity +2; left {min((w.get('inspiration') or {}).get('remaining_ticks') or 0 for w in creative)}; " if creative else ""
+        return {"benefit": f"{uplift}value {p.get('normal_product_value', 'unknown')}; {p.get('products') or p.get('recipe')} quality-bearing {p.get('quality_bearing', 'unknown')}; material={p.get('material') or 'default'}", "cost": recipe_cost(p),
                 "risk": p.get("risk") or ("Bandwidth/waste/power" if p.get("gestation_cycles") else "Consumes scarce stock; biological/social cost if applicable"),
                 "inaction": "No products; stocks/labor preserved", "uncertainty": "Bill accepted only; normal work pending"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan.get("category") or "other", []).append((key, plan))
-    group, raw = _stage(agent, state, [(category, category, effect(items[0][1])) for category, items in groups.items()], "production_purpose", "Choose production purpose or defer; compare scarcity, bandwidth, waste and costs.")
+    group, raw = _stage(agent, state, [(category, category, effect(next((p for _,p in items if p.get("quality_bearing") is True and any(w.get("expected_inspiration")=="Inspired_Creativity" for w in p.get("workers") or [])),items[0][1]))) for category, items in groups.items()], "production_purpose", "Choose production purpose or defer; compare scarcity, bandwidth, waste and costs.")
     stages.append(raw)
     if group is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     recipes = {}
@@ -169,7 +195,27 @@ def recipe_choose(agent, context, state=None):
     if recipe is None: return {"production_policy":"defer", "shown_production_options": [key for key, _ in groups[group]]}, {"stages":stages}
     key, raw = _stage(agent, state, [(key, plan.get('label'), effect(plan)) for key, plan in recipes[recipe]], "production_table_material", "Choose actual table/material or defer. Competing resources and labor are real costs.")
     stages.append(raw)
-    return {"production_policy":key or "defer", **({"shown_production_options": [k for k, _ in recipes[recipe]]} if key is None else {})}, {"stages":stages}
+    if key is None:
+        return {"production_policy":"defer", "shown_production_options": [k for k, _ in recipes[recipe]]}, {"stages":stages}
+    plan = plans[key]
+    workers = plan.get("workers")
+    if isinstance(workers, list) and workers:
+        rows = []
+        for worker in workers:
+            inspiration = worker.get("inspiration") or {}
+            creative = plan.get("quality_bearing") is True and worker.get("expected_inspiration") == "Inspired_Creativity"
+            rows.append((worker, str(worker.get("label")), {
+                "benefit": f"{plan.get('relevant_skill')} {worker.get('skill')}; speed {worker.get('work_speed')}; " +
+                           ("next quality +2 levels (Legendary cap)" if creative else str(inspiration.get("effect") or "ordinary worker")),
+                "cost": recipe_cost(plan), "risk": "One finite bill binds this worker; scarce materials and other quality jobs compete for inspiration",
+                "inaction": "Keep current work and inspiration", "uncertainty": f"Quality random; not guaranteed Legendary. Inspiration left {inspiration.get('remaining_ticks')} ticks; work {plan.get('work_amount')}"}))
+        worker, raw = _stage(agent, state, rows, "production_worker", "Choose exact producer or defer. Compare quality, value, finite materials, work time and training; inspiration may expire or be consumed elsewhere before completion.")
+        stages.append(raw)
+        if worker is None:
+            return {"production_policy":"defer", "shown_production_options":[key]}, {"stages":stages}
+        return {"production_policy":key, "production_worker":worker}, {"stages":stages}
+    # Older read-only catalogs lack worker details. Execution still revalidates the exact ID.
+    return {"production_policy":key, "production_worker":{"worker_id":plan["worker_ids"][0], "expected_inspiration":"", "expected_identity":""}}, {"stages":stages}
 
 def logistics_options(context):
     if "logistics_options" in context:
@@ -338,8 +384,17 @@ def execute(client, snapshot, map_state, action, selected):
         live = recipe_options({"recipe_context": current}).get(key)
         if not live or any(live.get(k) != original.get(k) for k in ("building_id", "recipe", "material")):
             return failed("recipe_no_longer_available")
+        worker = selected.get("production_worker") or {}
+        if not worker and "workers" not in live and len(live.get("worker_ids") or []) == 1:
+            worker={"worker_id":live["worker_ids"][0],"expected_inspiration":"","expected_identity":""}
+        if worker.get("worker_id") not in (live.get("worker_ids") or []):
+            return {"applied":False, "reason":"producer_no_longer_available", "reconsider":True}
+        native_worker = next((w for w in live.get("workers") or [] if w.get("worker_id") == worker.get("worker_id")), None)
+        if native_worker is not None and any(native_worker.get(k) != worker.get(k) for k in ("expected_inspiration", "expected_identity")):
+            return {"applied":False, "reason":"inspiration_changed_reconsider", "reconsider":True}
         path = "/api/v1/production/recipe-bill"
-        body = {"map_id": snapshot["map"]["id"], "key": key}
+        body = {"map_id": snapshot["map"]["id"], "key": key,
+                **{k:worker.get(k) for k in ("worker_id", "expected_inspiration", "expected_identity")}}
     else:
         if action == "production_feed_batch":
             refreshed = {**snapshot, "development": {**snapshot.get("development", {}), "production": current}}
@@ -359,6 +414,8 @@ def execute(client, snapshot, map_state, action, selected):
         return failed("production_transport_failed", error=str(exc)[:240], outcome_unknown=True)
     if not isinstance(response, dict) or not isinstance(response.get("applied"), bool):
         return failed("invalid_response", response=response, outcome_unknown=True)
+    if not response["applied"] and response.get("reconsider") is True:
+        return {"applied":False, "reason":response.get("reason"), "reconsider":True, "response":response}
     if not response["applied"]:
         return failed(response.get("reason") or "production_not_applied", response=response)
     if action == "production_utilities":

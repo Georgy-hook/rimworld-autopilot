@@ -191,7 +191,15 @@ def profession_context(colonists: list[dict[str, Any]], work_types: list[dict[st
                 "flame": passion_info(skill.get("passion"))["icon"],
                 "weighted_fit": round(value, 1),
             })
+        relevant={"animal_husbandry":{"Inspired_Taming"},"art_culture":{"Inspired_Creativity","Frenzy_Work"},
+                  "craft_industry":{"Inspired_Creativity","Frenzy_Work"},"medicine_biotech":{"Inspired_Surgery"},
+                  "trade_diplomacy":{"Inspired_Trade","Inspired_Recruitment"},"security_hunting":{"Frenzy_Shoot","Frenzy_Go"}}
+        inspiration_rows=[{"pawn":p.get("name"),"def":p.get("inspiration"),
+                          "effect":(p.get("inspiration_context") or {}).get("effect"),
+                          "left":(p.get("inspiration_context") or {}).get("remaining_ticks")}
+                         for p in colonists if p.get("inspiration") in relevant.get(direction,{"Frenzy_Work","Frenzy_Go"})]
         direction_rows[direction] = {
+            "inspirations":inspiration_rows,
             "label": spec["label"],
             "fit_score": round(total, 1),
             "people": sorted(contributions, key=lambda row: row["weighted_fit"], reverse=True),
@@ -204,6 +212,8 @@ def profession_context(colonists: list[dict[str, Any]], work_types: list[dict[st
         "skills": skill_summary,
         "work_types": live_work_catalog(work_types),
         "passion_legend": PASSION,
+        "inspirations": [{"pawn_id": p.get("id"), "pawn":p.get("name"), "def":p.get("inspiration"),
+                         "context":p.get("inspiration_context")} for p in colonists if p.get("inspiration")],
     }
 
 
@@ -216,7 +226,8 @@ def direction_choice_descriptions(context: dict[str, Any]) -> dict[str, str]:
         ) or "no specialist"
         descriptions[name] = (
             f"{row.get('label')}; workforce fit {row.get('fit_score')}; {people}; "
-            f"work {', '.join(row.get('work_types') or [])}; buildings {', '.join(row.get('building_programs') or [])}"
+            f"work {', '.join(row.get('work_types') or [])}; buildings {', '.join(row.get('building_programs') or [])}; "
+            f"active opportunities {row.get('inspirations') or 'none'}"
         )
     return descriptions
 

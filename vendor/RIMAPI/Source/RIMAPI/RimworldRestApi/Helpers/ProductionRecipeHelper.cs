@@ -24,6 +24,12 @@ namespace RIMAPI.Helpers
             public string risk;
             public string products;
             public int[] worker_ids;
+            public object[] workers;
+            public object[] ingredient_budget;
+            public bool quality_bearing;
+            public float normal_product_value;
+            public float work_amount;
+            public string relevant_skill;
         }
 
         private sealed class RecipeInfo
@@ -46,7 +52,7 @@ namespace RIMAPI.Helpers
                 Category = recipe.gestationCycles > 0 || recipe.mechanitorOnlyRecipe ? "mech"
                     : recipe.products.Any(p => p.thingDef.IsMedicine) ? "medicine"
                     : recipe.products.Any(p => p.thingDef.IsDrug) ? "drugs"
-                    : recipe.products.Any(p => p.thingDef.IsWeapon || p.thingDef.IsApparel) ? "equipment" : "materials",
+                    : recipe.products.Any(p => p.thingDef.IsWeapon || p.thingDef.IsApparel) ? "equipment" : recipe.products.Any(p => p.thingDef.HasComp(typeof(CompQuality)) && recipe.workSkill == SkillDefOf.Artistic) ? "art" : "materials",
                 Cost = string.Join("; ", recipe.ingredients.Select(i => i.SummaryFor(recipe)))
             };
             recipeInfo[recipe] = info;
@@ -55,7 +61,7 @@ namespace RIMAPI.Helpers
 
         private static bool Protected(Pawn pawn)
         {
-            return pawn.Dead || pawn.Downed || pawn.Drafted || pawn.InMentalState
+            return InspirationAutomationHelper.Protected(pawn) || pawn.Dead || pawn.Downed || pawn.Drafted || pawn.InMentalState
                 || pawn.CurJobDef == JobDefOf.DoBill || pawn.CurJobDef == JobDefOf.TendPatient
                 || pawn.CurJobDef == JobDefOf.Rescue || pawn.CurJobDef == JobDefOf.FeedPatient;
         }
@@ -212,6 +218,18 @@ namespace RIMAPI.Helpers
                             gestation_cycles = recipe.gestationCycles, category = info.Category,
                             label = table.LabelShortCap + ": " + recipe.LabelCap + (material == null ? "" : " material " + material),
                             cost = info.Cost, worker_ids = eligible.ToArray(),
+                            workers = eligible.Select(id => { Pawn p=PawnHelper.FindPawnById(id); return (object)new {
+                                worker_id=id, label=p.LabelShortCap, skill=recipe.workSkill==null?0:p.skills.GetSkill(recipe.workSkill).Level,
+                                work_speed=p.GetStatValue(StatDefOf.WorkSpeedGlobal), expected_inspiration=InspirationAutomationHelper.Active(p)?.def.defName ?? "",
+                                expected_start_tick=InspirationAutomationHelper.StartTick(p), expected_identity=InspirationAutomationHelper.IdentityOf(p), inspiration=InspirationAutomationHelper.Describe(p) }; }).ToArray(),
+                            ingredient_budget = recipe.ingredients.Select(i => (object)new { base_count=i.GetBaseCount(),
+                                alternatives=effective.ingredientFilter.AllowedThingDefs.Where(d=>i.filter.Allows(d)).Select(d=>new {
+                                    def_name=d.defName, required=i.CountRequiredOfFor(d,recipe,effective),
+                                    reservable_count=reachable.Where(pair=>eligible.Contains(pair.Key.thingIDNumber)).Select(pair=>pair.Value.Where(t=>t.def==d).Sum(t=>t.stackCount)).DefaultIfEmpty(0).Max(),
+                                    unit_value=d.GetStatValueAbstract(StatDefOf.MarketValue) }).ToArray() }).ToArray(),
+                            quality_bearing = recipe.products.Any(p=>p.thingDef.HasComp(typeof(CompQuality))),
+                            normal_product_value = recipe.products.Sum(p=>p.count*p.thingDef.GetStatValueAbstract(StatDefOf.MarketValue,material==null?null:DefDatabase<ThingDef>.GetNamedSilentFail(material))),
+                            work_amount=recipe.workAmount, relevant_skill=recipe.workSkill?.defName,
                             products = string.Join("; ", recipe.products.Select(p => p.thingDef.defName + " x" + p.count)),
                             risk = "Scarce ingredients/labor/power; mech bandwidth and waste; biological/drug consequences remain vanilla. No pawn donors allocated."
                         });
@@ -234,6 +252,13 @@ namespace RIMAPI.Helpers
             return ApiResult<object>.Ok(new
             {
                 available = true, options = Options(map), subcore_scanners = scanners,
+                pending_bills=map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>()
+                    .SelectMany(t=>t.BillStack.Bills.OfType<Bill_Production>().Where(Pending).Select(b=>new {
+                        building_id=t.thingIDNumber,recipe=b.recipe.defName,worker_id=b.PawnRestriction?.thingIDNumber,
+                        repeat_mode=b.repeatMode.defName,repeat_count=b.repeatCount,suspended=b.suspended,
+                        quality_bearing=b.recipe.products.Any(p=>p.thingDef.HasComp(typeof(CompQuality))),
+                        ingredient_requirements=Info(b.recipe).Cost,materials=b.ingredientFilter.AllowedThingDefs.Select(d=>d.defName).Take(16).ToArray()
+                    })).Take(64).ToArray(),
                 stocks = map.listerThings.AllThings.Where(Stock).GroupBy(t => t.def.defName)
                     .Select(g => new { def_name = g.Key, count = g.Sum(t => t.stackCount) }).ToArray()
             });
@@ -245,17 +270,44 @@ namespace RIMAPI.Helpers
             if (map == null) return ApiResult<object>.Fail("Map missing");
             Choice choice = Options(map).FirstOrDefault(c => c.key == request.Key);
             if (choice == null) return ApiResult<object>.Ok(new { applied = false, reason = "recipe_no_longer_available" });
+            Pawn worker=request.WorkerId.HasValue?PawnHelper.FindPawnById(request.WorkerId.Value):null;
+            if(worker==null || !choice.worker_ids.Contains(worker.thingIDNumber))return ApiResult<object>.Ok(new {applied=false,reason="producer_no_longer_available"});
+            if(!InspirationAutomationHelper.Matches(worker,request.ExpectedInspiration,request.ExpectedIdentity))return ApiResult<object>.Ok(new {applied=false,reason="inspiration_changed_reconsider",reconsider=true});
             var table = map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().First(t => t.thingIDNumber == choice.building_id);
             Bill_Production trial = Trial(table, DefDatabase<RecipeDef>.GetNamed(choice.recipe), choice.material);
             Bill_Production bill = Reusable(table, trial);
-            if (bill != null)
-            {
-                if (bill is Bill_Autonomous autonomous) autonomous.Reset();
-                bill.repeatCount = 1;
-                bill.suspended = false;
+            bool reused=bill!=null;
+            bool spendsCreative=choice.quality_bearing && worker.InspirationDef==InspirationDefOf.Inspired_Creativity;
+            if(spendsCreative && (bill ?? trial) is Bill_Autonomous)return ApiResult<object>.Ok(new {applied=false,reason="creative_recipe_not_worker_applicable",reconsider=true});
+            int oldRepeat=reused?bill.repeatCount:0;
+            int oldIndex=reused?table.BillStack.Bills.IndexOf(bill):-1;
+            bool oldSuspended=reused && bill.suspended;
+            Pawn oldPawn=reused?bill.PawnRestriction:null;
+            bool oldSlaves=reused && bill.SlavesOnly, oldMechs=reused && bill.MechsOnly,oldNonMechs=reused && bill.NonMechsOnly;
+            int oldSearchTick=reused?bill.nextTickToSearchForIngredients:0;
+            // Pin one finite bill to the model-selected producer, without changing other workers' policies.
+            if(bill==null) { bill=trial; bill.InitializeAfterClone(); table.BillStack.AddBill(bill); }
+            bill.SetPawnRestriction(worker);
+            bill.repeatCount=1;bill.suspended=false;
+            table.BillStack.Bills.Remove(bill);table.BillStack.Bills.Insert(0,bill);
+            WorkGiver_DoBill scanner=table.GetWorkgiver()?.Worker as WorkGiver_DoBill;
+            Job job=scanner?.JobOnThing(worker,table,false);
+            bool exactJob=job!=null && job.bill==bill && worker.jobs.TryTakeOrderedJob(job) && worker.CurJob?.bill==bill;
+            if(!exactJob && spendsCreative) {
+                if(job!=null)worker.jobs.jobQueue.RemoveAll(worker,q=>q==job);
+                table.BillStack.Bills.Remove(bill);
+                if(reused) {
+                    bill.repeatCount=oldRepeat;bill.suspended=oldSuspended;bill.nextTickToSearchForIngredients=oldSearchTick;
+                    if(oldPawn!=null)bill.SetPawnRestriction(oldPawn);else if(oldSlaves)bill.SetAnySlaveRestriction();
+                    else if(oldMechs)bill.SetAnyMechRestriction();else if(oldNonMechs)bill.SetAnyNonMechRestriction();else bill.SetAnyPawnRestriction();
+                    table.BillStack.Bills.Insert(Math.Min(oldIndex,table.BillStack.Bills.Count),bill);
+                }
+                return ApiResult<object>.Ok(new {applied=false,reason="creative_exact_job_not_available_reconsider",reconsider=true});
             }
-            else { trial.InitializeAfterClone(); table.BillStack.AddBill(trial); }
-            return ApiResult<object>.Ok(new { applied = true, reason = "finite_loaded_recipe_bill_accepted_not_produced" });
+            if(bill is Bill_Autonomous autonomous)autonomous.Reset();
+            return ApiResult<object>.Ok(new { applied = true, reason = "finite_loaded_recipe_bill_accepted_not_produced",
+                worker_id=worker.thingIDNumber, building_id=table.thingIDNumber, recipe=choice.recipe, material=choice.material,
+                pawn_restricted=true,job_assigned=exactJob });
         }
     }
 }

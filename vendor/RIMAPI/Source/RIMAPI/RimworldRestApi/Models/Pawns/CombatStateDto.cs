@@ -39,6 +39,7 @@ namespace RIMAPI.Models
         public bool HasShieldBelt { get; set; }
         public bool HasRangedWeapon { get; set; }
         public string CurrentJob { get; set; }
+        public bool? CurrentJobKillIncappedTarget { get; set; }
         public int? CurrentJobTargetId { get; set; }
         public int? CurrentJobTargetIdB { get; set; }
         public PositionDto CurrentJobTargetPosition { get; set; }

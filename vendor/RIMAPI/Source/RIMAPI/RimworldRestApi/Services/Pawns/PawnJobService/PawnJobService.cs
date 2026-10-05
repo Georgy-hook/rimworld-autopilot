@@ -49,11 +49,34 @@ namespace RIMAPI.Services
                     return ApiResult.Fail($"Pawn not found: {request.PawnId}");
                 }
 
+                if (request.CancelFinishingTargetId.HasValue)
+                {
+                    if (!request.MapId.HasValue || !pawn.Spawned || pawn.Map == null
+                        || pawn.Map.uniqueID != request.MapId.Value || !pawn.IsColonistPlayerControlled
+                        || pawn.Faction != Faction.OfPlayer || pawn.Dead
+                        || pawn.CurJobDef != JobDefOf.AttackMelee || !pawn.CurJob.killIncappedTarget
+                        || pawn.CurJob.targetA.Thing?.thingIDNumber != request.CancelFinishingTargetId.Value)
+                        return ApiResult.Fail("finishing_cancel_job_or_map_changed");
+                    pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
+                    return ApiResult.Ok();
+                }
+
                 JobDef jobDef = DefDatabase<JobDef>.GetNamedSilentFail(request.JobDef);
                 if (jobDef == null)
                 {
                     return ApiResult.Fail($"JobDef not found: {request.JobDef}");
                 }
+
+                bool attackJob = jobDef == JobDefOf.AttackMelee || jobDef == JobDefOf.AttackStatic
+                    || (jobDef.driverClass != null &&
+                        (typeof(JobDriver_AttackMelee).IsAssignableFrom(jobDef.driverClass)
+                         || typeof(JobDriver_AttackStatic).IsAssignableFrom(jobDef.driverClass)));
+                if (attackJob && pawn.WorkTagIsDisabled(WorkTags.Violent))
+                    return ApiResult.Fail("attack_incapable_of_violence");
+                if (request.RequestDraftForFinishing && !request.KillIncappedTarget)
+                    return ApiResult.Fail("draft_for_finishing_requires_explicit_finish");
+                if (request.KillIncappedTarget && jobDef != JobDefOf.AttackMelee)
+                    return ApiResult.Fail("finish_downed_requires_attack_melee");
 
                 LocalTargetInfo target = LocalTargetInfo.Invalid;
 
@@ -70,6 +93,34 @@ namespace RIMAPI.Services
                 {
                     target = new IntVec3(
                         request.TargetPosition.X, 0, request.TargetPosition.Z);
+                }
+
+                if (request.KillIncappedTarget)
+                {
+                    if (!request.MapId.HasValue || !pawn.Spawned || pawn.Map == null
+                        || pawn.Map.uniqueID != request.MapId.Value || pawn.Faction != Faction.OfPlayer
+                        || !pawn.IsColonistPlayerControlled || pawn.Dead || pawn.Downed
+                        || pawn.InMentalState || (!pawn.Drafted && !request.RequestDraftForFinishing))
+                        return ApiResult.Fail("finish_downed_actor_unavailable_or_map_changed");
+                    Pawn victim = target.Thing as Pawn;
+                    if (victim == null || victim == pawn || !victim.Spawned || victim.Map != pawn.Map
+                        || victim.Dead || !victim.Downed || victim.IsPrisonerOfColony
+                        || !victim.HostileTo(Faction.OfPlayer) || victim.Position.Fogged(pawn.Map))
+                        return ApiResult.Fail("finish_downed_target_no_longer_eligible");
+                    if (CombatNativeHelper.HasCareJob(pawn) || pawn.CurJobDef == JobDefOf.Ingest)
+                        return ApiResult.Fail("finish_downed_protected_activity");
+                    // Read native eligibility without invoking its order-producing delegate.
+                    // This checks violence, melee verb, reach and faction/ideology constraints.
+                    if (FloatMenuUtility.GetMeleeAttackAction(pawn, target, out string failReason, ignoreControlled: true) == null)
+                        return ApiResult.Fail("finish_downed_native_unavailable: " + failReason);
+                    if (pawn.Drafted && pawn.CurJobDef == JobDefOf.AttackMelee && pawn.CurJob.targetA.Thing == victim)
+                    {
+                        // JobIsSameAs ignores this flag: TryTakeOrderedJob would
+                        // accept the new job while retaining the old false flag.
+                        // Upgrade this already validated explicit target in place.
+                        if (!pawn.CurJob.killIncappedTarget) pawn.CurJob.killIncappedTarget = true;
+                        return ApiResult.Ok();
+                    }
                 }
 
                 Thing equipTarget = null;
@@ -110,6 +161,7 @@ namespace RIMAPI.Services
                 {
                     job = JobMaker.MakeJob(jobDef, target);
                 }
+                if (request.KillIncappedTarget) job.killIncappedTarget = true;
                 // Ordered jobs need the same pickup counts as native workgivers.
                 // JobMaker's default -1 reached Toils_Ingest/Rescue in the failed
                 // run and logged invalid count warnings instead of a valid batch.
@@ -126,15 +178,18 @@ namespace RIMAPI.Services
                 {
                     job.count = 1;
                 }
+                bool draftedHere = request.KillIncappedTarget && request.RequestDraftForFinishing && !pawn.Drafted;
                 bool success = false;
                 try
                 {
+                    if (draftedHere) pawn.drafter.Drafted = true;
                     if (equipWasForbidden) equipTarget.SetForbidden(false, false);
                     success = pawn.jobs.TryTakeOrderedJob(job);
                 }
                 finally
                 {
                     if (!success && equipWasForbidden) equipTarget.SetForbidden(true, false);
+                    if (!success && draftedHere) pawn.drafter.Drafted = false;
                 }
                 if (!success)
                 {

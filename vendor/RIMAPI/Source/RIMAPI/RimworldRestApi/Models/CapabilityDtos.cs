@@ -151,6 +151,7 @@ namespace RIMAPI.Models
         public List<string> MissingIngredients { get; set; } = new List<string>();
         public List<int> DoctorIds { get; set; } = new List<int>();
         public List<int> BedIds { get; set; } = new List<int>();
+        public Dictionary<int, object> DoctorInspirations { get; set; } = new Dictionary<int, object>();
         public Dictionary<int, string> DoctorDetails { get; set; } = new Dictionary<int, string>();
         public Dictionary<int, string> BedDetails { get; set; } = new Dictionary<int, string>();
         public bool AlreadyQueued { get; set; }
@@ -163,6 +164,8 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public int PatientPawnId { get; set; }
         public int DoctorPawnId { get; set; }
+        public string ExpectedInspiration { get; set; }
+        public string ExpectedIdentity { get; set; }
         public int BedId { get; set; }
         public string RecipeDef { get; set; }
         public int BodyPartIndex { get; set; }

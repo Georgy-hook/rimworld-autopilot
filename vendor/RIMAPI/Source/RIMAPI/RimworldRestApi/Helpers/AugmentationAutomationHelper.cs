@@ -122,6 +122,14 @@ namespace RIMAPI.Helpers
                             && patient.CanReserveAndReach(b, PathEndMode.OnCell, Danger.Some))
                         .OrderByDescending(b => b.GetStatValue(StatDefOf.SurgerySuccessChanceFactor))
                         .Select(b => b.thingIDNumber).ToList();
+                    option.DoctorInspirations = option.DoctorIds.ToDictionary(id=>id,id=> {
+                        Pawn d=PawnHelper.FindPawnById(id);
+                        var comps=recipe.surgeryOutcomeEffect?.comps?.OfType<SurgeryOutcomeComp_Inspired>()
+                            .Where(c=>c.Affects(recipe,d,patient,part)).ToArray() ?? new SurgeryOutcomeComp_Inspired[0];
+                        return (object)new { expected_inspiration=InspirationAutomationHelper.Active(d)?.def.defName ?? "",expected_identity=InspirationAutomationHelper.IdentityOf(d),
+                            remaining_ticks=InspirationAutomationHelper.Active(d)==null?0:Math.Max(0,(int)(InspirationAutomationHelper.Active(d).def.baseDurationDays*60000)-InspirationAutomationHelper.Active(d).Age),
+                            applicable=comps.Length>0,multiplier=comps.Aggregate(1f,(a,c)=>a*c.factor), patient_is_mech=patient.RaceProps.IsMechanoid };
+                    });
                     option.DoctorDetails = option.DoctorIds.ToDictionary(id => id, id => {
                         var doctor = PawnHelper.FindPawnById(id);
                         return $"{doctor.LabelShortCap}: Medicine {doctor.skills?.GetSkill(SkillDefOf.Medicine)?.Level}; surgery stat {doctor.GetStatValue(StatDefOf.MedicalSurgerySuccessChance):0.00}; manipulation {doctor.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation):0.00}";
@@ -157,6 +165,8 @@ namespace RIMAPI.Helpers
                 { result.Reason = option?.Reason ?? "operation_no_longer_available"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                 var patient = PawnHelper.FindPawnById(request.PatientPawnId);
                 var doctor = PawnHelper.FindPawnById(request.DoctorPawnId);
+                if(request.ExpectedIdentity!=null && !InspirationAutomationHelper.Matches(doctor,request.ExpectedInspiration,request.ExpectedIdentity))
+                { result.Reason="inspiration_changed_reconsider"; return ApiResult<CapabilityOrderResultDto>.Ok(result); }
                 var bed = MapHelper.GetThingOnMapById(request.MapId, request.BedId) as Building_Bed;
                 var recipe = DefDatabase<RecipeDef>.GetNamedSilentFail(request.RecipeDef);
                 var part = request.BodyPartIndex < 0 ? null : patient.RaceProps.body.AllParts.First(p => p.Index == request.BodyPartIndex);

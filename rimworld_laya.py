@@ -1620,13 +1620,17 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             commands.append(resume_command)
         return {"kind": "commands", "description": choice.replace("_", " "), "commands": commands}
     if choice == "stand_down":
-        drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")]
+        protected = set(snapshot["combat"].get("protected_noncombat_pawn_ids") or [])
+        if combat_planner.live_hostiles(snapshot):
+            protected.clear()
+        drafted = [c for c in snapshot["combat"]["colonists"]
+                   if c.get("is_drafted") and c.get("id") not in protected]
         commands = [
             {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": c["id"], "is_drafted": False}}
             for c in drafted
         ]
         for master in {a.get("master_pawn_id") for a in snapshot["combat"].get("colony_animals") or snapshot.get("animals") or [] if a.get("animals_released")}:
-            if master:
+            if master and master not in protected:
                 commands.insert(0, {"endpoint": "/api/v1/combat/animals/release", "body": {"map_id": snapshot["map"]["id"], "master_pawn_id": master, "release": False}})
         if snapshot["game"].get("is_paused"):
             commands.append({"endpoint": "/api/v1/game/speed", "query": {"speed": 1}})
@@ -2496,8 +2500,13 @@ def run_cycle(
     log_path: Path,
     combat_memory: dict | None = None,
     combat_signature: Any = None,
+    protected_noncombat_pawn_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     snapshot = collect_snapshot(client)
+    if protected_noncombat_pawn_ids and not combat_planner.live_hostiles(snapshot):
+        # An observed neutral hunt can own drafted actors while unrelated
+        # soldiers stand down. A fresh hostile always restores combat authority.
+        snapshot["combat"]["protected_noncombat_pawn_ids"] = sorted(protected_noncombat_pawn_ids)
     signature = json.dumps(combat_signature(snapshot), sort_keys=True) if callable(combat_signature) else None
     if combat_memory is not None and signature is not None:
         _combat_retry_prepare(snapshot, combat_memory, signature)

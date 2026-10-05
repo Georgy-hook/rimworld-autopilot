@@ -372,8 +372,15 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
             continue
         available = {name: t for name, t in trainables(animal).items()
                      if t.get("can_train") and not t.get("learned") and not t.get("wanted")}
-        if available:
-            training[str(animal["id"])] = {"animal": animal, "trainables": available, "workers": eligible}
+        training_workers = eligible
+        native_training = animal.get("training_context") or {}
+        if native_training:
+            ready = {row.get("pawn_id") for row in native_training.get("handler_options") or [] if row.get("interaction_ready") is True}
+            training_workers = [{**p, "native_training_ready":True} for p in eligible if p.get("id") in ready]
+        else:
+            training_workers = [{**p, "native_training_ready":"unknown"} for p in eligible]
+        if available and training_workers:
+            training[str(animal["id"])] = {"animal": animal, "trainables": available, "workers": training_workers}
         if trainables(animal).get("Obedience", {}).get("learned") and (not animal.get("master_pawn_id") or not animal.get("follow_drafted")):
             masters[str(animal["id"])] = {"animal": animal, "workers": eligible}
     for action, rows in (("assign_animal_training", training), ("assign_animal_master", masters)):
@@ -518,17 +525,28 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
             "medicines": operation.get("medicine_options"), "recipe_success_factor": catalog.get(operation["recipe_def"], {}).get("surgery_success_factor"),
             "risk": "anesthesia, failed installation, implant loss, injuries or death; success is not guaranteed"}
         doctors = {str(k): v for k, v in operation.get("doctor_details", {}).items()}
+        for doctor_id, inspiration in (operation.get("doctor_inspirations") or {}).items():
+            if str(doctor_id) in doctors:
+                doctors[str(doctor_id)] += f"; inspiration {inspiration.get('expected_inspiration') or 'none'}; applicable {inspiration.get('applicable')}; outcome multiplier {inspiration.get('multiplier')}; left {inspiration.get('remaining_ticks')} ticks; minimum failure remains"
+
         doctors["defer"] = "Wait for a better surgeon or circumstances; failure can injure the patient and destroy the implant."
         if pick("augmentation_doctor", "Choose a surgeon or postpone. Compare Medicine, manipulation, raw surgery stat and competing patient care; low skill can waste an expensive implant. No success is guaranteed.", doctors) == "defer":
             details["augmentation_defer"] = True
             return details, raw
+        details["augmentation_inspiration"] = (operation.get("doctor_inspirations") or {}).get(str(details.get("augmentation_doctor"))) or (operation.get("doctor_inspirations") or {}).get(details.get("augmentation_doctor"))
         pick("augmentation_bed", "Choose a roofed temperate bed. Prefer good surgical factor, cleanliness and light.", {str(k): v for k, v in operation.get("bed_details", {}).items()})
     elif action in {"assign_animal_training", "assign_animal_master"}:
         key = pick("training_animal", "Choose a healthy colony animal; supported training depends on species and age.", {k: f"{p['animal'].get('name')} {p['animal'].get('def')}; power {p['animal'].get('combat_power')}; learned {trainables(p['animal'])}" for k, p in plans.items()})
         plan = plans[key]
+        training_context = plan["animal"].get("training_context") or {}
+        if training_context:
+            state = {**state, "choice_context": {"animal":plan["animal"].get("def"),
+                "skill_min":training_context.get("minimum_skill"),"food":training_context.get("food"),
+                "decay_ticks":training_context.get("degradation_period_ticks"),"master":training_context.get("master_id"),
+                "follow_drafted":training_context.get("follow_drafted"),"cost":"food, handler work, upkeep; wanted is not learned"}}
         if action == "assign_animal_training":
-            pick("animal_trainable", "Choose a training. Prerequisites are requested recursively; actual learning takes food, handling and time.", {k: str(v) for k, v in plan["trainables"].items()})
-        pick("animal_handler", "Choose a handler or master with sufficient Animals skill, health and spare time.", {str(p["id"]): person_note(p) for p in plan["workers"]})
+            pick("animal_trainable", "Choose a training. Prerequisites are requested recursively; actual learning takes food, handling and time.", {k: f"{k}: steps {v.get('steps','unknown')}/{v.get('total_steps','unknown')}; prerequisites {v.get('prerequisites','unknown')}; requested {v.get('wanted')}; learned {v.get('learned')}; maintenance automatic while wanted" for k, v in plan["trainables"].items()})
+        pick("animal_handler", "Choose a handler or master with sufficient Animals skill, health and spare time.", {str(p["id"]): f"{person_note(p)}; native interaction/food ready {p.get('native_training_ready','not required for master')}" for p in plan["workers"]})
     elif action == "improve_weapon_loadout":
         key = pick("weapon_pawn", "Choose a colonist by combat role, skill and health, or keep current loadouts.", {
             **{k: f"{p['pawn'].get('name')}; shooting {p['pawn'].get('shooting_skill')}, melee {p['pawn'].get('melee_skill')}; sight {p['pawn'].get('sight')}, manipulation {p['pawn'].get('manipulation')}; current {weapon_note(p['pawn'].get('weapon_info') or {})}" for k, p in plans.items()},
@@ -623,7 +641,13 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
         doctor, bed = int(selected.get("augmentation_doctor") or 0), int(selected.get("augmentation_bed") or 0)
         if not operation or not operation.get("ready") or doctor not in operation.get("doctor_ids", []) or bed not in operation.get("bed_ids", []):
             return {"applied": False, "reason": "No verified patient, surgeon and bed selected"}
-        response = order("/api/v1/medical/augmentation", {"map_id": map_id, "patient_pawn_id": operation["patient_pawn_id"], "doctor_pawn_id": doctor, "bed_id": bed, "recipe_def": operation["recipe_def"], "body_part_index": operation["body_part_index"]})
+        inspiration = selected.get("augmentation_inspiration")
+        if inspiration:
+            live = (operation.get("doctor_inspirations") or {}).get(str(doctor)) or (operation.get("doctor_inspirations") or {}).get(doctor)
+            if not live or any(live.get(k) != inspiration.get(k) for k in ("expected_inspiration", "expected_identity", "applicable")):
+                return {"applied":False,"reason":"inspiration_changed_reconsider","reconsider":True}
+        response = order("/api/v1/medical/augmentation", {"map_id": map_id, "patient_pawn_id": operation["patient_pawn_id"], "doctor_pawn_id": doctor, "bed_id": bed, "recipe_def": operation["recipe_def"], "body_part_index": operation["body_part_index"],
+            **({k:inspiration.get(k) for k in ("expected_inspiration","expected_identity")} if inspiration else {})})
         if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": doctor, "work": "Doctor", "priority": 1})
     elif action in {"assign_animal_training", "assign_animal_master"}:
@@ -640,8 +664,21 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
         else:
             body.update(master_pawn_id=worker, follow_drafted=True)
         response = order("/api/v1/map/animal/training", body)
+        readback = None
+        if plan["animal"].get("training_context"):
+            import colony_wildlife
+            try:
+                readback = colony_wildlife.training_readback(client, snapshot, plan["animal"]["id"],
+                    trainable=td if action=="assign_animal_training" else None,
+                    master_id=worker if action=="assign_animal_master" else None)
+            except Exception as exc:
+                readback={"observed":False,"reason":"training_readback_failed","error":str(exc),"completion":"learning_unverified"}
+            if not readback.get("observed"):
+                return {"applied":False,"outcome_unknown":bool(accepted(response)),"reason":readback["reason"],"response":response,"readback":readback}
         if accepted(response):
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "Handling", "priority": 1})
+        if readback:
+            return {"applied":accepted(response),"reason":response.get("reason"),"response":response,"readback":readback,"completion":readback["completion"],"selection":selected}
     elif action == "improve_weapon_loadout":
         if selected.get("weapon_defer"):
             return {"applied": False, "reason": "laya_kept_current_loadouts", "selection": selected}
@@ -713,6 +750,8 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
             result = _execute_primary(Orders(), snapshot, map_state, action, selected)
         except Exception as exc:
             result = {"applied": False, "reason": str(exc), "outcome_unknown": True}
+        if result.get("reconsider") is True or result.get("reason") == "inspiration_changed_reconsider":
+            return {**result,"reconsider":True}
         key = _selection_key(action, selected)
         if str(result.get("reason") or "").startswith("laya_"):
             question = {"plan_colonist_augmentation": "augmentation_patient", "improve_weapon_loadout": "weapon_pawn",

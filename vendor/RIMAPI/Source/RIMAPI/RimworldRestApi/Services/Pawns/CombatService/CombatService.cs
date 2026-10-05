@@ -147,6 +147,7 @@ namespace RIMAPI.Services
                 WeaponLabel = primary?.LabelShortCap,
                 HasRangedWeapon = primary?.def?.IsRangedWeapon ?? false,
                 CurrentJob = pawn.CurJobDef?.defName,
+                CurrentJobKillIncappedTarget = pawn.CurJob?.killIncappedTarget,
                 CurrentJobTargetId = pawn.CurJob?.targetA.Thing?.thingIDNumber,
                 CurrentJobTargetIdB = pawn.CurJob?.targetB.Thing?.thingIDNumber,
                 CurrentJobTargetPosition = pawn.CurJob?.targetA.Thing is Thing jobTarget && jobTarget.Spawned

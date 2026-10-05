@@ -15,6 +15,7 @@ from typing import Any
 import rimworld_laya as bridge
 import colony_architect as architect
 import colony_professions as professions
+import colony_inspirations as inspirations
 import colony_events as events
 import colony_growth as growth
 import colony_expeditions as expeditions
@@ -26,6 +27,8 @@ import colony_society
 import colony_reasoning
 import colony_outcomes
 import colony_medical_recovery as medical_recovery
+import colony_downed_combat as downed_combat
+import colony_wildlife as wildlife
 import colony_sessions
 import colony_shipbuilding
 from colony_actions import ACTION_DESCRIPTIONS, ACTION_LABELS, ACTION_LABELS_EN
@@ -1418,10 +1421,10 @@ def collect_development(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
         "royalty": royalty if isinstance(royalty, dict) else {},
         "active_mods": active_mods if isinstance(active_mods, list) else [],
     }
+    colony_modules.collect(client, snapshot)
     snapshot["development"]["profession_context"] = professions.profession_context(
         snapshot.get("colonists", []), snapshot["development"]["work_types"]
     )
-    colony_modules.collect(client, snapshot)
     integrate_native_goal_context(snapshot)
     return snapshot
 
@@ -5191,7 +5194,6 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     )
     best_handler_row = handler_rows[0] if handler_rows else {}
     best_handler = int((best_handler_row.get("skills", {}).get("Animals") or {}).get("level") or 0)
-    inspired_taming = "taming" in str(best_handler_row.get("inspiration") or "").lower()
     owned_unpenned = [animal for animal in snapshot.get("animals", [])
                       if animal.get("requires_pen") is True and not animal.get("has_suitable_enclosed_pen")]
     potential_livestock = [animal for animal in snapshot.get("wild_animals", [])
@@ -5219,23 +5221,15 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         }
         dev["animal_pen_options"] = details["animal_pen_options"]
         one_time.append("build_animal_pen")
-    tame_options = []
-    for animal in snapshot.get("wild_animals", []):
-        pos = animal.get("position") or {}
-        close = (int(pos.get("x") or 0) - int(anchor["x"])) ** 2 + (int(pos.get("z") or 0) - int(anchor["z"])) ** 2 <= 60 ** 2
-        if (animal.get("can_tame") and close
-                and (animal.get("requires_pen") is False or animal.get("has_suitable_enclosed_pen"))
-                and f"tame:{animal.get('id')}" not in map_state.setdefault("issued", {})
-                and int(animal.get("minimum_handling_skill") or 0) <= best_handler):
-            tame_options.append(animal)
+    # Native options bind each actual animal to its eligible handler, including food and skill checks.
+    tame_pairs = inspirations.ready_pairs(inspirations.tame_options(snapshot),map_state,snapshot)
+    tame_options = [p for p in tame_pairs.values()
+                    if not issued_recently(map_state,f"tame:{p['target_id']}",tick,retry_ticks=6000)]
     wildlife_paused = issued_recently(map_state, "wildlife_pause", tick, retry_ticks=15000)
     if (tame_options and not wildlife_paused
-            and (len(snapshot.get("colonists") or []) >= 2
-                 or not dev.get("construction_projects"))):
+            and (len(snapshot.get("colonists") or []) >= 2 or not dev.get("construction_projects"))):
         details["tame_options"] = tame_options
-        details["handler_context"] = {"name": best_handler_row.get("name"), "skill": best_handler, "inspiration": best_handler_row.get("inspiration")}
         dev["tame_options"] = tame_options
-        dev["handler_context"] = details["handler_context"]
         one_time.append("start_taming")
     wild_human_options = []
     if best_handler >= 7:
@@ -5883,6 +5877,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         capability_actions = [a for a in capability_actions if a != "create_growing_zone"]
     one_time.extend(capability_actions)
     one_time.extend(colony_modules.prepare(snapshot, map_state))
+    if (dev.get("wildlife") or {}).get("available"):
+        # Native plans bind the actual hunter/team; retain old designation-only
+        # behavior solely when that endpoint is unavailable.
+        one_time = [a for a in one_time if a != "consider_dangerous_hunt"]
+        maintenance = [a for a in maintenance if a != "designate_safe_hunting"]
     actionable = list(dict.fromkeys(one_time + maintenance))
     # Remove failed legacy choices before focus rules narrow the alternatives.
     # Filtering afterwards could leave only hold_survival for a bad candidate.
@@ -6434,8 +6433,9 @@ def collect_medical_thermal_context(client: bridge.RimApiClient, snapshot: dict[
 
 
 def active_care_pawn_ids(snapshot: dict[str, Any], *, allow_thermal_yield: bool = False) -> set[str]:
-    """An observed care job reserves its executor and actual pawn target."""
-    result: set[str] = set()
+    """Protect care actors/targets and actors owned by a verified hunt job."""
+    result: set[str] = {str(pid) for pid in
+                       (snapshot.get("development") or {}).get("wildlife_active_group_ids") or []}
     pawn_ids = {str(p.get("id")) for p in snapshot.get("colonists") or []}
     live = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
     for original in snapshot.get("colonists") or []:
@@ -6712,10 +6712,9 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
     elif action == "start_stonecutting" and dev.get("stone_options"):
         q["stone_type"] = {"type": "choice", "instructions": "Choose the nearby chunk type to cut.", "criteria": {str(k): f"{v} nearby chunks" for k, v in dev["stone_options"].items()}}
     elif action == "start_taming" and dev.get("tame_options"):
-        handler = dev.get("handler_context") or {}
-        q["tame_target"] = {"type": "choice", "instructions": f"Choose an exact animal. Handler {handler}.", "criteria": {
-            str(a["id"]): f"{a.get('def')} {a.get('gender')}; wildness {a.get('wildness')}; minimum skill {a.get('minimum_handling_skill')}; revenge {a.get('manhunter_on_tame_fail_chance')}; value {a.get('market_value')}"
-            for a in dev["tame_options"]
+        q["tame_pair"] = {"type": "choice", "instructions": "Choose exact animal and handler or defer. Compare usefulness/value, feed costs, minimum skill, inspiration expiry and competing work. Guarantee applies to the next actual attempt; designation alone does not tame.", "criteria": {
+            **{p["key"]: inspirations.tame_description(p) for p in dev["tame_options"]},
+            "defer": "Preserve current workers, food and inspiration; opportunity can expire"
         }}
     elif action == "tame_wild_human" and dev.get("wild_human_options"):
         q["wild_human_target"] = {"type": "choice", "instructions": "Choose one nearby wild person to tame; this can recruit them but needs a handler with Animals 7 and may fail.", "criteria": {
@@ -6899,6 +6898,11 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
     module_signals = colony_modules.signals(snapshot)
     attention_facts = colony_reasoning.attention_facts(snapshot,
         roofed_sleeping_places=sleeping_place_counts(snapshot.get("development") or {})[1])
+    active_inspirations = inspirations.opportunities(snapshot)
+    if active_inspirations:
+        attention_facts["inspirations"] = [
+            {key: row[key] for key in ("id", "def", "left") if row.get(key) is not None}
+            for row in active_inspirations]
     attention_state = {**state, "decision_facts": {
         **attention_facts, "module_signals": module_signals}}
     raw_domain = None
@@ -9655,21 +9659,17 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return {"applied": True, "stone_type": stone_type, "recipe": recipe,
                 "phase": "bill", "response": response}
     if choice == "start_taming":
-        animal_id = details.get("tame_target")
-        animal = next((a for a in details.get("tame_options", []) if int(a.get("id", -1)) == int(animal_id or -1)), None)
-        if animal is None:
-            return {"applied": False, "reason": "Laya did not select an available taming target"}
-        live_animals = client.get("/api/v1/map/animals", map_id=map_id)
-        live_animal = next((row for row in live_animals if int(row.get("id") or -1) == int(animal_id)), None)
-        if not live_animal or not live_animal.get("can_be_designated_for_taming"):
-            return {"applied": False, "reason": "The chosen animal is no longer tameable"}
-        if live_animal.get("requires_pen") is not False and not live_animal.get("has_suitable_enclosed_pen"):
-            return {"applied": False, "reason": "A completed, reachable enclosed pen is needed before taming this roaming animal"}
-        response = client.post("/api/v1/map/animal/tame", body={"map_id": map_id, "animal_id": int(animal_id)})
-        issued[f"tame:{animal_id}"] = tick
-        issued["priority:Handling"] = tick
-        handling = prioritize(client, snapshot, "Handling")
-        return {"applied": True, "animal": animal, "responses": [response, handling]}
+        pair_key = details.get("tame_pair")
+        if pair_key == "defer":
+            issued["wildlife_pause"] = tick
+            return {"applied":False,"reason":"laya_deferred"}
+        pair = next((p for p in details.get("tame_options") or [] if p.get("key") == pair_key), None)
+        if pair is None:
+            return {"applied":False,"reason":"unverified_taming_pair"}
+        response = inspirations.exact_order(client,snapshot,pair,"tame",map_state)
+        if response.get("applied") is True:
+            issued[f"tame:{pair['target_id']}"] = tick
+        return response
     if choice == "tame_wild_human":
         person_id = details.get("wild_human_target")
         person = next((row for row in details.get("wild_human_options") or []
@@ -10190,6 +10190,8 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     snapshot["development"]["user_preferences"] = player_preferences
     seed = str(snapshot["map"].get("seed") or snapshot["map"]["id"])
     map_state = map_state_for_snapshot(state, snapshot)
+    snapshot["development"]["wildlife_active_group_ids"] = sorted(
+        wildlife.protected_group_actor_ids(snapshot, map_state))
     colony_outcomes.reconcile(snapshot, map_state)
     snapshot["development"]["shelter_exposure_days"] = max(
         0.0, (int(snapshot["game"].get("tick") or 0) - int(map_state.get("first_seen_tick") or 0)) / 60000.0
@@ -10530,6 +10532,9 @@ def _execute_event_response(
                                           else (100 if len(snapshot.get("colonists") or []) <= 2 else 300)),
             "maximum_spend": budget,
         }
+        inspiration = details.get("negotiator_inspiration")
+        if isinstance(inspiration,dict) and inspiration.get("pawn_id"):
+            body.update(expected_negotiator_id=inspiration["pawn_id"],expected_inspiration=inspiration.get("def_name") or "",expected_identity=inspiration.get("identity") or "")
         if purchase == "slaves":
             body["purchase_pawn_id"] = int(purchase_pawn_id)
         trade = client.post("/api/v1/trade/execute", body=body)
@@ -10699,7 +10704,7 @@ def run_event_cycle(
             "type": "choice",
             "instructions": "Choose the exact live trader using remaining time, stock, negotiator skill and orbital infrastructure.",
             "criteria": {
-                str(row["id"]): f"{row.get('name')}; persona core price={next((item.get('unit_price') for item in (row.get('preview') or {}).get('purchase_options') or [] if item.get('category') == 'item:AIPersonaCore'), 'not affordable/offered')}; ({row.get('trader_kind')}); orbital={row.get('orbital')}; departs in {row.get('ticks_until_departure')} ticks; stock {[(item.get('label'), item.get('count')) for item in (row.get('stock') or [])[:18]]}"
+                str(row["id"]): f"{row.get('name')}; negotiator {row.get('best_negotiator_name')} effective trade {row.get('negotiator_trade_improvement')}; inspiration {(row.get('negotiator_inspiration') or {}).get('def_name')} left {(row.get('negotiator_inspiration') or {}).get('remaining_ticks')}; actual trade consumes, preview does not; persona core price={next((item.get('unit_price') for item in (row.get('preview') or {}).get('purchase_options') or [] if item.get('category') == 'item:AIPersonaCore'), 'not affordable/offered')}; ({row.get('trader_kind')}); orbital={row.get('orbital')}; departs in {row.get('ticks_until_departure')} ticks; stock {[(item.get('label'), item.get('count')) for item in (row.get('stock') or [])[:18]]}"
                 for row in traders if row.get("id")
             },
         }}
@@ -10709,6 +10714,7 @@ def run_event_cycle(
                 dict(trader_question["event_trader"]["criteria"]))
             details["trader_id"] = trader_id
             selected_trader = next((row for row in traders if str(row.get("id")) == trader_id), {})
+            details["negotiator_inspiration"] = selected_trader.get("negotiator_inspiration")
             preview = selected_trader.get("preview") or {}
             sale_options = verified_trade_options(preview, "sale")
             purchase_options = verified_trade_options(preview, "purchase")
@@ -11023,6 +11029,8 @@ def run_downed_raider_cycle(
     snapshot = collect_development(client, bridge.collect_snapshot(client))
     seed = str(snapshot["map"].get("seed") or snapshot["map"]["id"])
     map_state = map_state_for_snapshot(state, snapshot)
+    snapshot["development"]["wildlife_active_group_ids"] = sorted(
+        wildlife.protected_group_actor_ids(snapshot, map_state))
     if "anchor" not in map_state:
         map_state["anchor"] = anchor_from_snapshot(snapshot)
     anchor = map_state["anchor"]
@@ -11035,10 +11043,13 @@ def run_downed_raider_cycle(
     prison_beds = ready_prison_beds(snapshot["development"], prison_site)
     recurring = [hostile for hostile in downed if recurring_entity_hostile(hostile)
                  and bridge.first_number(hostile.get("bleeding_rate")) <= 0.05]
-    healthy_fighters = [pawn for pawn in snapshot["combat"]["colonists"]
-                        if not pawn.get("is_downed") and bridge.first_number(pawn.get("health")) >= 0.75
-                        and str(pawn.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS]
-    urgent_entity = bool(recurring and healthy_fighters)
+    protected = active_care_pawn_ids(snapshot) | {
+        str(pawn.get("id")) for pawn in snapshot["combat"]["colonists"]
+        if str(pawn.get("current_job") or "").casefold() in PROTECTED_CARE_JOBS}
+    pending = downed_combat.reconcile(client, snapshot, map_state, protected)
+    finishers = {int(target["id"]): downed_combat.available_fighters(
+        snapshot, map_state, int(target["id"]), protected) for target in downed}
+    urgent_entity = any(finishers.get(int(target["id"])) for target in recurring)
     criteria: dict[str, str] = ({} if urgent_entity else {
         "leave_downed_raiders": downed_raider_leave_description(downed),
     })
@@ -11054,7 +11065,7 @@ def run_downed_raider_cycle(
             continue
         pawn_id = int(hostile["id"])
         name = str(hostile.get("name") or pawn_id)
-        if healthy_fighters:
+        if finishers.get(pawn_id):
             criteria[f"finish_downed:{pawn_id}"] = (
                 f"Kill {name} with an ordinary drafted attack. Health {float(hostile.get('health') or 0) * 100:.0f}%, "
                 f"bleeding {float(hostile.get('bleeding_rate') or 0):.2f}; "
@@ -11094,15 +11105,23 @@ def run_downed_raider_cycle(
         },
         "downed_raiders": downed,
     }
-    choice, raw = ask_laya_choice(agent, context, "downed_raider_action",
-        "Choose one normal RimWorld action. Compare recruitable skills and value against prison food, treatment, escape and moral costs. A release helps only factions that can grant goodwill.",
-        criteria)
+    if pending:
+        choice = f"finish_downed:{pending['target_id']}"
+        criteria.setdefault(choice, "Continue the verified finishing attack; completion remains unverified.")
+        raw = {"answers": {"downed_raider_action": {"choice": choice}},
+               "resolved_without_model": True, "reason": pending["reason"]}
+    else:
+        choice, raw = ask_laya_choice(agent, context, "downed_raider_action",
+            "Choose one normal RimWorld action. Compare recruitable skills and value against prison food, treatment, escape and moral costs. A release helps only factions that can grant goodwill.",
+            criteria)
     answer = raw["answers"]["downed_raider_action"]
     responses: list[Any] = []
     description = criteria[choice]
-    if choice in {"leave_downed_raiders", "wait_for_prison"}:
+    if pending:
+        result = pending
+    elif choice in {"leave_downed_raiders", "wait_for_prison"}:
         for pawn in snapshot["combat"]["colonists"]:
-            if pawn.get("is_drafted"):
+            if pawn.get("is_drafted") and str(pawn.get("id")) not in protected:
                 responses.append(client.post("/api/v1/pawn/edit/status", body={"pawn_id": int(pawn["id"]), "is_drafted": False}))
         if choice == "wait_for_prison":
             responses.append(prioritize(client, snapshot, "Construction"))
@@ -11125,26 +11144,18 @@ def run_downed_raider_cycle(
                 result = {"applied": True, "site": site, "material": stuff, "responses": responses}
     elif choice.startswith("finish_downed:"):
         target_id = int(choice.split(":", 1)[1])
-        fighters = healthy_fighters
+        fighters = finishers.get(target_id) or []
         target = next((row for row in downed if int(row["id"]) == target_id), None)
         actor = min(fighters, key=lambda pawn: (
+            not downed_combat.attacking(pawn, target_id),
             squared_distance(pawn.get("position") or {}, (target or {}).get("position") or {}),
             -int(pawn.get("melee_skill") or 0)), default=None)
-        if actor is None:
+        if actor is None or target is None:
             result = {"applied": False, "reason": "No healthy colonist can finish the target"}
-        elif (str(actor.get("current_job") or "").lower() == "attackmelee"
-              and int(actor.get("current_job_target_id") or 0) == target_id):
-            result = {"applied": False, "in_progress": True, "actor": actor.get("name"),
-                      "target_id": target_id, "reason": "Finishing attack is already underway"}
         else:
-            responses.append(client.post("/api/v1/pawn/edit/status", body={"pawn_id": int(actor["id"]), "is_drafted": True}))
-            responses.append(client.post("/api/v1/pawn/job", body={
-                "pawn_id": int(actor["id"]),
-                "job_def": "AttackMelee",
-                "target_thing_id": target_id,
-            }))
-            issued[f"finish_downed:{target_id}"] = tick
-            result = {"applied": True, "actor": actor.get("name"), "target_id": target_id, "responses": responses}
+            result = downed_combat.issue(client, snapshot, map_state, actor, target)
+            if result.get("applied"):
+                issued[f"finish_downed:{target_id}"] = tick
     else:
         policy, target_text = choice.split(":", 1)
         target_id = int(target_text)
@@ -12649,6 +12660,33 @@ def main() -> int:
                     continue
                 snapshot = bridge.collect_snapshot(client)
                 map_state = map_state_for_snapshot(state, snapshot)
+                if map_state.get("wildlife_hunt_group"):
+                    previous_hunt = copy.deepcopy(map_state["wildlife_hunt_group"])
+                    hunt_status = wildlife.refresh_group(client, snapshot, map_state)
+                    emergency = (bridge.combat_planner.live_hostiles(snapshot)
+                                 or urgent_care_unassigned(snapshot)
+                                 or any(p.get("is_downed") and not p.get("is_dead")
+                                        for p in snapshot.get("combat", {}).get("colonists") or []))
+                    if emergency and map_state.get("wildlife_hunt_group"):
+                        try:
+                            hunt_status = wildlife.cleanup(client, snapshot, map_state, "combat_or_care_takeover")
+                        except bridge.RimApiError as exc:
+                            snapshot.setdefault("warnings", []).append(f"Hunt cleanup pending: {exc}")
+                    notice = None
+                    if hunt_status.get("reason"):
+                        notice = {key: hunt_status.get(key) for key in
+                                  ("reason", "applied", "available", "remaining_actor_ids", "unresolved_actor_ids")}
+                    changed_notice = notice is not None and notice != map_state.get("wildlife_lifecycle_notice")
+                    if changed_notice:
+                        map_state["wildlife_lifecycle_notice"] = notice
+                        bridge.append_log(args.log, {"timestamp": bridge.utc_now(),
+                            "mode": "wildlife-lifecycle", "tick": snapshot["game"].get("tick"),
+                            "decision": {"choice": "wildlife_hunt_lifecycle"}, "result": hunt_status})
+                    if changed_notice or previous_hunt != map_state.get("wildlife_hunt_group"):
+                        save_state(args.state, state)
+                peaceful_hunt_ids = set((snapshot.get("development") or {}).get("wildlife_active_group_ids") or [])
+                if bridge.combat_planner.live_hostiles(snapshot):
+                    peaceful_hunt_ids.clear()
                 if (bridge.combat_planner.live_hostiles(snapshot)
                         or map_state.get("hazard_forbidden")) and time.monotonic() >= next_hazard_scan:
                     hazard_record = run_hazard_exclusion_cycle(
@@ -12740,7 +12778,9 @@ def main() -> int:
                         client.post("/api/v1/game/speed", query={"speed": 1})
                     # A care job owns its actor and patient, not the whole colony.
                     # Continue into development while other workers remain available.
-                if snapshot["map"]["enemies"] > 0 or any(c.get("is_drafted") for c in snapshot["combat"]["colonists"]):
+                if snapshot["map"]["enemies"] > 0 or any(
+                        c.get("is_drafted") and c.get("id") not in peaceful_hunt_ids
+                        for c in snapshot["combat"]["colonists"]):
                     living_hostiles = [h for h in snapshot["combat"]["hostiles"] if not h.get("is_dead")]
                     living_hostiles.extend(h for h in snapshot["combat"].get("hostile_buildings") or [] if h.get("active_threat"))
                     if any(not hostile.get("is_downed") for hostile in living_hostiles):
@@ -12845,7 +12885,8 @@ def main() -> int:
                         publish_combat_overlay(client, last_combat_record, repeated=True)
                     else:
                         record = bridge.run_cycle(client, agent, apply=True, confidence=0.0, log_path=args.log,
-                            combat_memory=map_state.setdefault("combat_attempts", {}), combat_signature=combat_order_signature)
+                            combat_memory=map_state.setdefault("combat_attempts", {}), combat_signature=combat_order_signature,
+                            protected_noncombat_pawn_ids=peaceful_hunt_ids)
                         save_state(args.state, state)
                         publish_combat_overlay(client, record)
                         last_combat_signature = signature

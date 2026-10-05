@@ -14,6 +14,9 @@ revision and scenario; it does not establish the current build's runtime result.
 - [Progression and endings](modules/progression.md), [specialists and DLC](modules/specialists.md),
   [native abilities, interactions and targeting](modules/affordances.md), [combat](modules/combat.md)
 - [Crops, implants, equipment and training](modules/capabilities.md)
+- [Selected hunting groups and animal training](modules/wildlife.md)
+- [Inspiration opportunities and exact workers](audits/professional-inspirations-native-contract-2026-10-05.md)
+- [Explicit finishing jobs and observed completion](audits/finish-downed-native-contract-2026-10-05.md)
 - [Trade, raid and rescue expeditions](modules/expeditions.md)
 - [Construction recovery and ship identity](audits/architecture-recovery-contract-audit-2026-10-02.md)
 - [Comprehensive inventory](COMPREHENSIVE_AUDIT_0.0.7.md): distinguishes current

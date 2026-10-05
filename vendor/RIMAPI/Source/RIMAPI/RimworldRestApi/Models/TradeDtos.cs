@@ -74,6 +74,8 @@ namespace RIMAPI.Models
         public int BestNegotiatorPawnId { get; set; }
         public string BestNegotiatorName { get; set; }
         public int NegotiatorSocialSkill { get; set; }
+        public object NegotiatorInspiration { get; set; }
+        public float NegotiatorTradeImprovement { get; set; }
         public bool HasPoweredCommsConsole { get; set; }
         public bool HasPoweredOrbitalBeacon { get; set; }
         public System.Collections.Generic.List<LiveTradeItemDto> Stock { get; set; } = new System.Collections.Generic.List<LiveTradeItemDto>();
@@ -88,6 +90,9 @@ namespace RIMAPI.Models
         public int MinimumSilverReserve { get; set; } = 300;
         public int MaximumSpend { get; set; } = 2000;
         public int? PurchasePawnId { get; set; }
+        public int? ExpectedNegotiatorId { get; set; }
+        public string ExpectedInspiration { get; set; }
+        public string ExpectedIdentity { get; set; }
     }
 
     public class LiveTradePawnOfferDto

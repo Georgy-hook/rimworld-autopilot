@@ -206,6 +206,9 @@ namespace RIMAPI.Helpers
                 Pawn negotiator = BestNegotiator(map);
                 if (negotiator == null)
                     return ApiResult<LiveTradeResponseDto>.Fail("No conscious colonist capable of Social work can negotiate.");
+                if(request.ExpectedNegotiatorId.HasValue && (negotiator.thingIDNumber!=request.ExpectedNegotiatorId.Value
+                    || !InspirationAutomationHelper.Matches(negotiator,request.ExpectedInspiration,request.ExpectedIdentity)))
+                    return ApiResult<LiveTradeResponseDto>.Fail("inspiration_changed_reconsider");
                 ITrader trader = ResolveTrader(map, request.TraderId);
                 if (trader == null || !trader.CanTradeNow)
                     return ApiResult<LiveTradeResponseDto>.Fail("The selected trader is no longer available.");
@@ -360,6 +363,8 @@ namespace RIMAPI.Helpers
                 TicksUntilDeparture = ticks,
                 BestNegotiatorPawnId = negotiator?.thingIDNumber ?? 0,
                 BestNegotiatorName = negotiator?.LabelShortCap,
+                NegotiatorInspiration = negotiator==null?null:InspirationAutomationHelper.Describe(negotiator),
+                NegotiatorTradeImprovement=negotiator?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0,
                 NegotiatorSocialSkill = negotiator?.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0,
                 HasPoweredCommsConsole = console,
                 HasPoweredOrbitalBeacon = beacon,

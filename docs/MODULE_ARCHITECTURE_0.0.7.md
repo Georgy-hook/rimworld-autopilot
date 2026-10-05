@@ -35,6 +35,9 @@ flowchart TD
 | `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Subject history, native atomic command guards and repair of partial auxiliary steps |
 | `colony_expeditions` | Shared trade, raid and rescue planning outside the domain registry | Native two-leg ETA, nutrition, mass, home reserves, exact confirmation and persisted formation identity |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
+| `colony_downed_combat` | Explicit finishing of a selected downed hostile | Native violence/verb/target guards before atomic drafting; observed kill flag; pending and stalled job reconciliation |
+| `colony_wildlife` | Selected hunters, contextual harm assessment and group job lifecycle | Actual actor equipment and retaliation chance; scoped pending orders, observed progress and cleanup |
+| `colony_inspirations` | Current professional opportunities and exact worker/target choice | Loaded inspiration definitions, expiration and consumption identity; normal taming, recruitment and worker-restricted production |
 | `colony_architect` | Building purpose, materials and generated layouts | Actual catalog, stock, research and placement checks |
 | `colony_shipbuilding` | Persistent connected ship layout and separately funded building stages | Native blueprint preview, completed beams before caskets, observed placements, unallocated stock |
 | `colony_strategy`, `colony_growth`, `colony_professions`, `colony_events` | Existing course, population, workforce and event support | These remain partial; catalogue entries are not completed chains |

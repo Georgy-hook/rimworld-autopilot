@@ -6,6 +6,17 @@ This log tracks real runs and explicitly identified technical replays. Death rec
 
 ## 5 October 2026 — Goberium Coalition, material blocker repaired
 
+- Latest technical pause: **10:45:27 UTC, tick378997**, all three founders
+  alive, upright and not bleeding. Current save filename is **Theentbum
+  (Permadeath)**; saved XML verifies the same world seed, tile and founders.
+  Director stopped and hourly automation paused for the user's reported
+  finish-downed issue and hunting/inspiration/animal-training audit.
+- Three finish decisions at10:43:05,10:43:15,10:43:25 selected Vega770 despite
+  `can_fight=false`. Actual job stayed `Wait_Combat` while API calls returned
+  acceptance. Generic melee also omitted native `killIncappedTarget`, required
+  to continue attacking downed targets. Target Rok21897 disappeared from the
+  living roster by10:43:34; no kill by Vega is proven. Prior severe bleeding
+  is evidence of a possible alternative cause, not a confirmed death cause.
 - One fresh random generation: tile **55904**, world seed
   `laya-thermal-progress-20261005`, Cassandra/Medium/permadeath; baseline tick40.
   Founders Holster767, Vega770 and Kitty782. Kitty arrived with nonlethal Asthma.

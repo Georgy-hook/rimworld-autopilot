@@ -4049,6 +4049,9 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_animal_pen", choices)
         animal["minimum_handling_skill"] = 1
         animal["has_suitable_enclosed_pen"] = True
+        # A pen alone cannot certify a handler's food/reservation readiness.
+        snapshot["development"]["inspirations"] = {"taming":{"options":[{
+            "key":"9:1","target_id":9,"worker_id":1,"expected_inspiration":"", "expected_identity":""}]}}
         choices, _ = director.candidate_actions(None, snapshot, state)
         self.assertIn("start_taming", choices)
 
@@ -4634,7 +4637,13 @@ class DirectorTests(unittest.TestCase):
 
             def post(self, endpoint, body=None, query=None):
                 self.posts.append((endpoint, body))
+                if endpoint == "/api/v1/pawn/job":
+                    snapshot["combat"]["colonists"][1].update(current_job="AttackMelee",
+                        current_job_target_id=body["target_thing_id"], current_job_kill_incapped_target=True)
                 return {"success": True}
+
+            def get(self, endpoint, **query):
+                return snapshot["combat"]
 
         snapshot = {"game": {"tick": 200000},
                     "map": {"id": 0, "seed": 1, "tile_id": 2,
@@ -4666,13 +4675,14 @@ class DirectorTests(unittest.TestCase):
                 client, agent, state, pathlib.Path("unused"), pathlib.Path("unused"))
             initial_posts = len(client.posts)
             snapshot["combat"]["colonists"][1].update(
-                current_job="AttackMelee", current_job_target_id=99)
+                current_job="AttackMelee", current_job_target_id=99, current_job_kill_incapped_target=True)
             in_progress = director.run_downed_raider_cycle(
                 client, agent, state, pathlib.Path("unused"), pathlib.Path("unused"))
         self.assertEqual(set(record["decision"]["raw"]["question"]["criteria"]),
                          {"finish_downed:99"})
         self.assertEqual(record["decision"]["choice"], "finish_downed:99")
         self.assertEqual(client.posts[-1][1]["job_def"], "AttackMelee")
+        self.assertTrue(client.posts[-1][1]["kill_incapped_target"])
         self.assertEqual(client.posts[-1][1]["pawn_id"], 2)
         self.assertTrue(in_progress["result"]["in_progress"])
         self.assertEqual(len(client.posts), initial_posts)
