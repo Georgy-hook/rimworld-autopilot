@@ -20,8 +20,8 @@ import laya_preferences
 
 from .i18n import PRIORITY_TEXT, QUESTION_TEXT, doctrine_view, humanize, risk_text, tr
 from .services import (
-    APP_NAME, BASE_DIR, DATA_DIR, FEEDBACK_PATH, OBSERVER_PID_PATH, OBSERVER_STATUS_PATH, PREFERENCES_PATH, RESOURCE_DIR,
-    active_map_key, append_feedback, export_bundle, export_history, load_config, read_director_health, read_pid, request_json,
+    APP_NAME, BASE_DIR, FEEDBACK_PATH, PREFERENCES_PATH, RESOURCE_DIR,
+    active_map_key, append_feedback, export_bundle, export_history, load_config, read_director_health, read_pid, request_json, resolve_log_dir,
     start_director, start_observer as launch_observer, stop_director, tail_jsonl,
     timestamped_export_name,
 )
@@ -32,16 +32,22 @@ from .theme import (
 
 
 class ControlCenter(tk.Tk):
+    def _configure_run_paths(self) -> None:
+        self.log_dir = resolve_log_dir(self.config_data)
+        self.log_path = self.log_dir / "decisions.jsonl"
+        self.state_path = self.log_dir / "colony-state.json"
+        self.pid_path = self.log_dir / "director.pid"
+        self.runtime_status_path = self.log_dir / "runtime-status.json"
+        self.observer_pid_path = self.log_dir / "observer.pid"
+        self.observer_status_path = self.log_dir / "observer-status.json"
+        self.observer_log_path = self.log_dir / "observer.jsonl"
+
     def __init__(self) -> None:
         super().__init__()
         if os.environ.get("LAYA_GUI_SMOKE_TEST") == "1":
             self.withdraw()
         self.config_data = load_config()
-        self.log_dir = DATA_DIR / "logs"
-        self.log_path = self.log_dir / "decisions.jsonl"
-        self.state_path = self.log_dir / "colony-state.json"
-        self.pid_path = self.log_dir / "director.pid"
-        self.runtime_status_path = self.log_dir / "runtime-status.json"
+        self._configure_run_paths()
         self.preferences = laya_preferences.load_preferences(PREFERENCES_PATH)
         self.language = str(self.preferences.get("language") or "ru")
         self.records: list[dict[str, Any]] = []
@@ -493,23 +499,25 @@ class ControlCenter(tk.Tk):
             messagebox.showerror(APP_NAME, f"{tr(self.language, 'error')}: {exc}")
 
     def _auto_start_observer(self) -> None:
-        health = read_director_health(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
+        health = read_director_health(self.observer_pid_path, self.observer_status_path)
         if health.get("state") in {"running", "starting", "waiting"}:
             return
         try:
             if health.get("pid"):
-                stop_director(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
-            launch_observer(self.config_data)
+                stop_director(self.observer_pid_path, self.observer_status_path)
+            launch_observer(self.config_data, pid_path=self.observer_pid_path,
+                            status_path=self.observer_status_path, log_path=self.observer_log_path)
         except (OSError, RuntimeError, FileNotFoundError) as exc:
             self.footer.configure(text=f"{tr(self.language, 'observer_error')}: {exc}", fg=COLORS["red"])
 
     def start_stream_observer(self) -> None:
-        health = read_director_health(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
+        health = read_director_health(self.observer_pid_path, self.observer_status_path)
         try:
             if health.get("pid") and health.get("state") not in {"running", "starting", "waiting"}:
-                stop_director(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
+                stop_director(self.observer_pid_path, self.observer_status_path)
             if health.get("state") not in {"running", "starting", "waiting"}:
-                launch_observer(self.config_data)
+                launch_observer(self.config_data, pid_path=self.observer_pid_path,
+                            status_path=self.observer_status_path, log_path=self.observer_log_path)
             self.preferences["observer"] = {"enabled": True}
             laya_preferences.save_preferences(self.preferences, PREFERENCES_PATH)
             self.refresh_views()
@@ -518,7 +526,7 @@ class ControlCenter(tk.Tk):
 
     def stop_stream_observer(self) -> None:
         try:
-            stop_director(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
+            stop_director(self.observer_pid_path, self.observer_status_path)
             self.preferences["observer"] = {"enabled": False}
             laya_preferences.save_preferences(self.preferences, PREFERENCES_PATH)
             self.refresh_views()
@@ -583,7 +591,7 @@ class ControlCenter(tk.Tk):
         color = COLORS["green"] if state == "running" else COLORS["amber"] if state in {"starting", "waiting"} else COLORS["red"]
         status_text = tr(self.language, status_key)
         self.laya_chip.configure(text=status_text, fg=color)
-        observer_health = read_director_health(OBSERVER_PID_PATH, OBSERVER_STATUS_PATH)
+        observer_health = read_director_health(self.observer_pid_path, self.observer_status_path)
         observer_state = str(observer_health.get("state") or "stopped")
         observer_key = {"running": "observer_online", "waiting": "observer_waiting", "starting": "observer_waiting",
                         "unresponsive": "observer_error", "error": "observer_error"}.get(observer_state, "observer_offline")
@@ -592,7 +600,7 @@ class ControlCenter(tk.Tk):
         self.observer_chip.configure(text=observer_text, fg=observer_color)
         self.observer_status_label.configure(text=observer_text, fg=observer_color)
         try:
-            observer_status = json.loads(OBSERVER_STATUS_PATH.read_text(encoding="utf-8-sig"))
+            observer_status = json.loads(self.observer_status_path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             observer_status = {}
         shot = str(observer_status.get("shot") or "")

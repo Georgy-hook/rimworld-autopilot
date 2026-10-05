@@ -41,6 +41,15 @@ DEFAULT_CONFIG = {
 }
 
 
+def resolve_log_dir(config: dict[str, Any]) -> Path:
+    """Select one run directory without changing existing filesystem links."""
+    configured = config.get("logs_dir")
+    if not isinstance(configured, (str, os.PathLike)) or not str(configured).strip():
+        configured = "logs"
+    path = Path(configured)
+    return (path if path.is_absolute() else DATA_DIR / path).resolve()
+
+
 def active_map_key(maps_response: dict[str, Any]) -> str | None:
     """Match the director's map-state key for the map currently on screen."""
     maps = maps_response.get("data") or []

@@ -24,6 +24,13 @@ The emblem, panoramic colony art, setup illustrations and five navigation illust
 
 ## Preference contract
 
+`rimworld-autopilot.json` accepts an optional `logs_dir` for the active run.
+An absolute path selects that folder; a relative path is resolved under the
+writable data directory. The default remains `logs`. History, colony memory,
+director and observer PID/status files all use this same folder. Close the
+panel and stop the old run before changing it, then reopen the panel. This
+keeps each run's evidence separate without replacing filesystem junctions.
+
 The GUI writes `autopilot-preferences.json`. Installed builds keep writable settings and logs in `%LOCALAPPDATA%\RimWorld Autopilot`, while program files remain under Program Files. The file is local runtime state and is excluded from Git. An existing `laya-preferences.json` is read as a compatibility migration. The development planner, combat planner, incident director, downed-raider policy and Ancient Danger decisions read the same validated structure.
 
 Weights guide ordering and model context. They cannot override emergency gates, missing research/resources, invalid targets or API safety checks. “Do not begin unprovoked attacks” additionally removes settlement raids from the feasible candidate set.
