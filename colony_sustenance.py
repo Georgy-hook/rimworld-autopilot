@@ -16,6 +16,8 @@ DOMAINS = {a: "work_orders" for a in ACTIONS}
 
 BACKOFF_TICKS = 250
 POLICY_DWELL_TICKS = 15000
+DEFER_TICKS = 30000
+DEFER_SECONDS = 120
 
 
 def collect(client, snapshot):
@@ -83,6 +85,22 @@ def _guard(context, plan):
     return {}
 
 
+def _defer_guard(context, plan):
+    scope = _scope(plan)
+    # Only meaningful availability/policy changes reopen a declined subject.
+    identities = sorted([p.get("key"), str(p.get("value"))] for p in context.get("options") or []
+                        if isinstance(p, dict) and p.get("kind") and _scope(p) == scope)
+    guard = {"subject": _guard(context, plan), "available": identities}
+    if plan["kind"] in {"cooler", "storage", "stockpile", "stockfood"}:
+        rows = context.get("stockpiles") if plan["kind"] in {"stockpile", "stockfood"} else context.get("storages")
+        target = next((r for r in rows or [] if r.get("id") == plan.get("target_id")), {})
+        guard["storage"] = {k: target.get(k) for k in ("priority", "allowed_food", "roofed_fraction")}
+        rot = [r.get("ticks_until_rot") for r in context.get("perishables") or []
+               if r.get("eligible") is True and isinstance(r.get("ticks_until_rot"), (int, float))]
+        guard["rot_urgent"] = bool(rot and min(rot) < 2500)
+    return guard
+
+
 def _prune(history, tick):
     for key in list(history):
         entry = history[key]
@@ -91,12 +109,12 @@ def _prune(history, tick):
             del history[key]
 
 
-def _remember(map_state, snapshot, context, plans, duration):
+def _remember(map_state, snapshot, context, plans, duration, *, deferred=False):
     tick = int(snapshot.get("game", {}).get("tick") or 0)
     history = map_state.setdefault("sustenance_subject_history", {})
     _prune(history, tick)
     for plan in plans:
-        history[_scope(plan)] = {"tick": tick, "duration": duration, "guard": _guard(context, plan)}
+        history[_scope(plan)] = {**(failure_record(tick, DEFER_SECONDS) if deferred else {"tick": tick}), "duration": duration, "guard": _guard(context, plan), **({"defer_guard": _defer_guard(context, plan)} if deferred else {})}
 
 
 def _failure(map_state, snapshot, action, key, reason, **details):
@@ -124,7 +142,7 @@ def prepare(snapshot, map_state):
             if key in failures: continue
             scope = _scope(plan)
             old = history.get(scope)
-            if old and old["guard"] != _guard(context, plan):
+            if old and (old["guard"] != _guard(context, plan) or "defer_guard" in old and old["defer_guard"] != _defer_guard(context, plan)):
                 del history[scope]
                 old = None
             cancel = plan["kind"] == "sterilize" and plan.get("value") == "cancel" or plan["kind"] == "release" and str(plan.get("value")).lower() == "false"
@@ -222,7 +240,10 @@ def choose(agent, state, action, snapshot):
         key, plan = next((key, p) for key, p in plans.items() if p["kind"] == kind)
         rows.append((kind, kind, _effects(context, plan), key))
     kind = stage(rows, "sustenance_purpose", "Choose purpose or defer. Compare independently retained cost, risk and waiting.")
-    if kind is None: return selection(None)
+    if kind is None:
+        shown.extend(plans)
+        return selection(None)
+    shown.clear()
     plans = {k: p for k, p in plans.items() if p["kind"] == kind}
     subjects = {}
     for key, plan in plans.items():
@@ -230,7 +251,10 @@ def choose(agent, state, action, snapshot):
         subjects.setdefault(subject, []).append((key, plan))
     rows = [(subject, str(items[0][1].get("label")), _effects(context, items[0][1]), items[0][0]) for subject, items in subjects.items()]
     subject = stage(rows, "sustenance_subject", "Choose actual subject or defer; health, hunger, cleanliness and temperature evidence belongs to each subject.")
-    if subject is None: return selection(None)
+    if subject is None:
+        shown.extend(plans)
+        return selection(None)
+    shown.clear()
     rows = [(key, str(plan.get("label")), _effects(context, plan), key) for key, plan in subjects[subject]]
     return selection(stage(rows, "sustenance_policy", DESCRIPTIONS[action] + " Choose actual policy/operator or defer; normal work remains pending."))
 
@@ -242,7 +266,7 @@ def execute(client, snapshot, map_state, action, selected):
     observed = options(context, action)
     if key == "defer":
         shown = selected.get("shown_sustenance_options") or []
-        _remember(map_state, snapshot, context, [observed[k] for k in shown if k in observed], BACKOFF_TICKS)
+        _remember(map_state, snapshot, context, [observed[k] for k in shown if k in observed], DEFER_TICKS, deferred=True)
         return {"applied": False, "reason": "laya_deferred_sustenance"}
     original = observed.get(key)
     if not original:

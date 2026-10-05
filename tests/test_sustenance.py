@@ -167,15 +167,15 @@ class SustenanceHistoryTests(unittest.TestCase):
             self.s['game']['tick']+=250; module.prepare(self.s,state)
             self.assertIn(self.plans[0]['key'],module.options(self.context,'sustenance_animal_welfare'))
 
-    def test_shown_only_defer_new_animal_and_other_family_remain(self):
+    def test_purpose_defer_covers_existing_subjects_but_new_animal_remains(self):
         with patch.object(module,'ask_laya_choice',return_value=('defer',{})):
             selected,_=module.choose(None,{},'sustenance_animal_welfare',self.s)
         state={}; module.execute(Client(self.context),self.s,state,'sustenance_animal_welfare',selected)
-        # Purpose stage showed one representative, rather than every animal.
         module.prepare(self.s,state)
-        self.assertEqual(list(module.options(self.context,'sustenance_animal_welfare')),[self.plans[1]['key']])
-        self.s['game']['tick']+=250; module.prepare(self.s,state)
-        self.assertEqual(len(module.options(self.context,'sustenance_animal_welfare')),2)
+        self.assertEqual(module.options(self.context,'sustenance_animal_welfare'),{})
+        self.context['options'].append({**self.plans[0],'key':'care:99:2','target_id':99})
+        module.prepare(self.s,state)
+        self.assertEqual(list(module.options(self.context,'sustenance_animal_welfare')),['care:99:2'])
 
     @patch('colony_retry.time.time')
     def test_json_roundtrip_rollback_and_expiry(self, clock):
@@ -290,3 +290,67 @@ class SustenanceVisibleFactsTests(unittest.TestCase):
         self.assertTrue(any('downed=True' in card['cost'] for card in cards))
 
 if __name__=='__main__': unittest.main()
+
+
+class SustenanceRefusalSequenceTests(unittest.TestCase):
+    def fixture(self):
+        plans=[{'key':'stockfood:0:Rice','kind':'stockfood','target_id':0,'value':'Rice','label':'Permit Rice'},
+               {'key':'stockpile:0:2','kind':'stockpile','target_id':0,'value':'2','label':'Priority 2'},
+               {'key':'stockpile:0:4','kind':'stockpile','target_id':0,'value':'4','label':'Priority 4'}]
+        context={'available':True,'options':plans,'food':[{'def_name':'Rice','fresh_eligible_nutrition':8}],
+                 'grazing_food':[{'def_name':'Plant_Grass','nutrition':900}],
+                 'stockpiles':[{'id':0,'priority':3,'allowed_food':[]}],
+                 'perishables':[{'eligible':True,'ticks_until_rot':9000}]}
+        return {'map':{'id':1},'game':{'tick':400000},'development':{'sustenance':context}},context
+
+    @patch('colony_retry.time.time')
+    def test_eight_cycles_roundtrip_and_both_clocks(self, clock):
+        import json
+        snapshot,context=self.fixture(); state={};clock.return_value=100
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})):
+            selected,_=module.choose(None,{},'sustenance_preservation',snapshot)
+        client=Client(context)
+        module.execute(client,snapshot,state,'sustenance_preservation',selected)
+        for i in range(8):
+            state=json.loads(json.dumps(state));clock.return_value=110+i*10
+            snapshot['game']['tick']=440000+i*1000
+            snapshot['colonists']=[{'food':.7-i*.01,'current_job':'Wait_Wander'}]
+            context['perishables'][0]['ticks_until_rot']=8999-i*10
+            self.assertNotIn('sustenance_preservation',module.prepare(snapshot,state))
+        self.assertEqual(client.posts,[])
+        clock.return_value=221
+        self.assertIn('sustenance_preservation',module.prepare(snapshot,state))
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_new_option_and_urgent_rot_reopen_only_relevant_scopes(self, clock):
+        snapshot,context=self.fixture();state={}
+        module.execute(Client(context),snapshot,state,'sustenance_preservation',
+                       {'sustenance_policy':'defer','shown_sustenance_options':[p['key'] for p in context['options']]})
+        context['options'].append({'key':'cooler:55:-3','kind':'cooler','target_id':55,'value':'-3','label':'Cooler'})
+        module.prepare(snapshot,state)
+        self.assertEqual(list(module.options(context,'sustenance_preservation')),['cooler:55:-3'])
+        context['perishables'][0]['ticks_until_rot']=1000
+        module.prepare(snapshot,state)
+        self.assertIn('stockfood:0:Rice',module.options(context,'sustenance_preservation'))
+
+    def test_item_nutrition_excludes_separate_grazing_and_no_phantom_storage(self):
+        snapshot,context=self.fixture()
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as ask:
+            module._stage(None,context,[],'sustenance_purpose','choose')
+        self.assertEqual(ask.call_args.args[1]['decision_facts']['fresh_nutrition'],8)
+        context['options']=[];context['food']=[]
+        self.assertNotIn('sustenance_preservation',module.prepare(snapshot,{}))
+        with patch.object(module,'ask_laya_choice',return_value=('defer',{})) as ask:
+            module._stage(None,context,[],'sustenance_purpose','choose')
+        self.assertEqual(ask.call_args.args[1]['decision_facts']['fresh_nutrition'],0)
+
+    @patch('colony_retry.time.time',return_value=100)
+    def test_clinical_stage_reopens_declined_animal(self, clock):
+        p={'key':'care:8:2','kind':'care','target_id':8,'value':'2','label':'Cow'}
+        c={'options':[p],'animals':[{'id':8,'food':.5,'health':[{'def_name':'Heatstroke','stage_index':1}]}]}
+        snap={'map':{'id':1},'game':{'tick':1000},'development':{'sustenance':c}};state={}
+        module.execute(Client(c),snap,state,'sustenance_animal_welfare',{'sustenance_policy':'defer','shown_sustenance_options':[p['key']]})
+        c['animals'][0]['food']=.49
+        self.assertNotIn('sustenance_animal_welfare',module.prepare(snap,state))
+        c['animals'][0]['health'][0]['stage_index']=2
+        self.assertIn('sustenance_animal_welfare',module.prepare(snap,state))

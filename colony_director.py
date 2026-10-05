@@ -2889,7 +2889,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     if (int((snapshot.get("development") or {}).get("butchery_gap") or 0) > 0
             and "build_butcher_spot" in actions):
         actions = [action for action in actions
-                   if action not in {"designate_safe_hunting", "prioritize_hunting"}]
+                   if action not in {"designate_safe_hunting", "prioritize_hunting", "wildlife_hunt_plan"}]
     resources = (snapshot.get("map") or {}).get("resources") or {}
     people = snapshot.get("colonists") or []
     runway = estimated_food_runway_days(resources, len(people))
@@ -2912,7 +2912,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         return actions
     replenishment = {
         "harvest_local_plants", "harvest_food_crops_early", "clear_plant_blight", "harvest_at_risk_crops",
-        "designate_safe_hunting", "open_sealed_food_store", "open_blocked_food_path",
+        "designate_safe_hunting", "wildlife_hunt_plan", "wildlife_hunt_lifecycle", "open_sealed_food_store", "open_blocked_food_path",
         "build_butcher_spot",
     }
     if fuel_gap:
@@ -2946,7 +2946,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     if int((snapshot.get("development") or {}).get("butchery_gap") or 0) > 0 and "build_butcher_spot" in actions:
         # A new kill only enlarges the inaccessible carcass pile. Hunting is
         # still available outside this immediate food decision window.
-        related.difference_update({"designate_safe_hunting", "prioritize_hunting"})
+        related.difference_update({"designate_safe_hunting", "prioritize_hunting", "wildlife_hunt_plan"})
     food_present = int(resources.get("food") or 0) > 0
     raw_present = int(resources.get("raw_food") or 0) > 0
     wild_food = bool((snapshot.get("development") or {}).get("wild_plant_options"))
@@ -5880,8 +5880,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if (dev.get("wildlife") or {}).get("available"):
         # Native plans bind the actual hunter/team; retain old designation-only
         # behavior solely when that endpoint is unavailable.
-        one_time = [a for a in one_time if a != "consider_dangerous_hunt"]
-        maintenance = [a for a in maintenance if a != "designate_safe_hunting"]
+        one_time = [a for a in one_time if a not in {"designate_safe_hunting", "consider_dangerous_hunt"}]
+        maintenance = [a for a in maintenance if a not in {"designate_safe_hunting", "consider_dangerous_hunt"}]
     actionable = list(dict.fromkeys(one_time + maintenance))
     # Remove failed legacy choices before focus rules narrow the alternatives.
     # Filtering afterwards could leave only hold_survival for a bad candidate.
