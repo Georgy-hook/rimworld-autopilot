@@ -42,5 +42,20 @@ still receiving a treatment proposal. Native Release-1.6 builds with zero
 errors/warnings. API contract audit: 306 routes, 257 literal calls, no missing
 or duplicate routes. These checks do not prove recovery in the live colony.
 
-Runtime installation and observation evidence will be recorded after the
-preserved colony resumes. No new colony or memory reset is part of this fix.
+Runtime source b326db5 and DLL package f2eddbd were installed; all 36 runtime
+files and both installed DLL copies matched the payload. The preserved game
+resumed around 13:56:23 UTC, following a technical pause at tick1994622 and
+287 load-transition ticks. No colony or memory was replaced.
+
+At tick1994909, the native API reported medical rest not indicated and no
+developing immunity for the chronic condition. A direct negative bed-rest
+check was rejected before mutation; the current DoBill job remained unchanged.
+The legacy error envelope uses HTTP500 for this expected refusal. No rest
+proposal remained in either Python post-combat care or native resilience.
+
+The first 17 subsequent logged records (13:56:26–13:58:27 UTC) contain zero
+rest assignments, with food, refuelling, combat, stand-down and equipment
+decisions continuing. The former repeated-rest target was observed doing
+production work, later ordinary sleeping; all four current residents remained
+alive and upright. This is a two-minute live regression window, not proof of
+long-term survival or successful treatment of a new acute infection.
