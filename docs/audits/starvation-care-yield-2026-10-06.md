@@ -50,3 +50,13 @@ The first repaired continuation actually rescued the child to a bed, then deferr
 The helper and Python projection now use the existing native `immunity_can_develop` fact. Actual threatening disease and active immunity races remain protected. Root review also corrected the legacy medical executor's lost expected-job/expected-patient fields and its blanket same-patient rejection, and verifies the real combat carrying DTO fields plus native carried orders. Existing FeedPatient and carrying Rescue still cannot be displaced.
 
 Windows process liveness now checks `GetExitCodeProcess` with correctly typed 64-bit handles; a retained terminated process object must not prevent observation startup. New behavioral tests cover that failure, chronic-versus-immune care, carrying observations and exact executor bindings. All 1145 Python tests pass; the route audit reports no missing literal routes or duplicates. Positive native food consumption is still a separate live gate, not a conclusion from these tests.
+
+## Installed native and autonomous observations
+
+Source cb79e9f, native package 4b4fbf8: Release-1.6 builds with zero warnings/errors. Both installed DLL copies match SHA256 `f367d152ff57a4d81d4356632dd6b40f37c8d1251d03a76146d8e9986685db49`. The desktop executable was rebuilt from 4b4fbf8 to include the process-liveness correction.
+
+A separate direct technical feeding check on the discarded three-survivor branch verified the complete legacy executor, exact stable TendPatient binding and actual food delivery. Patient hunger rose from0 to0.828 and Malnutrition fell from0.9591462 to0.9500594, ticks2533529–2536412 at1x. This was a human-agent diagnostic order, not Laya's autonomous success.
+
+The same four-survivor checkpoint was then restored under the user's conditional technical rollback permission; future memory markers use normal rollback reconciliation. Final load added993 technical ticks to2515657. Stable pause and disk save at2516650 were verified before the observer/director start. Autonomy resumed at10:14:28.938 UTC,1x for existing severe starvation, normal target3x.
+
+Laya issued the child's real Rescue at10:14:29, initially deferred feeding, then selected feed_hungry_colonist at10:14:55. On the10:15:23 snapshot/tick2519642 the child was in bed with hunger0.894, no longer natively Starving, and all four residents were alive. The helper then resumed the distant patient's Rescue. No direct feeding order was issued in this final restored continuation. This establishes short autonomous rescue and food delivery; chronic disease, food supply, decision quality and longer survival remain observation gates.
