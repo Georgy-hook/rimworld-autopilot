@@ -202,7 +202,8 @@ def _defer_state(rows: list[dict], context: dict) -> str:
         name = str(condition.get('def_name') or '')
         severity = float(condition.get('severity') or 0)
         # Hypothermia stages change ability to work before severe .5/.75 bands.
-        thresholds = (.04, .2, .35, .62) if name == 'Hypothermia' else (.5, .75)
+        thresholds = ((.04, .2, .35, .62) if name == 'Hypothermia' else
+                      (.5, .75, .9, .95, .98) if name == 'Malnutrition' else (.5, .75))
         conditions.append((name, sum(severity >= boundary for boundary in thresholds)))
     readiness = sorted((tuple(option.get(field) for field in
         ('kind', 'worker_id', 'target_id', 'giver', 'food_feasible')) for option in rows), key=repr)
@@ -298,6 +299,58 @@ def assess(action: str, snapshot: dict) -> dict:
             'inaction': 'Autonomous work continues; illness, hunger or contamination may persist.',
             'uncertainty': 'Immunity and severity are observed values, not a guaranteed survival forecast.'}
 
+
+def nutrition_facts(patient: dict) -> dict:
+    """Keep a dependent patient's lethal hunger visible before prompt trimming."""
+    condition = next((h for h in patient.get('conditions') or []
+                      if h.get('visible', True) and h.get('def_name') == 'Malnutrition'), {})
+    def number(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    severity, lethal = condition.get('severity'), condition.get('lethal_severity')
+    return {'food': patient.get('food'), 'malnutrition': severity if number(severity) else None,
+            'lethal': lethal if number(lethal) and lethal > 0 else None,
+            'remaining_margin': max(0, lethal - severity) if number(severity) and number(lethal) and lethal > 0 else None,
+            'in_bed': patient.get('in_bed'), 'downed': patient.get('downed')}
+
+
+def nutrition_description(patient: dict) -> str:
+    facts = nutrition_facts(patient)
+    clinical = (f"Malnutrition {facts['malnutrition']:.3f}" if facts['malnutrition'] is not None else 'Malnutrition unknown')
+    if facts['lethal'] is not None:
+        clinical += f" / lethal {facts['lethal']:.3f}; margin {facts['remaining_margin']:.3f}" if facts['remaining_margin'] is not None else f" / lethal {facts['lethal']:.3f}"
+    return clinical + f"; food={facts['food']} in_bed={facts['in_bed']} down={facts['downed']}"
+
+
+ORDER_FIELDS = ('kind', 'worker_id', 'target_id', 'giver', 'expected_current_job', 'expected_care_patient_id')
+
+
+def order_fields(row: dict) -> dict:
+    return {key: row[key] for key in ORDER_FIELDS if row.get(key) is not None}
+
+
+def nutrition_effects(patient: dict, row: dict) -> dict:
+    """Put the actual food benefit and waiting consequence before token trimming."""
+    feeding = row['kind'] == 'feed'
+    intervention = 'Feed to stop starvation' if feeding else 'Carry to bed so feeding can start'
+    ticks = row.get('starvation_ticks', patient.get('starvation_ticks'))
+    estimate = f'Native starvation estimate ~{round(ticks)} ticks' if isinstance(ticks, (int, float)) and math.isfinite(ticks) else 'Starvation deadline unknown'
+    return {
+        'benefit': intervention + '; ' + nutrition_description(patient),
+        'risk': 'Food pickup and travel take time; ' + (row.get('care_yield_reason') or 'other work waits'),
+        'cost': f"travel={row.get('travel_distance')} cells; food and caregiver time; Medicine skill does not determine feeding/carrying",
+        'inaction': 'Unfed patient can die of starvation; tending wounds supplies no calories',
+        'uncertainty': estimate + '; accepted job is not consumed nutrition; rescue still needs feeding',
+    }
+
+
+def nutrition_defer_effects(context: dict) -> dict:
+    active = [row for row in context.get('active_orders') or [] if row.get('kind') in ('feed', 'rescue', 'tend')]
+    return {'benefit': 'Preserve ongoing care' if active else 'Leave available caregiver on current work',
+            'risk': 'Dependent patients remain unfed; malnutrition can become lethal',
+            'cost': 'No food delivery starts', 'inaction': 'Starvation continues; tending supplies no calories',
+            'uncertainty': 'Current job may help another patient; it does not guarantee food reaches this patient'}
+
+
 def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, dict]:
     context = snapshot.get('development', {}).get('resilience', {})
     plans = context.get('plans', {}).get(action) or {}
@@ -310,12 +363,16 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
     def effects(row: dict) -> dict:
         patient = people.get(subject(row), {})
+        if row['kind'] in ('feed', 'rescue') and nutrition_facts(patient)['malnutrition'] is not None:
+            return nutrition_effects(patient, row)
         conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), _immunity_race(h) is True, bool(h.get('tendable_now'))), reverse=True)
         h = conditions[0] if conditions else {}
         race = _immunity_race(h)
         clinical = f"{h.get('def_name', row.get('target', row['target_id']))} s={h.get('severity')} i={h.get('immunity')} immunity_race={'yes' if race is True else 'no' if race is False else 'unknown'}"
         if row['kind'] == 'feed':
-            clinical = f"{patient.get('name', row['target_id'])} food={patient.get('food')} in_bed={patient.get('in_bed')} down={patient.get('downed')}; dependent feeding"
+            clinical = nutrition_description(patient) + '; deliver food to dependent patient'
+        elif row['kind'] == 'rescue' and nutrition_facts(patient)['malnutrition'] is not None:
+            clinical = nutrition_description(patient) + '; bed is prerequisite for feeding'
         exposure = f"T={patient.get('temperature')} roof={patient.get('roof')} gas={patient.get('gases')}"
         if row['kind'] == 'roof_guard':
             clinical = f"Roof support {row['target_id']} removal={row.get('giver')}"
@@ -338,35 +395,50 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         elif row['kind'] in ('inspect', 'interrogate', 'interrogation_policy'):
             clinical = f"{patient.get('name', row['target_id'])} anomaly diagnosis; gray flesh evidence"
             exposure = 'Infected doctor can lie/infect; discovery can cause emergence'
-        return {'benefit': clinical + f"; {row['kind']} worker={row.get('worker_id')} med={row.get('medicine_skill')}",
+        food_care = row['kind'] in ('feed', 'rescue')
+        consequence = (nutrition_description(patient) + '; delay without food can kill; tending wounds supplies no calories'
+                       if food_care and nutrition_facts(patient)['malnutrition'] is not None else
+                       f"down={patient.get('downed')} threat={patient.get('life_threatening')} bleeding={patient.get('bleeding_total')}; hazard persists")
+        return {'benefit': clinical + f"; {row['kind']} worker={row.get('worker_id')}",
                 'risk': exposure + '; rescue exposure allowed' if row['kind'] == 'rescue' else exposure,
-                'cost': '2 medicine, cut4, anesthesia60000ticks' if row['kind'] == 'inspect' else f"next={h.get('next_tend_ticks')} expiry={h.get('treatment_ticks_left')} quality={h.get('tend_quality')}; labor/dose/food",
-                'inaction': f"down={patient.get('downed')} threat={patient.get('life_threatening')} bleeding={patient.get('bleeding_total')}; hazard persists",
+                'cost': ('2 medicine, cut4, anesthesia60000ticks' if row['kind'] == 'inspect' else
+                         f"travel={row.get('travel_distance')} cells; food and caregiver time; Medicine skill does not determine feeding/carrying" if food_care else
+                         f"next={h.get('next_tend_ticks')} expiry={h.get('treatment_ticks_left')} quality={h.get('tend_quality')}; labor/dose/food"),
+                'inaction': consequence,
                 'uncertainty': 'Negative not clear; matching sample analysis needed; infected doctor can lie' if row['kind'] in ('inspect', 'interrogate', 'interrogation_policy') else f"immunity/day={h.get('immunity_per_day')} severity/day={h.get('severity_modifiers_per_day')}; job not recovery"}
     defer = {'benefit': 'Preserve current jobs/resources', 'risk': 'Illness/exposure/collapse can persist', 'cost': 'No new dose/food/labor', 'inaction': 'Autonomous work continues', 'uncertainty': 'No recovery guarantee'}
+    nutritional = action in ('resilience_feed', 'resilience_rescue') and any(nutrition_facts(people.get(subject(row), {}))['malnutrition'] is not None for row in plans.values())
+    if nutritional:
+        defer = nutrition_defer_effects(context)
     targets = {}
     target_effects = {}
     for row in plans.values():
         target = subject(row)
         target_effects.setdefault(target, effects(row))
         targets.setdefault(target, f"{people.get(target, {}).get('name', row.get('target', target))}; {target_effects[target]['benefit']}")
-    targets['defer'] = 'Preserve current jobs/resources; hazards may persist.'
+    targets['defer'] = 'Keep current work; dependent patients remain unfed and starvation can kill' if nutritional else 'Preserve current jobs/resources; hazards may persist.'
     target_effects['defer'] = defer
-    target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.', targets, detailed=True)
+    instructions = 'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.'
+    target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
     if target == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if subject(row) == target}
-    choices = {k: f"{row.get('worker', row['worker_id'])}; {row.get('giver', row['kind'])}; Medicine {row.get('medicine_skill')}" for k, row in plans.items()}
+    choices = {k: (f"{row.get('worker', row['worker_id'])}; {nutrition_description(people.get(subject(row), {}))}; {row['kind']}" if row['kind'] in ('feed', 'rescue') else
+                   f"{row.get('worker', row['worker_id'])}; {row.get('giver', row['kind'])}; Medicine {row.get('medicine_skill')}") for k, row in plans.items()}
     option_effects = {k: effects(row) for k, row in plans.items()}
     for key, row in plans.items():
-        option_effects[key]['benefit'] = f"worker={row['worker_id']} med={row.get('medicine_skill')} {row.get('giver', row['kind'])}; " + option_effects[key]['benefit']
+        if row['kind'] not in ('feed', 'rescue'):
+            option_effects[key]['benefit'] = f"worker={row['worker_id']} med={row.get('medicine_skill')} {row.get('giver', row['kind'])}; " + option_effects[key]['benefit']
         if row['kind'] == 'inspect':
             option_effects[key]['benefit'] = f"Doctor{row['worker_id']} M{row.get('medicine_skill')} surgery={row.get('surgery_success')} bed={row.get('giver')}"
             option_effects[key]['risk'] = f"doctor can lie; bed cleanliness={row.get('room_cleanliness')} T={row.get('current_temperature')}; emergence possible"
     choices['defer'], option_effects['defer'] = targets['defer'], defer
-    key, raw = ask_laya_choice(agent, {'decision_facts': {'target': target, 'evidence': target_effects[target]['benefit'], 'exposure': target_effects[target]['risk']}, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
+    facts = {'target': target, 'evidence': target_effects[target]['benefit'], 'exposure': target_effects[target]['risk']}
+    if action in ('resilience_feed', 'resilience_rescue'):
+        facts = {'nutrition': nutrition_facts(people.get(target, {})), **facts}
+    key, raw = ask_laya_choice(agent, {'decision_facts': facts, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
     raw['patient_choice'] = first
-    return (defer_selection(plans) if key == 'defer' else {k: plans[key][k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in plans[key]}), raw
+    return (defer_selection(plans) if key == 'defer' else order_fields(plans[key])), raw
 
 def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected: dict) -> dict:
     tick = int(snapshot.get('game', {}).get('tick') or 0)
@@ -384,14 +456,14 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         while len(memory.get('deferred') or {}) > MAX_DEFERRED_SUBJECTS:
             memory['deferred'].pop(next(iter(memory['deferred'])))
         return {'applied': False, 'reason': 'laya_deferred'}
-    payload = {k: selected[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in selected}
+    payload = order_fields(selected)
     def failed() -> None:
         memory.setdefault('failed', {})[_option(payload)] = failure_record(tick, seconds=15)
     try:
         fresh = collect(client, snapshot)
         if ((payload.get('kind'), payload.get('target_id')) in _active_targets(fresh)
                 or (payload.get('kind') == 'dispose_corpse' and any(row.get('kind') == 'haul' and row.get('target_id') == payload.get('target_id') for row in fresh.get('active_orders') or []))
-                or 'resilience_' + str(payload.get('kind')) != action or not any({k: row[k] for k in ('kind', 'worker_id', 'target_id', 'giver') if k in row} == payload for row in fresh.get('options') or [])):
+                or 'resilience_' + str(payload.get('kind')) != action or not any(order_fields(row) == payload for row in fresh.get('options') or [])):
             failed()
             return {'applied': False, 'reason': 'selection_no_longer_feasible'}
         result = client.post('/api/v1/resilience/order', body={'map_id': snapshot['map']['id'], **payload})

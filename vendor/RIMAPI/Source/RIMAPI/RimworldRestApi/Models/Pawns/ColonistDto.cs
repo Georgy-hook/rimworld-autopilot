@@ -292,6 +292,8 @@ namespace RIMAPI.Models
 
     public class MedicalFeedRequestDto
     {
+        public string ExpectedCurrentJob { get; set; }
+        public int? ExpectedCarePatientId { get; set; }
         public int PatientPawnId { get; set; }
         public int? FeederPawnId { get; set; }
     }

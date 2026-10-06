@@ -382,34 +382,30 @@ namespace RIMAPI.Services
                     result.Reason = "feeding_in_progress";
                     return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
-                if (feeder.CurJobDef == JobDefOf.TendPatient || feeder.CurJobDef == JobDefOf.Rescue
-                    || feeder.CurJobDef == JobDefOf.FeedPatient)
+                bool scopedYield = CareTriageHelper.CanYield(feeder,patient,"feed",request.ExpectedCurrentJob,request.ExpectedCarePatientId,out _);
+                if ((request.ExpectedCurrentJob != null || request.ExpectedCarePatientId.HasValue) && !scopedYield)
+                { result.Reason="care_job_or_urgency_changed"; return ApiResult<MedicalFeedResultDto>.Ok(result); }
+                if (!scopedYield && (feeder.CurJobDef == JobDefOf.TendPatient || feeder.CurJobDef == JobDefOf.Rescue
+                    || feeder.CurJobDef == JobDefOf.FeedPatient))
                 {
                     result.Reason = "feeder_providing_patient_care";
                     return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
 
-                WorkGiverDef giverDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail(
-                    patient.RaceProps?.Animal == true ? "DoctorFeedAnimals" : "DoctorFeedHumanlikes"
-                );
-                WorkGiver_Scanner scanner = giverDef?.Worker as WorkGiver_Scanner;
-                Job job = scanner != null && scanner.HasJobOnThing(feeder, patient, true)
-                    ? scanner.JobOnThing(feeder, patient, true) : null;
-                if (job == null && patient.RaceProps?.Animal == true)
-                {
-                    giverDef = DefDatabase<WorkGiverDef>.GetNamedSilentFail("HandlingFeedPatientAnimals");
-                    scanner = giverDef?.Worker as WorkGiver_Scanner;
-                    job = scanner != null && scanner.HasJobOnThing(feeder, patient, true)
-                        ? scanner.JobOnThing(feeder, patient, true) : null;
-                }
+                Job job = ResilienceAutomationHelper.NativeJob(feeder,patient,"feed",
+                    patient.RaceProps.Animal ? "DoctorFeedAnimals" : "DoctorFeedHumanlikes",
+                    request.ExpectedCurrentJob,request.ExpectedCarePatientId);
+                if (job == null && patient.RaceProps.Animal && !scopedYield)
+                    job=ResilienceAutomationHelper.NativeJob(feeder,patient,"feed","HandlingFeedPatientAnimals");
                 if (job == null)
                 {
                     result.Reason = "no_eligible_food_or_patient_reserved";
                     return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
-                if (!feeder.jobs.TryTakeOrderedJob(job))
+                if (!feeder.jobs.TryTakeOrderedJob(job) || !CareTriageHelper.Matches(feeder,job,patient))
                 {
-                    result.Reason = "feeder_could_not_accept_job";
+                    feeder.jobs.jobQueue.RemoveAll(feeder,j=>j==job);
+                    result.Reason = "feeder_could_not_accept_current_job";
                     return ApiResult<MedicalFeedResultDto>.Ok(result);
                 }
                 result.Applied = true;

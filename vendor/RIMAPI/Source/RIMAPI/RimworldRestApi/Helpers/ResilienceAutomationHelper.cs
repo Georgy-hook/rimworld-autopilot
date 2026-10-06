@@ -98,7 +98,7 @@ namespace RIMAPI.Helpers
             { "dispose_corpse", new[] { "HaulCorpses", "HaulGeneral" } },
             { "tend", new[] { "DoctorTendEmergency", "DoctorTendToHumanlikes", "DoctorTendToSelf", "DoctorTendToAnimals" } },
             { "rescue", new[] { "DoctorRescue" } },
-            { "feed", new[] { "DoctorFeedHumanlikes", "DoctorFeedAnimals" } },
+            { "feed", new[] { "DoctorFeedHumanlikes", "DoctorFeedAnimals", "HandlingFeedPatientAnimals" } },
             { "clean", new[] { "CleanFilth" } },
             { "interrogate", new[] { "InterrogatePrisoner" } }
         };
@@ -109,7 +109,7 @@ namespace RIMAPI.Helpers
         private static bool Idle(Pawn p) => p.IsColonistPlayerControlled && !p.Dead && !p.Downed && !p.Drafted && !p.InMentalState
             && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef != JobDefOf.Ingest;
         private static bool Available(Pawn p) => Idle(p) && !NeedsCare(p);
-        private static bool FeedFoodAvailable(Pawn worker, Pawn patient) => patient.needs?.food != null
+        public static bool FeedFoodAvailable(Pawn worker, Pawn patient) => patient.needs?.food != null
             && FoodUtility.TryFindBestFoodSourceFor(worker, patient, patient.needs.food.CurCategory == HungerCategory.Starving,
                 out Thing food, out ThingDef foodDef, canRefillDispenser:false, canUseInventory:true,
                 canUsePackAnimalInventory:true, allowForbidden:false, allowCorpse:true,
@@ -142,18 +142,21 @@ namespace RIMAPI.Helpers
             }
             return true;
         }
-        private static WorkGiver_Scanner NativeScanner(Pawn worker, Thing target, string kind, string giverName, HashSet<string> activeTargets = null)
+        private static WorkGiver_Scanner NativeScanner(Pawn worker, Thing target, string kind, string giverName, HashSet<string> activeTargets = null, bool careYield = false)
         {
             if (kind == "clean" && worker.CurJobDef?.defName == "Clean") return null;
             if ((kind == "feed" || kind == "rescue" || kind == "tend")
                 && (activeTargets ?? ActiveTargets(ActiveOrders(worker.Map))).Contains(kind + ":" + target.thingIDNumber)) return null;
             if (kind == "dispose_corpse" && (activeTargets ?? ActiveTargets(ActiveOrders(worker.Map))).Contains("haul:"+target.thingIDNumber)) return null;
+            if ((kind == "feed" || kind == "rescue" || kind == "tend") && (CareTriageHelper.QueuedCare(worker)
+                || target is Pawn queuedPatient && CareTriageHelper.QueuedFor(worker.Map,queuedPatient,kind))) return null;
             bool selfTend=kind == "tend" && worker == target && Idle(worker);
             bool rescueExposure=(kind == "rescue" && target is Pawn victim && victim.Downed) || (kind == "dispose_corpse" && target is Corpse);
-            if (kind == null || giverName == null || (!Available(worker) && !selfTend) || !Safe(worker, target,rescueExposure) || !Givers.TryGetValue(kind, out string[] allowed) || !allowed.Contains(giverName)) return null;
+            if (kind == null || giverName == null || (!Available(worker) && !selfTend && !careYield) || !Safe(worker, target,rescueExposure) || !Givers.TryGetValue(kind, out string[] allowed) || !allowed.Contains(giverName)) return null;
             WorkGiverDef def = DefDatabase<WorkGiverDef>.GetNamedSilentFail(giverName);
-            if (def == null || worker.WorkTypeIsDisabled(def.workType) || (worker.workSettings?.GetPriority(def.workType) ?? 0) == 0
-                || def.Worker.ShouldSkip(worker) || !(def.Worker is WorkGiver_Scanner scanner)) return null;
+            bool manualCare=kind == "feed" || kind == "rescue" || kind == "tend";
+            if (def == null || worker.WorkTypeIsDisabled(def.workType) || (!manualCare && (worker.workSettings?.GetPriority(def.workType) ?? 0) == 0)
+                || def.Worker.ShouldSkip(worker,manualCare) || !(def.Worker is WorkGiver_Scanner scanner)) return null;
             if (def.requiredCapacities != null && def.requiredCapacities.Any(c => !worker.health.capacities.CapableOf(c))) return null;
             if(scanner is WorkGiver_Warden_InterrogateIdentity)
             {
@@ -162,19 +165,22 @@ namespace RIMAPI.Helpers
                     || !prisoner.guest.IsInteractionEnabled(PrisonerInteractionModeDefOf.Interrogate) || !prisoner.guest.ScheduledForInteraction
                     || (prisoner.Downed && !prisoner.InBed()) || !worker.health.capacities.CapableOf(PawnCapacityDefOf.Talking) || !prisoner.Awake())return null;
             }
-            else if (!scanner.HasJobOnThing(worker, target, false)) return null;
+            else if (!scanner.HasJobOnThing(worker, target, manualCare)) return null;
             return scanner;
         }
-        private static Job NativeJob(Pawn worker,Thing target,string kind,string giverName)
+        public static Job NativeJob(Pawn worker,Thing target,string kind,string giverName, string expectedJob = null, int? expectedPatient = null)
         {
-            var scanner=NativeScanner(worker,target,kind,giverName);
+            bool careYield = target is Pawn patient && CareTriageHelper.CanYield(worker, patient, kind, expectedJob, expectedPatient, out _);
+            if ((expectedJob != null || expectedPatient.HasValue) && !careYield) return null;
+            var scanner=NativeScanner(worker,target,kind,giverName, careYield:careYield);
             if(scanner==null)return null;
             bool rescueExposure=(kind=="rescue" && target is Pawn victim && victim.Downed) || (kind=="dispose_corpse" && target is Corpse);
-            Job job = scanner.JobOnThing(worker, target, false);
+            Job job = scanner.JobOnThing(worker, target, kind == "feed" || kind == "rescue" || kind == "tend");
             if (job == null) return null;
             if (kind == "dispose_corpse" && !SafeDisposalDestination(worker, job.targetB)) return null;
             foreach (LocalTargetInfo t in new[] { job.targetA, job.targetB, job.targetC })
                 if (t.HasThing && t.Thing.Spawned && !Safe(worker, t.Thing,rescueExposure && t.Thing == target)) return null;
+            if ((kind == "feed" || kind == "rescue") && !CareTriageHelper.JobRouteSafe(worker,job)) return null;
             return job;
         }
         private static bool ShelterNeeded(Pawn patient) => patient.IsColonistPlayerControlled && !patient.Dead && !patient.Downed
@@ -255,7 +261,10 @@ namespace RIMAPI.Helpers
                     temperature = p.Position.GetTemperature(map), roof = map.roofGrid.RoofAt(p.Position)?.defName,
                     comfortable_min=p.GetStatValue(StatDefOf.ComfyTemperatureMin), comfortable_max=p.GetStatValue(StatDefOf.ComfyTemperatureMax),
                     gases=Enum.GetValues(typeof(GasType)).Cast<GasType>().ToDictionary(g => g.ToString(),g => (int)map.gasGrid.DensityAt(p.Position,g)),
-                    food = p.needs?.food?.CurLevelPercentage,
+                    food = p.needs?.food?.CurLevelPercentage, bleeding_evidence_complete=true,
+                    bleedout_ticks=p.health.hediffSet.BleedRateTotal >= .1f ? CareTriageHelper.BleedoutTicks(p) : null, starvation_ticks=CareTriageHelper.StarvationTicks(p),
+                    malnutrition_severity=CareTriageHelper.Malnutrition(p)?.Severity,
+                    lethal_margin=CareTriageHelper.Malnutrition(p) is Hediff patientMalnutrition ? (float?)(patientMalnutrition.def.lethalSeverity-patientMalnutrition.Severity) : null,
                     pain=p.health.hediffSet.PainTotal, bleeding_total=p.health.hediffSet.BleedRateTotal,
                     breathing=p.health.capacities.GetLevel(PawnCapacityDefOf.Breathing), consciousness=p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness),
                     moving=p.health.capacities.GetLevel(PawnCapacityDefOf.Moving), manipulation=p.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation),
@@ -280,14 +289,13 @@ namespace RIMAPI.Helpers
                 foreach (int targetTemp in new[] {18,21,26})
                     if (Math.Abs(device.TryGetComp<CompTempControl>().TargetTemperature-targetTemp) > .1f)
                         result.Options.Add(new ResilienceOptionDto {Kind="temperature",WorkerId=0,TargetId=device.thingIDNumber,Giver=targetTemp.ToString(),Target=device.LabelShort,CurrentTemperature=device.GetRoom().Temperature,CurrentTargetTemperature=device.TryGetComp<CompTempControl>().TargetTemperature,PowerOn=device.TryGetComp<CompPowerTrader>()?.PowerOn});
-            foreach (Pawn worker in patients.Where(Idle))
+            foreach (Pawn worker in patients.Where(p => Idle(p) || p.CurJobDef == JobDefOf.TendPatient || p.CurJobDef == JobDefOf.Rescue))
             {
                 foreach (Pawn patient in patients.Where(p => p != worker && p.Downed && !p.InBed()
                     && (p.needs?.food?.CurLevelPercentage ?? 1f) < .35f))
                     if (Available(worker) && !activeTargets.Contains("rescue:" + patient.thingIDNumber)
                         && !worker.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
-                        && (worker.workSettings?.GetPriority(WorkTypeDefOf.Doctor) ?? 0) > 0
-                        && !activeTargets.Contains("feed:" + patient.thingIDNumber)
+                                                && !activeTargets.Contains("feed:" + patient.thingIDNumber)
                         && worker.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation)
                         && Safe(worker, patient, true)
                         && worker.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some)
@@ -307,13 +315,33 @@ namespace RIMAPI.Helpers
                     foreach (Thing target in targets) foreach (string giver in pair.Value)
                         if (!(pair.Key == "dispose_corpse" && activeTargets.Contains("haul:"+target.thingIDNumber))
                             && NativeScanner(worker, target, pair.Key, giver, activeTargets) != null
-                            && (pair.Key != "dispose_corpse" || NativeJob(worker,target,pair.Key,giver) != null))
+                            && ((pair.Key != "dispose_corpse" && pair.Key != "feed" && pair.Key != "rescue") || NativeJob(worker,target,pair.Key,giver) != null))
                             result.Options.Add(new ResilienceOptionDto { Kind=pair.Key, WorkerId=worker.thingIDNumber, TargetId=target.thingIDNumber,
                                 Giver=giver, Worker=worker.LabelShort, Target=target.LabelShort, MedicineSkill=worker.skills?.GetSkill(SkillDefOf.Medicine)?.Level ?? 0,RoomCleanliness=target.GetRoom()?.GetStat(RoomStatDefOf.Cleanliness),
                                 MedicalTendQuality=pair.Key == "tend" ? worker.GetStatValue(StatDefOf.MedicalTendQuality) : (float?)null,
                                 MedicalTendSpeed=pair.Key == "tend" ? worker.GetStatValue(StatDefOf.MedicalTendSpeed) : (float?)null,
+                                TravelDistance=worker.Position.DistanceTo(target.Position),
+                                StarvationTicks=target is Pawn starving ? CareTriageHelper.StarvationTicks(starving) : null,
+                                MalnutritionSeverity=target is Pawn malPatient ? CareTriageHelper.Malnutrition(malPatient)?.Severity : null,
+                                LethalMargin=target is Pawn marginPatient && CareTriageHelper.Malnutrition(marginPatient) is Hediff malnutrition ? (float?)(malnutrition.def.lethalSeverity-malnutrition.Severity) : null,
                                 FoodFeasible=pair.Key == "feed" || (pair.Key == "rescue" && target is Pawn hungry && FeedFoodAvailable(worker, hungry)) });
                 }
+                foreach (Pawn patient in patients.Where(p => p != worker && p.IsColonistPlayerControlled))
+                    foreach (string kind in new[] { "feed", "rescue" })
+                    {
+                        string expectedJob=worker.CurJobDef?.defName;
+                        int? expectedPatient=(worker.CurJob?.targetA.Thing as Pawn)?.thingIDNumber;
+                        if (!CareTriageHelper.CanYield(worker,patient,kind,expectedJob,expectedPatient,out string reason)
+                            || !FeedFoodAvailable(worker,patient)) continue;
+                        string giver=kind == "feed" ? "DoctorFeedHumanlikes" : "DoctorRescue";
+                        if (NativeJob(worker,patient,kind,giver,expectedJob,expectedPatient) == null) continue;
+                        Hediff mal=CareTriageHelper.Malnutrition(patient);
+                        result.Options.Add(new ResilienceOptionDto { Kind=kind,WorkerId=worker.thingIDNumber,TargetId=patient.thingIDNumber,
+                            Worker=worker.LabelShort,Target=patient.LabelShort,Giver=giver,FoodFeasible=true,
+                            ExpectedCurrentJob=expectedJob,ExpectedCarePatientId=expectedPatient,CareYieldReason=reason,
+                            TravelDistance=worker.Position.DistanceTo(patient.Position),StarvationTicks=CareTriageHelper.StarvationTicks(patient),
+                            MalnutritionSeverity=mal?.Severity,LethalMargin=mal == null ? (float?)null : mal.def.lethalSeverity-mal.Severity });
+                    }
                 foreach (Thing drug in map.listerThings.AllThings.Where(t => t.def.defName == "Penoxycyline"))
                     if (Preventible(worker, drug)) result.Options.Add(new ResilienceOptionDto {Kind="prevent", WorkerId=worker.thingIDNumber,TargetId=drug.thingIDNumber,Worker=worker.LabelShort,Target=drug.LabelShort});
             }
@@ -364,10 +392,14 @@ namespace RIMAPI.Helpers
             { worker.workSettings.SetPriority(RestWork,1); result.Applied=true; result.Reason="bed_rest_prioritized; autonomous_job_required"; }
             else
             {
-                Job job = request.Kind == "prevent" && Preventible(worker,target) ? JobMaker.MakeJob(JobDefOf.Ingest,target) : NativeJob(worker,target,request.Kind,request.Giver);
+                Job job = request.Kind == "prevent" && Preventible(worker,target) ? JobMaker.MakeJob(JobDefOf.Ingest,target) : NativeJob(worker,target,request.Kind,request.Giver,request.ExpectedCurrentJob,request.ExpectedCarePatientId);
                 if (job != null)
                 { if (request.Kind == "prevent") job.count=1;
-                    result.Applied=worker.jobs.TryTakeOrderedJob(job); result.Reason=result.Applied ? "normal_job_scheduled; completion_unobserved" : "job_rejected"; }
+                    result.Applied=worker.jobs.TryTakeOrderedJob(job);
+                    if (request.Kind == "feed" || request.Kind == "rescue")
+                    { result.Applied=result.Applied && target is Pawn patient && CareTriageHelper.Matches(worker,job,patient);
+                        if (!result.Applied) worker.jobs.jobQueue.RemoveAll(worker,j=>j==job); }
+                    result.Reason=result.Applied ? "normal_job_observed; completion_unobserved" : "job_rejected_or_not_current"; }
                 else result.Reason="selection_no_longer_feasible";
             }
             return ApiResult<CapabilityOrderResultDto>.Ok(result);

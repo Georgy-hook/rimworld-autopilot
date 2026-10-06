@@ -17,7 +17,7 @@ class CareCombatSourceContracts(unittest.TestCase):
 
     def test_cleaning_and_prevention_do_not_truncate_before_feasibility(self):
         source = (HELPERS / 'ResilienceAutomationHelper.cs').read_text(encoding='utf-8')
-        candidates = source[source.index('foreach (Pawn worker in patients.Where(Idle))'):source.index('foreach (Pawn patient in patients.Where(p => p.IsColonistPlayerControlled')]
+        candidates = source[source.index('foreach (Pawn worker in patients.Where(p => Idle(p)'):source.index('foreach (Pawn patient in patients.Where(p => p.IsColonistPlayerControlled')]
         self.assertNotRegex(candidates, r'\.Take\(')
         self.assertIn('NativeScanner(worker, target', candidates)
         self.assertIn('Preventible(worker, drug)', candidates)

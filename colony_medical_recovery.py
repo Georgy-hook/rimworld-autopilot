@@ -24,6 +24,66 @@ def helpers(snapshot, patient_id, doctor=False):
     return rows
 
 
+def care_order_fields(row):
+    """Only native offered exact-current-care bindings authorize a scoped replacement."""
+    job, target = row.get("expected_current_job"), row.get("expected_care_patient_id")
+    if job not in {"TendPatient", "Rescue"} or not isinstance(target, int) or isinstance(target, bool):
+        return {}
+    return {"expected_current_job": job, "expected_care_patient_id": target}
+
+
+def offered_care_yield(snapshot, row):
+    binding = care_order_fields(row)
+    if not binding or not row.get("care_yield_reason") or row.get("kind") not in {"feed", "rescue"}:
+        return None
+    if row.get("food_feasible") is not True:
+        return None
+    detail = next((p for p in snapshot.get("colonists") or [] if str(p.get("id")) == str(row.get("worker_id"))), None)
+    live = next((p for p in snapshot.get("combat", {}).get("colonists") or [] if str(p.get("id")) == str(row.get("worker_id"))), {})
+    worker = {**(detail or {}), **live}
+    # GET facts must still agree with the offered binding. Native POST repeats all clinical/route gates.
+    work = (detail or {}).get("work_priorities", {}).get("Doctor")
+    if isinstance(work, dict) and work.get("disabled"):
+        return None
+    if detail is None or worker.get("current_job") != binding["expected_current_job"]:
+        return None
+    if str(worker.get("care_target_id") or worker.get("current_job_target_id")) != str(binding["expected_care_patient_id"]):
+        return None
+    if any(worker.get(k) for k in ("dead", "is_dead", "downed", "is_downed", "in_mental_state", "is_in_mental_state", "is_drafted", "carried_thing_id")):
+        return None
+    if str(worker.get("id")) == str(row.get("target_id")):
+        return None
+    old = next((p for p in snapshot.get("colonists") or []
+                if str(p.get("id")) == str(binding["expected_care_patient_id"])), None)
+    native_patients = snapshot.get("development", {}).get("resilience", {}).get("patients") or []
+    old_native = next((p for p in native_patients if str(p.get("pawn_id")) == str(binding["expected_care_patient_id"])), {})
+    if old is None:
+        return None
+    conditions = old.get("health_conditions", old_native.get("conditions"))
+    if not isinstance(conditions, list) or any(not isinstance(h, dict) for h in conditions):
+        return None
+    if any(h.get("def_name") not in {"BloodLoss", "Malnutrition"} and (
+            (h.get("immunity") is not None and float(h["immunity"]) < 1)
+            or h.get("life_threatening") or h.get("tendable_now") and (
+                float(h.get("lethal_severity") or 0) > 0 or "infection" in str(h.get("def_name") or "").lower()))
+           for h in conditions):
+        return None
+    rate = old.get("bleeding_rate", old_native.get("bleeding_total"))
+    if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+        return None
+    if binding["expected_current_job"] == "TendPatient" and rate > 0:
+        return None
+    if rate > 0 and not (rate < .1 and old_native.get("bleeding_evidence_complete") is True):
+        deadline = triage(old)[1]
+        if deadline is None:
+            deadline = old_native.get("bleedout_ticks")
+        next_native = next((p for p in native_patients if str(p.get("pawn_id")) == str(row.get("target_id"))), {})
+        starvation = row.get("starvation_ticks", next_native.get("starvation_ticks"))
+        if not isinstance(deadline, (int, float)) or not isinstance(starvation, (int, float)) or deadline <= starvation * 2 + 600:
+            return None
+    return detail
+
+
 def active_patients(snapshot, context=None):
     context = context if context is not None else snapshot.get("development", {}).get("resilience", {})
     targets = {str(row.get("target_id")) for row in context.get("active_orders") or []
@@ -67,10 +127,14 @@ def build_options(client, snapshot, map_state):
         action = mapping.get(row.get("kind"))
         pid = str(row.get("target_id"))
         patient = patients.get(pid)
-        if action is None or patient is None or pid in active:
+        yield_worker = offered_care_yield(snapshot, row)
+        if (row.get("expected_current_job") is not None or row.get("expected_care_patient_id") is not None) and yield_worker is None:
             continue
-        eligible = {str(p["id"]): p for p in helpers(snapshot, pid, doctor=action in {"tend_colonist", "feed_hungry_colonist"})}
-        worker = eligible.get(str(row.get("worker_id")))
+        if action is None or patient is None or (pid in active and not (yield_worker and row.get("kind") == "feed"
+                and str(row.get("expected_care_patient_id")) == pid)):
+            continue
+        eligible = {str(p["id"]): p for p in helpers(snapshot, pid, doctor=action in {"tend_colonist", "feed_hungry_colonist", "rescue_downed_colonist"})}
+        worker = eligible.get(str(row.get("worker_id"))) or yield_worker
         if worker is None:
             continue
         if action != "prepare_patient_bed" and pid not in {str(p.get("id")) for p in snapshot.get("colonists", [])}:
@@ -94,7 +158,10 @@ def build_options(client, snapshot, map_state):
                            + (s["position"]["z"]-patient["position"]["z"])**2)
                 actions[action][pid] = {"patient": patient, "helpers": {}, "site": site,
                                         "def_name": row["giver"]}
-        plan = actions[action].setdefault(pid, {"patient": patient, "helpers": {}})
+        native_patient = next((p for p in context.get("patients") or [] if str(p.get("pawn_id")) == pid), {})
+        enriched = {**patient, **{k: v for k, v in native_patient.items() if k in {
+            "starvation_ticks", "malnutrition_severity", "lethal_margin", "bleedout_ticks", "bleeding_evidence_complete"}}}
+        plan = actions[action].setdefault(pid, {"patient": enriched, "helpers": {}})
         plan["helpers"][str(worker["id"])] = row
     dev["medical_action_options"] = actions
     return actions
@@ -106,6 +173,18 @@ def triage(patient):
     rate = float(patient.get("bleeding_rate") or 0)
     ticks = max(0, (1-blood)*60000/rate) if blood is not None and rate > 0 else None
     return blood, ticks
+
+
+def clinical_deadline(patient, native_option=None):
+    """Minimum known death estimate; missing evidence stays unknown, not zero."""
+    import math
+    facts = {**patient, **(native_option or {})}
+    bleeding = patient.get("bleeding_rate", patient.get("bleeding_total"))
+    native_healing = facts.get("bleeding_evidence_complete") is True and isinstance(bleeding, (int, float)) and bleeding < .1
+    values = [None if native_healing else triage(patient)[1], facts.get("bleedout_ticks"), facts.get("starvation_ticks")]
+    known = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)
+             and math.isfinite(v) and v >= 0]
+    return min(known) if known else None
 
 
 def stable_tend_patient(patient):
@@ -120,16 +199,20 @@ def stable_tend_patient(patient):
 
 def patient_summary(patient):
     blood, ticks = triage(patient)
+    native_healing = patient.get('bleeding_evidence_complete') is True and isinstance(patient.get('bleeding_rate'), (int, float)) and patient['bleeding_rate'] < .1
+    if native_healing:
+        ticks = None
     critical = [f"{h.get('def_name')} {float(h.get('severity') or 0):.3f}" for h in patient.get("health_conditions") or []
                 if h.get("def_name") in {"BloodLoss", "Malnutrition"} or h.get("life_threatening")
                 or float(h.get("lethal_severity") or 0) > 0]
-    return (f"{patient.get('name')}; " + (f"bleedout ~{round(ticks)} ticks; " if ticks is not None else "bleedout unknown; ")
-            + ", ".join(critical[:4]) + f"; bleeding {patient.get('bleeding_rate')}; hunger {patient.get('hunger')}; rate/day estimate")
+    return (f"{patient.get('name')}; " + ('Native BloodLoss healing; no finite bleedout; ' if native_healing else f"bleedout ~{round(ticks)} ticks; " if ticks is not None else "bleedout unknown; ")
+            + ", ".join(critical[:4]) + (f"; starvation ~{round(patient['starvation_ticks'])} ticks" if isinstance(patient.get("starvation_ticks"), (int, float)) else "; starvation deadline unknown")
+            + (f"; lethal margin {patient['lethal_margin']:.3f}" if isinstance(patient.get("lethal_margin"), (int, float)) else "") + f"; bleeding {patient.get('bleeding_rate')}; hunger {patient.get('hunger')}; rate/day estimate")
 
 
 def patient_comparison(plans):
     """State relative deadlines explicitly; an unknown loss is never zero loss."""
-    estimates = {pid: triage(plan["patient"])[1] for pid, plan in plans.items()}
+    estimates = {pid: clinical_deadline(plan["patient"]) for pid, plan in plans.items()}
     known = [ticks for ticks in estimates.values() if ticks is not None]
     earliest = min(known) if known else None
     criteria = {}
@@ -146,7 +229,7 @@ def patient_comparison(plans):
             consequence = "Earliest estimated death deadline among known estimates; time-sensitive treatment. "
         criteria[pid] = consequence + patient_summary(plans[pid]["patient"])
     context = ("Choose the next patient to prevent imminent death. Existing BloodLoss and remaining survival time matter more than bleeding rate alone. "
-               "Ordering care for one patient delays the others. Estimates assume unchanged bleeding; consider life-threatening illness and starvation too.")
+               "Ordering care for one patient delays the others. Estimates assume unchanged bleeding/starvation and normal native need intervals; unknown estimates are not safety. Ground patients need normal rescue to a bed before feeding.")
     return context, criteria
 
 
@@ -220,17 +303,19 @@ def helper_comparison(snapshot, plan, action):
             else:
                 relative += "tend speed unknown. "
         travel = f"straight-line distance ~{round(distance)} cells; route length unknown" if distance is not None else "travel distance unknown"
-        criteria[key] = (f"Assign {row.get('worker') or key} to help this patient: " + relative
+        yield_note = (f"Scoped yield from {row.get('expected_current_job')} patient {row.get('expected_care_patient_id')}: {row.get('care_yield_reason')}; old job will be interrupted only if fresh native clinical gates still agree. "
+                      if care_order_fields(row) else "")
+        criteria[key] = (f"Assign {row.get('worker') or key} to help this patient: " + yield_note + relative
                          + f"medicine {skill:g}; {travel}; native route and reservation feasible")
     context = ("Choose which DOCTOR will treat the patient. Prefer higher treatment quality and speed at similar travel distance. "
                "The options describe caregivers, not patients. Compare actual tend quality and speed before medicine skill: better quality improves treatment and reduces infection risk; "
                "faster tending reduces bleeding delay. When travel is similar, a poorer slower doctor offers weaker care. A much longer trip can miss the death deadline. "
-               "Quality stats are expectations, not completed treatment. Existing care must finish.")
+               "Quality stats are expectations, not completed treatment. Existing care stays protected except an explicitly offered, freshly validated clinical yield; feeding and carrying are never interrupted.")
     if action == "tend_colonist" and plan.get("helper_frontier_exclusions"):
         context += " Known dominated idle helpers excluded: " + str(plan["helper_frontier_exclusions"])
     if action != "tend_colonist":
         context = ("Choose an available caregiver to carry or feed this patient. Compare travel delay and native feasibility. "
-                   "Medical treatment quality does not measure carrying or feeding ability. Existing care must finish.")
+                   "Medical treatment quality does not measure carrying or feeding ability. Existing care stays protected except an explicitly offered, freshly validated clinical yield; feeding and carrying are never interrupted.")
     return context, criteria
 
 

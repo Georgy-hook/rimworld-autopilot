@@ -27,6 +27,7 @@ import colony_society
 import colony_reasoning
 import colony_outcomes
 import colony_medical_recovery as medical_recovery
+import colony_resilience as resilience
 import colony_downed_combat as downed_combat
 import colony_wildlife as wildlife
 import colony_mental_safety as mental_safety
@@ -12014,6 +12015,57 @@ def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
                for row in colonists)
 
 
+def run_urgent_nutrition_cycle(client: bridge.RimApiClient, agent: Any,
+                             snapshot: dict[str, Any], map_state: dict[str, Any],
+                             log_path: Path) -> dict[str, Any] | None:
+    """Expose normal feeding and its bed prerequisite before wound-only triage."""
+    starving = {int(p["id"]) for p in snapshot.get("colonists") or []
+                if p.get("id") is not None and p.get("downed") and not p.get("dead")
+                and any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) >= .75
+                        for h in p.get("health_conditions") or [])}
+    if not starving:
+        return None
+    context = resilience.collect(client, snapshot)
+    dev = snapshot.setdefault("development", {})
+    dev["resilience"] = context
+    resilience.prepare(snapshot, map_state)
+    options = {key: row for action in ("resilience_feed", "resilience_rescue")
+               for key, row in (context.get("plans", {}).get(action) or {}).items()
+               if row.get("target_id") in starving and row.get("food_feasible") is True}
+    if not options:
+        return None
+    patients = {str(p["pawn_id"]): p for p in context.get("patients") or [] if p.get("pawn_id") is not None}
+    criteria, effects = {}, {}
+    for key, row in options.items():
+        patient = patients.get(str(row["target_id"]), {})
+        prerequisite = "Feed now" if row["kind"] == "feed" else "Rescue to bed, then feeding is possible"
+        evidence = resilience.nutrition_description(patient)
+        criteria[key] = evidence + f"; {prerequisite}; caregiver {row['worker_id']}"
+        effects[key] = resilience.nutrition_effects(patient, row)
+    criteria["defer"] = "Keep current care; dependent patients remain unfed and malnutrition can become lethal"
+    effects["defer"] = resilience.nutrition_defer_effects(context)
+    key, raw = ask_laya_choice(agent, {
+        "decision_facts": {"task": "Prevent lethal hunger; bed is required for dependent feeding",
+                           "active_care": context.get("active_orders") or []}, "option_effects": effects},
+        "urgent_nutrition", "Choose normal feeding or its rescue prerequisite, or defer to preserve more urgent ongoing care. Compare malnutrition, remaining margin and travel delay.",
+        criteria, detailed=True)
+    if key == "defer":
+        for action in ("resilience_feed", "resilience_rescue"):
+            selected_ids = list({str(row["target_id"]) for row in options.values()
+                                 if 'resilience_' + row["kind"] == action})
+            if selected_ids:
+                resilience.execute(client, snapshot, map_state, action,
+                    {"defer": True, "deferred_subjects": selected_ids})
+        result = {"applied": False, "reason": "laya_deferred_urgent_nutrition"}
+    else:
+        row = options[key]
+        result = resilience.execute(client, snapshot, map_state, 'resilience_' + row["kind"], resilience.order_fields(row))
+    record = {"timestamp": bridge.utc_now(), "mode": "urgent-nutrition", "tick": snapshot["game"].get("tick"),
+              "decision": {"choice": key, "raw": raw}, "result": result}
+    bridge.append_log(log_path, record)
+    return record
+
+
 def urgent_care_actionable(snapshot: dict[str, Any]) -> bool:
     bleeding = {int(p["id"]): bridge.first_number(p.get("bleeding_rate"))
                 for p in (snapshot.get("combat") or {}).get("colonists") or [] if p.get("id") is not None}
@@ -12902,6 +12954,14 @@ def main() -> int:
                     elapsed = time.monotonic() - started
                     time.sleep(max(0.0, 2.0 - elapsed))
                     continue
+                nutrition_record = run_urgent_nutrition_cycle(client, agent, snapshot, map_state, args.log)
+                if nutrition_record is not None:
+                    save_state(args.state, state)
+                    print(f"[{nutrition_record['timestamp']}] urgent nutrition: {stdout_result(nutrition_record['result'])}", flush=True)
+                    if nutrition_record["result"].get("applied"):
+                        # A fresh food/rescue job must be observed before a
+                        # wound-only care pass can choose the same actor again.
+                        snapshot = bridge.collect_snapshot(client)
                 care_gate = downed_colonist_care_gate(client, snapshot)
                 if care_gate is not None:
                     now = time.monotonic()

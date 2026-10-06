@@ -45,6 +45,8 @@ flowchart TD
 | `colony_reasoning`, `laya_decisions` | Consequence descriptions and bounded native comparisons | Exact compared state is logged |
 | `colony_outcomes` | Last order and subsequent measured changes | Acceptance, observation and completion are distinct |
 
+The director emergency scheduler exposes severe dependent starvation before its wound-only care pass. It uses the resilience module's native options, parameter allowlist, finite subject memory and fresh executor. Exact clinical bindings are required to yield stable tending or rescue travel; feeding and carrying keep their leases. See [the starvation contract](audits/starvation-care-yield-2026-10-06.md).
+
 ## Extension contract
 
 Each registered domain defines `DESCRIPTIONS`, `LABELS`, `ACTIONS`, `DOMAINS` and:
