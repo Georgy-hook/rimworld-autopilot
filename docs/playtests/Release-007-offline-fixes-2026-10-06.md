@@ -66,3 +66,14 @@ pre-autonomy loading NullReferenceException without an original stack are
 unresolved evidence questions. Neither is established as the cause of all
 deaths. Escape completion, sustained warmth, treatment improvement and survival
 must be assessed in a later user-authorized game run.
+
+## Live collection follow-up
+
+The next user-authorized random landing exposed a context-collection omission:
+native `/combat/state` included `care_retreat_pawn_ids`, but Python's explicitly
+constructed snapshot omitted it. The new colony was saved and technically paused
+at tick 16077; the current game, colonists and memory were retained. Forwarding is
+now covered from actual server-shaped JSON through collection to medical/combat
+ownership, including malformed IDs and IDs from a different map. The updated
+suite passes 1206 tests. Native code did not change in this follow-up. The earlier
+offline checks used already constructed snapshots and did not catch this boundary.

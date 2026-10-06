@@ -459,6 +459,9 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
     # Older servers lack location fields: combat membership is a conservative
     # fallback rather than treating travellers as available home workers.
     local_ids = {int(p["id"]) for p in fighters or [] if p.get("id") is not None}
+    care_retreat_ids = combat.get("care_retreat_pawn_ids") if isinstance(combat, dict) else None
+    care_retreat_ids = [pid for pid in care_retreat_ids if isinstance(pid, int) and not isinstance(pid, bool)
+                       and pid in local_ids] if isinstance(care_retreat_ids, list) else []
     colonists = [p for p in colonists if
                  (p["map_id"] == map_id and p["spawned"] is not False)
                  or (p["map_id"] is None and p["spawned"] is None and p["id"] in local_ids)]
@@ -589,6 +592,7 @@ def collect_snapshot(client: RimApiClient) -> dict[str, Any]:
             "hostiles": hostiles if isinstance(hostiles, list) else [],
             "hostile_buildings": combat.get("hostile_buildings") or [],
             "native_options": combat.get("native_options") or [],
+            "care_retreat_pawn_ids": care_retreat_ids,
             "available_weapons": weapons if isinstance(weapons, list) else [],
             "colony_animals": combat.get("colony_animals") or [],
             "defenses": combat.get("defenses", []) if isinstance(combat, dict) else [],

@@ -17,6 +17,37 @@ from tests.test_module_architecture import Agent
 
 
 class CampaignContracts(unittest.TestCase):
+    def test_live_native_care_escape_survives_collection_and_protects_actor(self):
+        data = {'/api/v1/game/state': {'game_tick': 30},
+            '/api/v1/maps': [{'id': 1, 'is_player_home': True, 'free_colonists': 1}],
+            '/api/v2/colonists/detailed': [{'pawn': {'id': 1, 'map_id': 1, 'spawned': True}, 'detailes': {}}],
+            '/api/v1/combat/state': {'colonists': [{'id': 1, 'current_job': 'Goto', 'tendable_now': True,
+                'moving': 1, 'distance_to_nearest_opponent': 12}], 'care_retreat_pawn_ids': [1], 'hostiles': []}}
+        class Client:
+            def get(self, path, **query):
+                return copy.deepcopy(data.get(path))
+        snap = bridge.collect_snapshot(Client())
+        self.assertEqual(snap['combat']['care_retreat_pawn_ids'], [1])
+        self.assertIn(1, bridge.combat_planner.protected_emergency_care_ids(snap))
+        self.assertEqual(bridge.combat_planner.self_tend_candidates(snap), [])
+        self.assertIn('1', director.active_care_pawn_ids(snap))
+        data['/api/v1/combat/state']['care_retreat_pawn_ids'] = []
+        snap = bridge.collect_snapshot(Client())
+        self.assertNotIn(1, bridge.combat_planner.protected_care_retreat_ids(snap))
+        self.assertTrue(bridge.combat_planner.self_tend_candidates(snap))
+
+    def test_collected_care_escape_ids_reject_other_maps_and_malformed_telemetry(self):
+        data = {'/api/v1/game/state': {},
+            '/api/v1/maps': [{'id': 1, 'is_player_home': True, 'free_colonists': 1}],
+            '/api/v1/combat/state': {'colonists': [{'id': 1, 'current_job': 'Goto'}]}}
+        class Client:
+            def get(self, path, **query):
+                return copy.deepcopy(data.get(path))
+        for raw in (None, '1', 1, True, {}, [True, '1', 99, None], [1, True, 99]):
+            data['/api/v1/combat/state']['care_retreat_pawn_ids'] = raw
+            snap = bridge.collect_snapshot(Client())
+            self.assertEqual(snap['combat']['care_retreat_pawn_ids'], [1] if raw == [1, True, 99] else [])
+
     def test_roster_is_local_on_visit_and_does_not_count_caravans_as_workers(self):
         data = {"/api/v1/game/state": {"game_tick": 500000, "colonist_count": 4},
             "/api/v1/maps": [{"id": 1, "is_player_home": True, "free_colonists": 2},
