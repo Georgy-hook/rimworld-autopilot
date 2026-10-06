@@ -206,7 +206,7 @@ def _defer_state(rows: list[dict], context: dict) -> str:
                       (.5, .75, .9, .95, .98) if name == 'Malnutrition' else (.5, .75))
         conditions.append((name, sum(severity >= boundary for boundary in thresholds)))
     readiness = sorted((tuple(option.get(field) for field in
-        ('kind', 'worker_id', 'target_id', 'giver', 'food_feasible')) for option in rows), key=repr)
+        ('kind', 'worker_id', 'target_id', 'giver', 'food_feasible', 'expected_current_job', 'expected_care_patient_id')) for option in rows), key=repr)
     return repr((_state(row, context), tuple(sorted(conditions)),
                  float(patient.get('bleeding_total') or 0) >= 1.5,
                  bool(patient.get('tendable_now')), bool(patient.get('in_bed')),
@@ -336,8 +336,8 @@ def nutrition_effects(patient: dict, row: dict) -> dict:
     estimate = f'Native starvation estimate ~{round(ticks)} ticks' if isinstance(ticks, (int, float)) and math.isfinite(ticks) else 'Starvation deadline unknown'
     return {
         'benefit': intervention + '; ' + nutrition_description(patient),
-        'risk': 'Food pickup and travel take time; ' + (row.get('care_yield_reason') or 'other work waits'),
-        'cost': f"travel={row.get('travel_distance')} cells; food and caregiver time; Medicine skill does not determine feeding/carrying",
+        'risk': ('Food pickup and travel take time; ' if feeding else 'Travel exposure until the checked bed is reached; ') + (row.get('care_yield_reason') or 'native route feasible'),
+        'cost': f"travel={row.get('travel_distance')} cells; " + ('food and caregiver time' if feeding else 'carrying labor; rescue consumes no food') + '; Medicine skill does not determine feeding/carrying',
         'inaction': 'Unfed patient can die of starvation; tending wounds supplies no calories',
         'uncertainty': estimate + '; accepted job is not consumed nutrition; rescue still needs feeding',
     }

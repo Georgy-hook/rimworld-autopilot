@@ -12035,19 +12035,32 @@ def run_urgent_nutrition_cycle(client: bridge.RimApiClient, agent: Any,
     if not options:
         return None
     patients = {str(p["pawn_id"]): p for p in context.get("patients") or [] if p.get("pawn_id") is not None}
+    deadlines = {str(row['target_id']): medical_recovery.clinical_deadline(patients.get(str(row['target_id']), {}), row)
+                 for row in options.values()}
+    known_deadlines = [value for value in deadlines.values() if value is not None]
+    earliest = min(known_deadlines) if known_deadlines else None
     criteria, effects = {}, {}
     for key, row in options.items():
         patient = patients.get(str(row["target_id"]), {})
         prerequisite = "Feed now" if row["kind"] == "feed" else "Rescue to bed, then feeding is possible"
         evidence = resilience.nutrition_description(patient)
-        criteria[key] = evidence + f"; {prerequisite}; caregiver {row['worker_id']}"
+        deadline = deadlines[str(row['target_id'])]
+        relative = ('Shortest known survival' if deadline == earliest and deadline is not None else
+                    'Longer known survival' if deadline is not None else 'Survival deadline unknown')
+        timing = f' ~{round(deadline)} ticks' if deadline is not None else ''
+        criteria[key] = relative + timing + f"; travel {round(row['travel_distance']) if isinstance(row.get('travel_distance'), (int, float)) else 'unknown'} cells; " + evidence + f"; {prerequisite}; caregiver {row['worker_id']}"
         effects[key] = resilience.nutrition_effects(patient, row)
+        effects[key]['benefit'] = relative + timing + '; ' + effects[key]['benefit']
+        effects[key]['inaction'] = ('Earliest known starvation can kill while a later patient is rescued; tending supplies no calories'
+                                  if deadline == earliest and deadline is not None else
+                                  'Survival time unknown; waiting can still be fatal' if deadline is None else
+                                  'This patient also needs food; prioritizing them delays shorter known survival patients')
     criteria["defer"] = "Keep current care; dependent patients remain unfed and malnutrition can become lethal"
     effects["defer"] = resilience.nutrition_defer_effects(context)
     key, raw = ask_laya_choice(agent, {
         "decision_facts": {"task": "Prevent lethal hunger; bed is required for dependent feeding",
                            "active_care": context.get("active_orders") or []}, "option_effects": effects},
-        "urgent_nutrition", "Choose normal feeding or its rescue prerequisite, or defer to preserve more urgent ongoing care. Compare malnutrition, remaining margin and travel delay.",
+        "urgent_nutrition", "Compare known survival time and travel. Choose urgent feeding or rescue to bed before starvation kills; weigh other care and unestimated disease risks. Defer remains possible.",
         criteria, detailed=True)
     if key == "defer":
         for action in ("resilience_feed", "resilience_rescue"):

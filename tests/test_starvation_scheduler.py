@@ -97,6 +97,20 @@ class StarvationSchedulerTests(unittest.TestCase):
         ask.assert_not_called()
         self.assertEqual(client.posts, [])
 
+    def test_compares_native_deadlines_and_preserves_unknown(self):
+        snapshot, context = fixture()
+        with patch.object(director, 'ask_laya_choice', return_value=('defer', {})) as ask:
+            self.run_cycle(snapshot, Client(context), {})
+        criteria = ask.call_args.args[4]
+        self.assertIn('Shortest known survival ~10500 ticks', criteria['1:3:DoctorRescue'])
+        self.assertIn('Longer known survival ~18000 ticks', criteria['1:2:DoctorFeedHumanlikes'])
+        context['options'][0]['starvation_ticks'] = None
+        with patch.object(director, 'ask_laya_choice', return_value=('defer', {})) as ask:
+            self.run_cycle(snapshot, Client(context), {})
+        self.assertIn('Survival deadline unknown', ask.call_args.args[4]['1:3:DoctorRescue'])
+        effects = ask.call_args.args[1]['option_effects']
+        self.assertIn('Survival time unknown', effects['1:3:DoctorRescue']['inaction'])
+
     def test_changed_care_patient_refuses_stale_reassignment(self):
         snapshot, context = fixture()
         context['options'] = [dict(context['options'][0],

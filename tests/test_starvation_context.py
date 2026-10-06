@@ -91,6 +91,21 @@ class StarvationContextTests(unittest.TestCase):
         self.assertIsNone(facts['remaining_margin'])
         self.assertIn('unknown', care.nutrition_description({'food': 0}))
 
+    @patch('colony_retry.time.time', return_value=100)
+    def test_new_scoped_care_yield_reopens_deferred_patient(self, clock):
+        snapshot, state = fixture(), {}
+        context = snapshot['development']['resilience']
+        context['options'] = [context['options'][0]]
+        care.prepare(snapshot, state)
+        care.execute(None, snapshot, state, 'resilience_feed', {'defer': True})
+        self.assertEqual(care.prepare(snapshot, state), [])
+        context['options'][0].update(expected_current_job='TendPatient', expected_care_patient_id=7)
+        self.assertEqual(care.prepare(snapshot, state), ['resilience_feed'])
+        care.execute(None, snapshot, state, 'resilience_feed', {'defer': True})
+        self.assertEqual(care.prepare(snapshot, state), [])
+        context['options'][0]['expected_care_patient_id'] = 8
+        self.assertEqual(care.prepare(snapshot, state), ['resilience_feed'])
+
     def test_scoped_reassignment_identity_is_forwarded_and_freshly_checked(self):
         row = dict(fixture()['development']['resilience']['options'][0],
                    expected_current_job='TendPatient', expected_care_patient_id=7)
