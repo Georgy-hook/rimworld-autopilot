@@ -1,0 +1,18 @@
+{
+  "version": "0.0.7",
+  "source_commit": "f6786a29636caf0939d5cb01c4c648bb7f61efa4",
+  "native_product_version": "1.10.0+f6786a2",
+  "native_sha256": "9e14dc2c01155b3c1d72159ebf8cf47c51fd2d26fd7b7376c9e0e815b6e6a6d2",
+  "verification": {
+    "python_tests": 1174,
+    "api_routes": 308,
+    "missing_direct_calls": 0,
+    "duplicate_routes": 0,
+    "native_configuration": "Release-1.6",
+    "native_errors": 0,
+    "native_warnings": 0,
+    "kitchen_boundary_cases": 5,
+    "postfix_live_run": false
+  },
+  "status": "draft candidate"
+}
