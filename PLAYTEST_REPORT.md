@@ -627,3 +627,28 @@ Offline inventory: **308 routes**, no missing literal calls or duplicate routes.
 No game, autonomous director, colony, rollback or memory reset was launched for
 these repairs. Native job completion, escape success and future survival remain
 gameplay checks. [Repair details](docs/playtests/Release-007-offline-fixes-2026-10-06.md).
+
+## New random cold colony after the care fixes — 2026-10-06
+
+One generation on tile 34927, seed laya-care-ownership-20261006,
+Cassandra/Medium/permadeath, baseline tick 21. Initial temperature -30.8°C.
+The three founders survived the startup interval; their roofed shelter had
+13 walls, a door, a campfire and three sleeping spots, but serious hypothermia
+developed while it was still cold.
+
+A startup contract check caught native escape IDs omitted by collect_snapshot.
+The same game was saved and paused at 16077, the Python forwarding fix passed
+1206 tests, then the same progress/memory resumed at 17:11:49 UTC. No reroll,
+rollback or game restart. At 17:12:18 UTC the bedroom reached 13.16°C and two
+founders were actually Wait_SafeTemperature with declining hypothermia; the
+third was eating and still seriously hypothermic. One finger acquired frostbite.
+All three alive, no downed or bleeding. A real save at 17755 and subsequent tick
+17779 were verified. Normal 3× with 1× for thermal emergencies; hourly observation
+active, first full check after 18:12 UTC. Native care escape completion is still
+unproven. [Startup evidence](docs/playtests/Care-ownership-start-2026-10-06.md).
+
+At 17:16:58 UTC, tick 110889, all three remained alive, upright and nonbleeding;
+hypothermia had cleared from their actual health records and frostbite was also
+absent. The human bedroom was 19.78°C against outdoors -25.91°C. Two actually
+rested and one ate. Observer returned to 3×. Stock declined to 27 initial meals;
+this confirms early thermal recovery, not sustainable nutrition or survival.
