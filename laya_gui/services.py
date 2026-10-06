@@ -89,11 +89,24 @@ def process_running(pid: int) -> bool:
             return True
         except OSError:
             return False
-    process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+    from ctypes import wintypes
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    process = kernel.OpenProcess(0x1000, False, pid)
     if not process:
         return False
-    ctypes.windll.kernel32.CloseHandle(process)
-    return True
+    try:
+        exit_code = wintypes.DWORD()
+        # A terminated process object can remain open while another handle is
+        # retained. OpenProcess success alone is not evidence of a live worker.
+        return bool(kernel.GetExitCodeProcess(process, ctypes.byref(exit_code))) and exit_code.value == 259
+    finally:
+        kernel.CloseHandle(process)
 
 
 def read_pid(path: Path) -> int | None:

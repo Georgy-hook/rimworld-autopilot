@@ -60,7 +60,7 @@ class StarvationCareYield(unittest.TestCase):
         for job, carry in (("FeedPatient", None), ("Rescue", 2), ("SocialRelax", None)):
             with self.subTest(job=job, carry=carry):
                 s = snapshot(job)
-                s["combat"]["colonists"][0]["carried_thing_id"] = carry
+                s["combat"]["colonists"][0].update(carrying_pawn_id=carry, carrying_player_pawn=carry is not None)
                 self.assertEqual(self.plans(s, option(expected="Rescue"))["rescue_downed_colonist"], {})
 
     def test_same_patient_feed_replaces_native_offered_stable_tend_only(self):
@@ -116,6 +116,36 @@ class StarvationCareYield(unittest.TestCase):
         s = snapshot("TendPatient")
         s["colonists"][1]["bleeding_rate"] = .01
         self.assertEqual(self.plans(s, option("feed", target=2, expected="TendPatient"))["feed_hungry_colonist"], {})
+
+    def test_nonimmune_chronic_heart_condition_does_not_hide_urgent_feeding(self):
+        s = snapshot('TendPatient')
+        old = s['colonists'][1]
+        chronic = {'def_name': 'HeartArteryBlockage', 'severity': .196,
+                   'immunity': 0, 'immunity_can_develop': False,
+                   'lethal_severity': 1, 'life_threatening': False, 'tendable_now': False}
+        old['health_conditions'].append(chronic)
+        self.assertEqual(set(self.plans(s, option('feed', expected='TendPatient'))['feed_hungry_colonist']), {'1'})
+        chronic['life_threatening'] = True
+        self.assertEqual(self.plans(s, option('feed', expected='TendPatient'))['feed_hungry_colonist'], {})
+        chronic['life_threatening'] = False
+        chronic['immunity_can_develop'] = True
+        self.assertEqual(self.plans(s, option('feed', expected='TendPatient'))['feed_hungry_colonist'], {})
+
+    def test_native_carried_order_protects_patient_with_stale_combat_view(self):
+        s = snapshot('Rescue')
+        s['development']['resilience']['active_orders'] = [
+            {'kind': 'rescue', 'worker_id': 3, 'target_id': 2, 'job_def': 'Rescue', 'carried_thing_id': 2}]
+        self.assertEqual(self.plans(s, option(expected='Rescue'))['rescue_downed_colonist'], {})
+
+    def test_nonimmune_minor_asthma_is_stable_but_real_disease_is_protected(self):
+        h = {'def_name': 'Asthma', 'tendable_now': True, 'immunity': 0,
+             'immunity_can_develop': False, 'lethal_severity': -1, 'life_threatening': False}
+        patient = {'bleeding_rate': 0, 'health_conditions': [h]}
+        self.assertTrue(care.stable_tend_patient(patient))
+        h['life_threatening'] = True
+        self.assertFalse(care.stable_tend_patient(patient))
+        h.update(life_threatening=False, immunity_can_develop=True)
+        self.assertFalse(care.stable_tend_patient(patient))
 
     def test_native_low_rate_healing_is_not_a_fabricated_bleedout(self):
         patient = {"bleeding_rate": .09, "health_conditions": [{"def_name": "BloodLoss", "severity": .99}],

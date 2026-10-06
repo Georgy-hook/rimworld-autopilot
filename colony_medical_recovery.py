@@ -49,7 +49,10 @@ def offered_care_yield(snapshot, row):
         return None
     if str(worker.get("care_target_id") or worker.get("current_job_target_id")) != str(binding["expected_care_patient_id"]):
         return None
-    if any(worker.get(k) for k in ("dead", "is_dead", "downed", "is_downed", "in_mental_state", "is_in_mental_state", "is_drafted", "carried_thing_id")):
+    if any(worker.get(k) for k in ("dead", "is_dead", "downed", "is_downed", "in_mental_state", "is_in_mental_state", "is_drafted", "carried_thing_id", "carrying_pawn_id", "carrying_player_pawn")):
+        return None
+    if any(str(active.get('worker_id')) == str(row.get('worker_id')) and active.get('carried_thing_id')
+           for active in snapshot.get('development', {}).get('resilience', {}).get('active_orders') or []):
         return None
     if str(worker.get("id")) == str(row.get("target_id")):
         return None
@@ -63,7 +66,7 @@ def offered_care_yield(snapshot, row):
     if not isinstance(conditions, list) or any(not isinstance(h, dict) for h in conditions):
         return None
     if any(h.get("def_name") not in {"BloodLoss", "Malnutrition"} and (
-            (h.get("immunity") is not None and float(h["immunity"]) < 1)
+            (h.get("immunity_can_develop") is not False and h.get("immunity") is not None and float(h["immunity"]) < 1)
             or h.get("life_threatening") or h.get("tendable_now") and (
                 float(h.get("lethal_severity") or 0) > 0 or "infection" in str(h.get("def_name") or "").lower()))
            for h in conditions):
@@ -192,7 +195,8 @@ def stable_tend_patient(patient):
     return float(patient.get("bleeding_rate") or 0) <= 0 and not any(
         h.get("def_name") not in {"BloodLoss", "Hypothermia", "Heatstroke", "Frostbite"}
         and h.get("tendable_now") and (h.get("life_threatening")
-            or h.get("immunity") is not None or float(h.get("lethal_severity") or 0) > 0
+            or (h.get("immunity") is not None and h.get('immunity_can_develop') is not False)
+            or float(h.get("lethal_severity") or 0) > 0
             or "infection" in str(h.get("def_name") or "").lower())
         for h in patient.get("health_conditions") or [])
 

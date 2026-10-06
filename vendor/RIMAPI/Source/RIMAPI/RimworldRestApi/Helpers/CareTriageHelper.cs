@@ -38,7 +38,7 @@ namespace RIMAPI.Helpers
         }
         public static bool DiseaseCareProtected(Pawn p) => p.health.hediffSet.hediffs.Any(h => h.Visible
             && h.def != HediffDefOf.BloodLoss && h.def != HediffDefOf.Malnutrition
-            && (h.TryGetComp<HediffComp_Immunizable>() != null && h.TryGetComp<HediffComp_Immunizable>().Immunity < 1f
+            && (PawnHelper.CanDevelopImmunity(h) && h.TryGetComp<HediffComp_Immunizable>().Immunity < 1f
                 || h.IsCurrentlyLifeThreatening || h.TendableNow() && (h.def.lethalSeverity > 0f || h.def.defName.IndexOf("infection", StringComparison.OrdinalIgnoreCase) >= 0)));
         public static bool CanYield(Pawn worker, Pawn next, string kind, string expectedJob, int? expectedPatient, out string reason)
         {

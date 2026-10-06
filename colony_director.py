@@ -8199,13 +8199,19 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         if native is None:
             return {"applied": False, "reason": "No exact verified patient and helper selected"}
         fresh = client.get("/api/v1/resilience/context", map_id=map_id)
-        if pid in medical_recovery.active_patients({"development": {}}, fresh) or not any(
-                all(row.get(k) == native.get(k) for k in ("kind", "worker_id", "target_id", "giver"))
-                for row in fresh.get("options") or []):
+        payload = resilience.order_fields(native)
+        binding = medical_recovery.care_order_fields(native)
+        active = [row for row in fresh.get('active_orders') or []
+                  if str(row.get('target_id')) == pid and row.get('kind') in ('feed', 'rescue', 'tend')]
+        own_stable_tend_to_feed = (choice == 'feed_hungry_colonist' and binding.get('expected_current_job') == 'TendPatient'
+            and str(binding.get('expected_care_patient_id')) == pid and active and all(
+                row.get('kind') == 'tend' and str(row.get('worker_id')) == worker
+                and row.get('job_def') == 'TendPatient' and not row.get('carried_thing_id') for row in active))
+        if (pid in medical_recovery.active_patients({"development": {}}, fresh) and not own_stable_tend_to_feed) or not any(
+                resilience.order_fields(row) == payload for row in fresh.get("options") or []):
             return {"applied": False, "reason": "Patient care selection is no longer feasible"}
         try:
-            result = client.post("/api/v1/resilience/order", body={"map_id": map_id,
-                **{k: native[k] for k in ("kind", "worker_id", "target_id", "giver") if k in native}})
+            result = client.post("/api/v1/resilience/order", body={"map_id": map_id, **payload})
         except bridge.RimApiError:
             result = None
         if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):
