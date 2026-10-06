@@ -62,3 +62,12 @@ Baby rescue now uses the existing Resilience route predicate with environmental 
 Therapeutic recipe patients performing any protected care/deathrest or Ingest are excluded. There is no urgent-treatment bypass. Existing surgery bills still suppress duplicate recipes. Medical dosing requires native Need_Chemical desire/withdrawal or active linked genetic Hediff_ChemicalDependency.ShouldSatify; dependency presence alone is not a dose-due signal. Penoxycyline excludes its active preventive hediff and protected illnesses. These predicates were checked against the installed 1.6 assembly; gene-linked dependency resets after dosing through native ingestion. Native effects expose actual hemogen, learning/desires/teacher skills, baby thermal/toxic/roof evidence and drug need/dependency due state. Deathrest job rejection now has a rejection reason instead of a scheduled-job claim.
 
 Offline targeted suite: 17 society tests, 21 resilience tests. Tests cover semantic scope, defer state, JSON/rollback/pruning, stale option scope, and native source predicates; source guards do not execute pathfinding, dosing or surgery. No game, live API, model, build or commit was run. Native bills/jobs/policy acceptance are distinct from next-snapshot outcomes; repeated Laya changes to policy remain possible explicit choices.
+## Growth modal acknowledgement
+
+Pending trait/passions choices use the Society executor. A resolved or
+no-award informational growth dialog uses WindowService's exact native OK
+callback only after `confirmation_only` and native close readiness checks.
+Its current top window identity, text and localized label must still match;
+the director observes closure. Generic close does not remove growth windows.
+When Society applies validated awards, it closes only windows bound to that
+letter. See [the incident and verification](../audits/growth-dialog-pause-2026-10-06.md).

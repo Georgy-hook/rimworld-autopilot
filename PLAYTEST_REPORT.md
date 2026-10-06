@@ -485,3 +485,30 @@ Final autonomous continuation began10:14:28.938 UTC on the same tile55904. Norma
 See [the care-yield audit](docs/audits/starvation-care-yield-2026-10-06.md) for contract, source evidence and verification limits. Private Russian report: workspace outputs/worker-food-recovery-20261006.md.
 
 Follow-up10:21:46 UTC/tick2541826: four residents alive, actual hunger0.670/0.526/0.791 for the three patients, distant patient's bleeding0. The child is no longer downed and actually Harvesting. No new direct intervention. Director/observer/monitor heartbeats are fresh, stderr empty; startup Player.log ceased growing after loading. Hourly observation active, first full review11:22 UTC. These are short recovery results; adults remain downed and food/fuel/gene-dependency strategy remains unverified.
+## Theentbum: resolved growth window forced pause — 2026-10-06
+
+After the 10:14 continuation, the minute timeline first showed tick2571140
+paused at10:30:37 UTC; the last lower tick was2569291 at10:29:36. All four
+residents remained alive. Python was responsive but the resolved, archived
+growth dialog exposed no API button and held native forcePause. Repeated speed
+commands could not advance it. The user reported the stop.
+
+Source dd80168/native package ba80742 add native readiness and scoped OK for
+informational growth windows, observed closure and bounded retries; unmade
+awards retain Society's choice path.1153 tests passed,308-route audit clean,
+Release-1.6 zero warnings/errors. Current progress was saved at2571140 and
+reloaded without rollback or memory reset;21 technical ticks reached2571161.
+The same archived letter was reopened normally for a technical replay:
+generic close removed zero windows, stale identity was rejected, the installed
+director's exact OK closed it, and observed traits/skills were unchanged.
+This replay is separate from autonomous play.
+
+The same colony resumed at11:00:12 UTC. At11:02:18/tick2578430 all four were
+alive and upright; the formerly catatonic resident had hunger0.974 and DoBill,
+the child was Ingest. Normal decisions resumed after combat. Severe
+malnutrition still required emergency1x, normal target3x. The modal-frozen
+interval and technical pause are not continuous autonomous survival time.
+The short continuation does not establish sustainable food or a completed
+ending. Positive live unmade-award selection, loading NullReferenceException
+duplicates and redundant hazard-guard logging remain separate verification
+items. [Causal report](docs/audits/growth-dialog-pause-2026-10-06.md).

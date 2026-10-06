@@ -42,7 +42,31 @@ unmade awards, older API observations, ambiguous buttons, and stacked modals.
 The complete suite passed 1153 tests. The offline API audit found 308 routes,
 no missing literal calls and no duplicate routes.
 
-Native build and live installation evidence are recorded separately after
-verification. Offline tests alone do not establish live window closure,
-continued ticks, or colony survival. The paused current progress was preserved;
-this incident requires no save rollback.
+Native Release-1.6 built from source `dd80168` with zero warnings/errors; package
+`ba80742` was installed with matching runtime and native hashes. The game was
+restarted in its visible window and loaded the current tick 2571140 save; 21
+loading transition ticks reached a verified stable pause at 2571161. No save
+rollback or manual memory reset was performed.
+
+The same archived growth letter was reopened through normal History/Messages
+UI. The installed API exposed `confirmation_only=true` and one OK. An explicit
+generic-close request removed zero windows; a stale identity was rejected and
+left the dialog intact. The installed director then invoked the scoped OK,
+observed that window disappear, and found no further acknowledgement to issue.
+The child's complete observed trait and skill records were identical before
+and after; the game remained at the same paused tick throughout this technical
+replay. This is positive informational-acknowledgement evidence, not a new
+autonomous growth award selection.
+
+Observers started before the director. Autonomous continuation resumed at
+11:00:12 UTC. At 11:02:18/tick 2578430 all four residents were alive and upright;
+one formerly catatonic patient had actually received food and was doing a bill.
+Ordinary combat and colony decisions resumed. Severe malnutrition kept the
+observer's emergency speed at 1x; the normal target remains 3x. This short
+observation establishes continued simulation, not durable survival or victory.
+
+The new native closure after an unmade award selection remains a source/build
+gate rather than a positive live award-selection result. Loading-time
+NullReferenceException duplicates and redundant hazard-guard records remain
+separate open observations; neither was established as the growth modal's
+cause. Hourly observation continues on this same colony.
