@@ -31,7 +31,7 @@ class MentalSafetyTests(unittest.TestCase):
         self.data={'available':True,'map_id':0,'options':[self.plan],'orders':[{'actor_id':1,'job':'Wait','position':{'x':0,'z':0}}],
                    'threats':[{'aggressor_id':2,'victim_id':1,'session':'rage-a'}]}
         self.snapshot={'game':{'tick':100},'map':{'id':0},'development':{'mental_safety':self.data},
-                       'combat':{'colonists':[{'id':2,'is_in_mental_state':True,'mental_state_def':'MurderousRage','mental_state_target_id':1}],
+                       'combat':{'colonists':[{'id':2,'is_in_mental_state':True,'mental_state_def':'MurderousRage','mental_state_session':'rage-a','mental_state_target_id':1}],
                                  'hostiles':[{'id':9,'is_dead':False,'is_downed':False}]}}
         self.state={};mental.prepare(self.snapshot,self.state)
 

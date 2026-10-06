@@ -95,6 +95,10 @@ namespace RIMAPI.Services
                         request.TargetPosition.X, 0, request.TargetPosition.Z);
                 }
 
+                if (attackJob && target.Thing is Pawn alliedTarget && MentalSafetyHelper.Allied(alliedTarget)
+                    && !MentalSafetyHelper.ActiveAlliedAggressor(alliedTarget))
+                    return ApiResult.Fail("allied_attack_target_no_longer_active");
+
                 if (request.KillIncappedTarget)
                 {
                     if (!request.MapId.HasValue || !pawn.Spawned || pawn.Map == null
@@ -104,7 +108,7 @@ namespace RIMAPI.Services
                         return ApiResult.Fail("finish_downed_actor_unavailable_or_map_changed");
                     Pawn victim = target.Thing as Pawn;
                     if (victim == null || victim == pawn || !victim.Spawned || victim.Map != pawn.Map
-                        || victim.Dead || !victim.Downed || victim.IsPrisonerOfColony
+                        || victim.Dead || !victim.Downed || MentalSafetyHelper.Allied(victim)
                         || !victim.HostileTo(Faction.OfPlayer) || victim.Position.Fogged(pawn.Map))
                         return ApiResult.Fail("finish_downed_target_no_longer_eligible");
                     if (CombatNativeHelper.HasCareJob(pawn) || pawn.CurJobDef == JobDefOf.Ingest)
@@ -184,7 +188,7 @@ namespace RIMAPI.Services
                 {
                     if (draftedHere) pawn.drafter.Drafted = true;
                     if (equipWasForbidden) equipTarget.SetForbidden(false, false);
-                    success = pawn.jobs.TryTakeOrderedJob(job);
+                    success = attackJob ? MentalSafetyHelper.TakeDefenceOrder(pawn,job) : pawn.jobs.TryTakeOrderedJob(job);
                 }
                 finally
                 {

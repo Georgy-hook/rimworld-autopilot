@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 import colony_combat
+from care_transport import bind_care_readback
 import colony_events
 import colony_growth
 import colony_resilience
@@ -1923,6 +1924,8 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(director.downed_colonist_care_gate(mock.Mock(), snapshot), "assign")
         client = mock.Mock()
         client.get.return_value = []
+        client.post.return_value = {"success": True}
+        bind_care_readback(client, snapshot)
         with mock.patch.object(director, "publish_post_combat_care_overlay"), mock.patch.object(director.bridge, "append_log"):
             result = director.run_post_combat_care_cycle(
                 client, self.FakeAgent(["self_tend_2"]), snapshot, pathlib.Path("unused.jsonl"), focus_downed=True)
@@ -4495,11 +4498,13 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("tend_1_2", director.post_combat_care_options(snapshot))
         client = Client()
         agent = self.FakeAgent(["tend_1_2"])
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(
                 client, agent, snapshot, pathlib.Path(folder) / "care.jsonl"
             )
         criteria = agent.calls[0]["post_combat_care"]["criteria"]
+        self.assertTrue(record['result']['job_observed'])
         self.assertIn("Doctor Doctor medicine 9, 8 cells away", criteria["tend_1_2"])
         self.assertIn("Doctor Novice medicine 0, 0 cells away", criteria["tend_1_3"])
         self.assertEqual(record["decision"]["choice"], "tend_1_2")
@@ -4585,10 +4590,12 @@ class DirectorTests(unittest.TestCase):
         ]}, "game": {"is_paused": False}, "map": {"id": 0, "resources": {"medicine": 36}}}
         client = Client()
         agent = self.FakeAgent(["tend_65_69"])
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(
                 client, agent, snapshot, pathlib.Path(folder) / "care.jsonl",
                 focus_downed=True)
+        self.assertTrue(record['result']['job_observed'])
         self.assertEqual(record["decision"]["choice"], "tend_65_69")
         self.assertEqual(set(record["candidates"]), {"tend_65_69"})
         self.assertEqual(client.posts[-1][0], "/api/v1/pawn/medical/tend")
@@ -4713,11 +4720,13 @@ class DirectorTests(unittest.TestCase):
         ]}, "game": {"is_paused": False}, "map": {"id": 0, "resources": {"medicine": 2}}}
         client = Client()
         agent = self.FakeAgent(["rescue_1_2"])
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(
                 client, agent, snapshot,
                 pathlib.Path(folder) / "care.jsonl",
             )
+        self.assertTrue(record['result']['job_observed'])
         self.assertEqual(record["decision"]["choice"], "rescue_1_2")
         self.assertIn("tend_1_2", agent.calls[0]["post_combat_care"]["criteria"])
         endpoint, body = next((endpoint, body) for endpoint, body in client.posts
@@ -4808,6 +4817,7 @@ class DirectorTests(unittest.TestCase):
         client = mock.Mock()
         client.post.return_value = {"success": True}
         agent = self.FakeAgent(["tend_1_2"])
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             result = director.run_post_combat_care_cycle(client, agent, snapshot,
                                                         pathlib.Path(folder) / "care.jsonl")
@@ -4848,6 +4858,7 @@ class DirectorTests(unittest.TestCase):
         client = mock.Mock()
         client.post.return_value = {"success": True}
         self.assertEqual(director.downed_colonist_care_gate(client, snapshot), "assign")
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(director, "publish_post_combat_care_overlay"):
             result = director.run_post_combat_care_cycle(client, self.FakeAgent([]), snapshot,
                 pathlib.Path(folder) / "care.jsonl", focus_downed=True)
@@ -4877,6 +4888,7 @@ class DirectorTests(unittest.TestCase):
                 patient["work_priorities"][kwargs["body"]["work"]]["priority"] = 1
             return {"success": True}
         client.post.side_effect = accept
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(director, "publish_post_combat_care_overlay"):
             first = director.run_post_combat_care_cycle(client, self.FakeAgent([]), snapshot,
                 pathlib.Path(folder) / "care.jsonl", focus_downed=True)
@@ -4985,11 +4997,13 @@ class DirectorTests(unittest.TestCase):
              "moving": 1, "manipulation": 1, "current_job": "Sow"},
         ]}, "game": {"is_paused": False}, "map": {"resources": {"medicine": 2}}}
         client = Client()
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(
                 client, self.FakeAgent(["tend_1_2"]), snapshot,
                 pathlib.Path(folder) / "care.jsonl",
             )
+        self.assertTrue(record['result']['job_observed'])
         self.assertEqual([endpoint for endpoint, _ in client.posts[-2:]],
                          ["/api/v1/pawn/job", "/api/v1/pawn/medical/tend"])
         self.assertEqual(client.posts[-2][1]["job_def"], "Wait_MaintainPosture")
@@ -5011,6 +5025,7 @@ class DirectorTests(unittest.TestCase):
         ]}, "game": {"is_paused": False}, "map": {"resources": {"medicine": 34}}}
         self.assertEqual(set(director.post_combat_care_options(snapshot)), {"self_tend_86584"})
         client = Client()
+        bind_care_readback(client, snapshot)
         with tempfile.TemporaryDirectory() as folder:
             result = director.run_post_combat_care_cycle(
                 client, self.FakeAgent(["self_tend_86584"]), snapshot,

@@ -6,6 +6,7 @@ outcomes stay unknown and an accepted command is never labelled completed.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 import colony_modules
 
@@ -101,6 +102,48 @@ def decision_facts(state: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in result.items() if value is not None and value != {}}
 
 
+def recreation_pressure(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Observed low joy and mood, not a predicted mental-break probability."""
+    affected = []
+    for pawn in snapshot.get("colonists") or []:
+        if any(pawn.get(flag) for flag in ("dead", "is_dead", "downed", "is_downed",
+                                          "in_mental_state", "is_in_mental_state")):
+            continue
+        joy, mood = pawn.get("joy"), pawn.get("mood")
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool)
+               and math.isfinite(v) and 0 <= v <= 1 for v in (joy, mood)):
+            if joy < .2 and mood < .4:
+                affected.append((joy, mood))
+    if not affected:
+        return None
+    return {"people": len(affected), "joy_min": round(min(p[0] for p in affected), 3),
+            "mood_min": round(min(p[1] for p in affected), 3)}
+
+
+def survival_wait_state(snapshot: dict[str, Any]) -> dict[str, int]:
+    """Describe current workers without claiming an earlier order progressed."""
+    live = {str(p["id"]): p for p in (snapshot.get("combat") or {}).get("colonists") or []
+            if p.get("id") is not None}
+    result = {"people": 0, "unavailable": 0, "idle": 0, "jobs_observed": 0, "unknown_jobs": 0}
+    for pawn in snapshot.get("colonists") or []:
+        actor = live.get(str(pawn.get("id")), {})
+        if pawn.get("dead") or pawn.get("is_dead") or actor.get("is_dead"):
+            continue
+        result["people"] += 1
+        if any(pawn.get(flag) or actor.get(flag) for flag in (
+                "downed", "is_downed", "in_mental_state", "is_in_mental_state", "is_drafted")):
+            result["unavailable"] += 1
+            continue
+        job = str(pawn.get("current_job") or actor.get("current_job") or "").lower()
+        if job in {"", "unknown"}:
+            result["unknown_jobs"] += 1
+        elif job in {"wait", "wait_wander", "gotowander", "wander", "wait_maintainposture"}:
+            result["idle"] += 1
+        else:
+            result["jobs_observed"] += 1
+    return result
+
+
 def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | None = None) -> dict[str, Any]:
     """Root comparisons get live needs before lossy, general context packing.
 
@@ -139,7 +182,28 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
                 thermal[name] = {"severity": severity,
                                  "stage": stage if isinstance(stage, int) and not isinstance(stage, bool) and stage >= 0 else None,
                                  "life_threatening": bool(h.get("life_threatening"))}
+    bleed_rate = max((number(p.get("bleeding_rate")) or 0 for p in care_people), default=0)
+    least_food = min((number(p.get("hunger")) for p in care_people
+                      if number(p.get("hunger")) is not None), default=None)
+    malnutrition = max((number(h.get("severity")) or 0
+                        for p in care_people for h in p.get("health_conditions") or []
+                        if isinstance(h, dict) and h.get("def_name") == "Malnutrition"), default=0)
+    dependent_hungry = sum(bool(p.get("downed") or p.get("is_downed"))
+                          and number(p.get("hunger")) is not None and number(p.get("hunger")) <= .1
+                          for p in care_people)
+    recreation = recreation_pressure(snapshot)
     care_risks = None
+    if thermal or bleed_rate >= .05 or malnutrition >= .15 or dependent_hungry or recreation:
+        care_risks = {"meals": resources.get("meals"), "least_food_level": least_food,
+                      "bleed_rate_max": bleed_rate,
+                      "downed": sum(bool(p.get("downed") or p.get("is_downed")) for p in care_people),
+                      "threats": (snapshot.get("map") or {}).get("enemies", 0)}
+        if malnutrition:
+            care_risks["malnutrition_max"] = malnutrition
+        if dependent_hungry:
+            care_risks["dependent_hungry"] = dependent_hungry
+        if recreation:
+            care_risks["recreation_deprived"] = recreation
     if thermal:
         roofed_rooms = [room for room in dev.get("rooms") or []
                         if not room.get("touches_map_edge") and not room.get("is_prison_cell")
@@ -148,12 +212,7 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
         care_risks = {"thermal": thermal, "outside_c": number((dev.get("weather") or {}).get("temperature")),
                       "roofed_sleepers": sheltered,
                       "roofed_bed_room_c": [min(temperatures), max(temperatures)] if temperatures else "unverified",
-                      "meals": resources.get("meals"),
-                      "least_food_level": min((number(p.get("hunger")) for p in care_people
-                                               if number(p.get("hunger")) is not None), default=None),
-                      "bleed_rate_max": max((number(p.get("bleeding_rate")) or 0 for p in care_people), default=0),
-                      "downed": sum(bool(p.get("downed")) for p in care_people),
-                      "threats": (snapshot.get("map") or {}).get("enemies", 0),
+                      **care_risks,
                       "home_fires": sum(bool(fire.get("in_home"))
                                         for fire in (dev.get("fire_situation") or {}).get("fires") or []
                                         if isinstance(fire, dict))}

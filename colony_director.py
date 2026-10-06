@@ -1894,9 +1894,10 @@ def run_mental_safety_cycle(client: Any, agent: Any, snapshot: dict[str, Any],
     dev = snapshot.setdefault("development", {})
     memory = map_state.setdefault("mental_safety", {})
     tick = int(snapshot.get("game", {}).get("tick") or 0)
+    mental_safety.reconcile_defence(client, snapshot, map_state)
     status = mental_safety.reconcile(client, snapshot, map_state)
     dev["mental_safety_active_ids"] = status.get("active_ids") or []
-    if not bridge.murderous_rage_context(snapshot.get("combat") or {}):
+    if not mental_safety.allied_mental_threats(snapshot.get("combat") or {}):
         return None
     if retry_recent(memory.get("read_failure"), tick, 600):
         return None
@@ -2176,6 +2177,7 @@ def action_description(name: str, snapshot: dict[str, Any]) -> str:
                   "without cooling a bedbound patient can die despite food and bandages.")
     if name == "hold_survival":
         projects = (snapshot.get("development") or {}).get("construction_projects") or []
+        observed = colony_reasoning.survival_wait_state(snapshot)
         if projects:
             builders = sum(
                 str(pawn.get("current_job") or "").lower().startswith(("construct", "build"))
@@ -2184,6 +2186,10 @@ def action_description(name: str, snapshot: dict[str, Any]) -> str:
             return (f"Wait instead of assigning work: {len(projects)} building projects are unfinished and "
                     f"{builders} colonists are building right now. Waiting gives time to eat and sleep, "
                     "but it will not itself change work priorities or finish neglected projects.")
+        return (f"Issue no new project or job; wait: {observed['unavailable']}/{observed['people']} "
+                f"people are unavailable for peaceful work, {observed['idle']} are idle, "
+                f"{observed['jobs_observed']} have observed jobs. No task completion is confirmed; "
+                "hunger, wounds and mood can worsen while waiting.")
     if name == "prioritize_construction_project":
         projects = (snapshot.get("development") or {}).get("construction_project_options") or []
         heat = (snapshot.get("development") or {}).get("heat_threat") or {}
@@ -3016,6 +3022,11 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "sustenance_food_batch", "sustenance_food_policy", "sustenance_preservation",
         "production_feed_batch",
     }
+    # A worker lost to a mental break cannot gather food or feed patients.
+    # Retain only already-feasible short recreation responses in this urgent
+    # window; Laya still weighs their labor cost against immediate food/care.
+    if colony_reasoning.recreation_pressure(snapshot):
+        related.update({"schedule_recreation", "society_free_time", "build_recreation_pin"})
     if (snapshot.get("development") or {}).get("urgent_cooking_projects"):
         related.add("prioritize_construction_project")
     # A newly arrived worker can add to food production only if they can rest
@@ -10218,7 +10229,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return {"applied": True, "tree_type": tree_type, "trees": ids,
                 "worker": details.get("tree_worker"), "response": result, "staffing": cutting}
     if choice == "hold_survival":
-        return {"applied": False, "reason": "Survival work already issued; waiting for colonists"}
+        return {"applied": False, "reason": "No new order issued; waiting for observed jobs or a feasible worker",
+                "observed_workers": colony_reasoning.survival_wait_state(snapshot), "completion": "unverified"}
     raise bridge.RimApiError(f"Unknown colony director action: {choice}")
 
 
@@ -11162,7 +11174,7 @@ def run_downed_raider_cycle(
     anchor = map_state["anchor"]
     tick = int(snapshot["game"].get("tick") or 0)
     issued = map_state.setdefault("issued", {})
-    downed = [h for h in snapshot["combat"]["hostiles"] if h.get("is_downed") and not h.get("is_dead")]
+    downed = [h for h in snapshot["combat"]["hostiles"] if downed_combat.finishable_target(h)]
     prison_site = prison_site_for_state(map_state, anchor)
     prison_a = position(prison_site["x"], prison_site["z"])
     prison_b = position(prison_site["x"] + 6, prison_site["z"] + 6)
@@ -12357,47 +12369,54 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
             result = {"applied": False, "deferred": True,
                       "revisit": choice == "defer_care", "reason": alternatives[choice]}
         else:
-            doctor = next((pawn for pawn in snapshot["combat"]["colonists"]
-                           if int(pawn["id"]) == selected["doctor_id"]), None)
-            patient = next((pawn for pawn in snapshot["combat"]["colonists"]
-                            if int(pawn["id"]) == selected["patient_id"]), None)
-            if doctor and doctor.get("is_drafted"):
-                client.post("/api/v1/pawn/edit/status", body={"pawn_id": selected["doctor_id"], "is_drafted": False})
-            patient_hold = None
-            if selected.get("kind") == "rescue":
-                response = client.post("/api/v1/pawn/job", body={
-                    "pawn_id": selected["doctor_id"], "job_def": "Rescue",
-                    "target_thing_id": selected["patient_id"], "target_thing_id_b": selected["bed_id"],
-                })
-                result = {"applied": True, "response": response}
-            elif selected.get("kind") == "rest":
-                responses = [client.post("/api/v1/colonist/work-priority", body={
-                    "id": selected["patient_id"], "work": work, "priority": 1,
-                }) for work in ("Patient", "PatientBedRest")]
-                response = client.post("/api/v1/pawn/medical/bed-rest", body={
-                    "patient_pawn_id": selected["patient_id"], "bed_building_id": selected["bed_id"],
-                })
-                result = {"applied": True, "response": response, "priority_responses": responses}
+            validation, fresh_combat = medical_recovery.validate_post_combat_plan(
+                client, snapshot, selected, lambda fresh: post_combat_care_options(fresh, buildings))
+            if validation is not None:
+                result = validation
             else:
-                if (patient and not patient.get("is_downed") and not selected["self_tend"]
-                    and bridge.first_number(patient.get("bleeding_rate")) > 0
-                    and str(patient.get("current_job") or "").lower() not in {
-                        "laydown", "wait_maintainposture", "tendpatient",
-                    }):
-                    # Keep a mobile bleeding patient in reach of the doctor.
-                    patient_hold = client.post("/api/v1/pawn/job", body={
-                        "pawn_id": selected["patient_id"], "job_def": "Wait_MaintainPosture",
+                snapshot = {**snapshot, "combat": fresh_combat}
+                doctor = next((pawn for pawn in snapshot["combat"]["colonists"]
+                               if int(pawn["id"]) == selected["doctor_id"]), None)
+                patient = next((pawn for pawn in snapshot["combat"]["colonists"]
+                                if int(pawn["id"]) == selected["patient_id"]), None)
+                if doctor and doctor.get("is_drafted"):
+                    client.post("/api/v1/pawn/edit/status", body={"pawn_id": selected["doctor_id"], "is_drafted": False})
+                patient_hold = None
+                if selected.get("kind") == "rescue":
+                    response = client.post("/api/v1/pawn/job", body={
+                        "pawn_id": selected["doctor_id"], "job_def": "Rescue",
+                        "target_thing_id": selected["patient_id"], "target_thing_id_b": selected["bed_id"],
                     })
-                response = client.post("/api/v1/pawn/medical/tend", body={
-                    "patient_pawn_id": selected["patient_id"],
-                    "doctor_pawn_id": selected["doctor_id"],
-                    "self_tend": selected["self_tend"],
-                    **({"reassign_from_patient_id": selected["reassign_from_patient_id"]}
-                       if selected.get("reassign_from_patient_id") is not None else {}),
-                })
-                result = {"applied": True, "response": response}
-                if patient_hold is not None:
-                    result["patient_hold"] = patient_hold
+                    result = {"applied": True, "response": response}
+                elif selected.get("kind") == "rest":
+                    responses = [client.post("/api/v1/colonist/work-priority", body={
+                        "id": selected["patient_id"], "work": work, "priority": 1,
+                    }) for work in ("Patient", "PatientBedRest")]
+                    response = client.post("/api/v1/pawn/medical/bed-rest", body={
+                        "patient_pawn_id": selected["patient_id"], "bed_building_id": selected["bed_id"],
+                    })
+                    result = {"applied": True, "response": response, "priority_responses": responses}
+                else:
+                    if (patient and not patient.get("is_downed") and not selected["self_tend"]
+                        and bridge.first_number(patient.get("bleeding_rate")) > 0
+                        and str(patient.get("current_job") or "").lower() not in {
+                            "laydown", "wait_maintainposture", "tendpatient",
+                        }):
+                        # Keep a mobile bleeding patient in reach of the doctor.
+                        patient_hold = client.post("/api/v1/pawn/job", body={
+                            "pawn_id": selected["patient_id"], "job_def": "Wait_MaintainPosture",
+                        })
+                    response = client.post("/api/v1/pawn/medical/tend", body={
+                        "patient_pawn_id": selected["patient_id"],
+                        "doctor_pawn_id": selected["doctor_id"],
+                        "self_tend": selected["self_tend"],
+                        **({"reassign_from_patient_id": selected["reassign_from_patient_id"]}
+                           if selected.get("reassign_from_patient_id") is not None else {}),
+                    })
+                    result = {"applied": True, "response": response}
+                    if patient_hold is not None:
+                        result["patient_hold"] = patient_hold
+                result = medical_recovery.observe_post_combat_assignment(client, snapshot, selected, result)
     except bridge.RimApiError as exc:
         result = {"applied": False, "error": str(exc)}
     record = {"timestamp": bridge.utc_now(),

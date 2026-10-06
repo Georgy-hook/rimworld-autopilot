@@ -9,6 +9,7 @@ using RIMAPI.Models;
 namespace RIMAPI.Helpers {
  public static class SustenanceHelper {
   public sealed class Plan { public string key; public string kind; public int target_id; public string value; public string label; public string cost; public string risk; }
+  public static bool KitchenCleanupInFootprint(bool enclosedKitchen, bool sameOutdoorRoom, int distanceSquared) => enclosedKitchen || sameOutdoorRoom && distanceSquared<=9;
   static bool Protected(Pawn p) => p.Dead || p.Downed || p.Drafted || p.InMentalState || p.CurJobDef==JobDefOf.TendPatient || p.CurJobDef==JobDefOf.Rescue || p.CurJobDef==JobDefOf.FeedPatient || p.CurJobDef==JobDefOf.DoBill;
   static bool Safe(Thing t) => !t.IsForbidden(Faction.OfPlayer) && !t.IsBurning() && (t.TryGetComp<CompRottable>()==null || t.TryGetComp<CompRottable>().Stage==RotStage.Fresh)
   ;
@@ -179,10 +180,14 @@ namespace RIMAPI.Helpers {
     if(m.mapPawns.AllPawnsSpawned.Any(p=>!p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer) && p.GetRoom()==room))continue;
     list.Add(new Plan{key=$"kitchenhome:{table.thingIDNumber}",kind="kitchenhome",target_id=table.thingIDNumber,value="home",label=table.LabelShortCap+": include existing enclosed kitchen in home area",cost="Expands ordinary cleaning and fire response labor to current room",risk="Home area controls routine cleaning/fire response; does not clean instantly and may expand worker travel"});
    }
-   var kitchenRooms=new HashSet<Room>(m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().Where(t=>t.def.AllRecipes.Any(FoodRecipe)).Select(t=>t.InteractionCell.GetRoom(m)).Where(r=>r!=null));
+   var kitchenTables=m.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>().Where(t=>t.def.AllRecipes.Any(FoodRecipe)).ToArray();
+   // An outdoor room can cover most of the map. Only the local preparation
+   // footprint belongs to an outdoor table; enclosed kitchens use their room.
+   var kitchenRooms=new HashSet<Room>(kitchenTables.Select(t=>t.InteractionCell.GetRoom(m)).Where(r=>r!=null && !r.PsychologicallyOutdoors));
+   var outdoorTables=kitchenTables.Where(t=>t.InteractionCell.GetRoom(m)==null || t.InteractionCell.GetRoom(m).PsychologicallyOutdoors).ToArray();
    foreach(var giver in DefDatabase<WorkGiverDef>.AllDefsListForReading.Where(d=>d.defName=="CleanFilth")) {
     var scanner=giver.Worker as WorkGiver_Scanner;if(scanner==null)continue;
-    IEnumerable<Thing> targets=giver.defName=="CleanFilth" ? m.listerThings.AllThings.OfType<Filth>().Where(f=>kitchenRooms.Contains(f.GetRoom())).Cast<Thing>() : m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal).Cast<Thing>();
+    IEnumerable<Thing> targets=m.listerThings.AllThings.OfType<Filth>().Where(f=>KitchenCleanupInFootprint(kitchenRooms.Contains(f.GetRoom()),false,0) || outdoorTables.Any(t=>KitchenCleanupInFootprint(false,f.GetRoom()==t.InteractionCell.GetRoom(m),f.Position.DistanceToSquared(t.InteractionCell)))).Cast<Thing>();
     foreach(var target in targets) foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(p=>!Protected(p) && p.workSettings!=null && !p.WorkTypeIsDisabled(giver.workType) && p.workSettings.GetPriority(giver.workType)>0))
      if(scanner.MissingRequiredCapacity(worker)==null && !scanner.ShouldSkip(worker,false) && worker.CanReserveAndReach(target,PathEndMode.Touch,Danger.Some) && scanner.HasJobOnThing(worker,target,false))
       list.Add(new Plan{key=$"job:{giver.defName}:{worker.thingIDNumber}:{target.thingIDNumber}",kind="job",target_id=target.thingIDNumber,value=giver.defName+":"+worker.thingIDNumber,label=worker.LabelShortCap+": "+giver.label+" "+target.LabelShortCap,cost="Ordinary worker time and any medicine/feed selected by vanilla workgiver",risk="Does not complete cleaning, feeding, tending or rescue; current non-care task may be interrupted; fresh vanilla workgiver checks apply"});

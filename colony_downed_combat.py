@@ -9,6 +9,14 @@ from colony_retry import failure_record, recent
 import rimworld_laya as bridge
 
 
+def finishable_target(pawn):
+    # Mental hostility cannot turn our own resident or an allied visitor into a finisher target.
+    return (pawn.get('is_downed') and not pawn.get('is_dead') and not pawn.get('is_colonist')
+            and not pawn.get('is_prisoner') and str(pawn.get('faction') or '').casefold() != 'playercolony'
+            and pawn.get('faction_relation_kind') != 'Ally'
+            and float(pawn.get('faction_goodwill') or 0) < 75)
+
+
 def eligible(pawn, protected=()):
     return (pawn.get('id') is not None and not pawn.get('is_dead')
             and not pawn.get('is_downed') and not pawn.get('is_in_mental_state')
@@ -124,6 +132,9 @@ def reconcile(client, snapshot, map_state, protected=()):
 
 def available_fighters(snapshot, map_state, target_id, protected=()):
     memory = map_state.get('downed_combat') or {}
+    target = next((p for p in (snapshot.get('combat') or {}).get('hostiles') or [] if p.get('id') == target_id), None)
+    if target is not None and not finishable_target(target):
+        return []
     if memory.get('active'):
         return []
     tick = int(snapshot['game'].get('tick') or 0)
@@ -139,6 +150,8 @@ def issue(client, snapshot, map_state, actor, target):
     actor_id, target_id = int(actor['id']), int(target['id'])
     result = {'applied': False, 'actor': actor.get('name'), 'actor_id': actor_id,
               'target_id': target_id, 'completion': 'unverified'}
+    if not finishable_target(target):
+        return {**result, 'reason': 'finishing_target_is_not_enemy'}
     if memory.get('active'):
         return {**result, 'reason': 'finishing_order_already_pending', 'in_progress': True}
     if attacking(actor, target_id):

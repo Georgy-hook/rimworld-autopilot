@@ -5,6 +5,35 @@ published installer or a claim of demonstrated autonomous victory. See the
 [current documentation index](docs/README.md) and
 [API/loop audit](docs/audits/api-loop-audit-2026-10-02.md) for reviewed coverage.
 
+## Final colony fixes — 6 October 2026
+
+- Fixed production refusals returning every few seconds at 3×. Declined
+  alternatives now retain a minimum real-time and game-time cooldown; a genuinely
+  changed feasible opportunity remains available.
+- Restricted outdoor kitchen cleanup to the food station's local footprint.
+  Preparation-only choices explicitly say that they do not produce food.
+- Added ordinary protection choices for allied Berserk. Native ownership binds
+  an API-issued defensive attack to its exact job and mental-state session;
+  stale owned attacks can be cancelled after downing or recovery. Allied pawns
+  are excluded from finishing orders in both Python and the native executor.
+- Recheck post-combat caregivers before issuing orders and observe the exact
+  assigned job and patient afterward. Existing care is preserved; assignment
+  acceptance remains separate from treatment completion.
+- Preserve starvation, bleeding and acute recreation facts in short model
+  comparisons even without a temperature emergency. Feasible recreation
+  responses remain visible during a food crisis; waiting reports observed
+  workers rather than claiming that survival work has already been ordered.
+- Recorded definitive defeat of the 5–6 October colony and a dated observation
+  history. About 3h56m of retained autonomous phases advanced its overall game
+  history to 46.189 days; no autonomous victory was demonstrated.
+- Offline release gates: 1174 Python tests passed, 308 API routes audited with
+  no missing direct calls or duplicates, five native kitchen-boundary cases
+  passed, and Release-1.6 compiled with zero warnings/errors. See
+  [0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md) for remaining live and
+  installation checks. These final fixes have not been run in a new colony.
+
+## Earlier candidate changes
+
 - Added registered production, sustenance, resilience, society, progression,
   specialist and affordance domains. Laya receives bounded benefit, risk, cost,
   inaction and uncertainty for choices; subsequent observations remain distinct

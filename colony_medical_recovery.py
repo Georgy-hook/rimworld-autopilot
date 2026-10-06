@@ -373,3 +373,56 @@ def prepare_bed(client, snapshot, map_state, details, place):
             "position": site["position"], "def_name": plan["def_name"]}
         result["pending"] = True
     return {**result, "patient_id": int(pid), "helper_id": int(worker), "site": site["position"]}
+
+
+def post_combat_job_observed(combat, plan):
+    actor = next((p for p in combat.get('colonists') or [] if p.get('id') == plan.get('doctor_id')), {})
+    job = {'tend': 'TendPatient', 'rescue': 'Rescue', 'rest': 'LayDown'}.get(plan.get('kind'))
+    target = plan.get('bed_id') if plan.get('kind') == 'rest' else plan.get('patient_id')
+    return (bool(actor) and actor.get('current_job') == job and actor.get('current_job_target_id') == target
+            and (plan.get('kind') != 'rescue' or actor.get('current_job_target_id_b') == plan.get('bed_id')))
+
+
+def validate_post_combat_plan(client, snapshot, plan, options_for):
+    """Repeat the existing planner with fresh combat facts; preserve an exact current job."""
+    combat = client.get('/api/v1/combat/state', map_id=snapshot['map']['id'])
+    if not isinstance(combat, dict) or not isinstance(combat.get('colonists'), list):
+        raise bridge.RimApiError('Incomplete care readback')
+    actor = next((p for p in combat['colonists'] if p.get('id') == plan.get('doctor_id')), {})
+    patient = next((p for p in combat['colonists'] if p.get('id') == plan.get('patient_id')), {})
+    if (not actor or not patient or patient.get('is_dead') or actor.get('is_dead')
+            or actor.get('is_downed') or actor.get('is_in_mental_state') or actor.get('is_drafted')):
+        return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_or_patient_changed'}, combat
+    if post_combat_job_observed(combat, plan):
+        return {'applied': False, 'assignment_accepted': False, 'job_observed': True,
+                'in_progress': True, 'completion': 'unverified', 'reason': 'exact_care_job_in_progress'}, combat
+    if (str(actor.get('current_job') or '').casefold() in CARE_JOBS
+            and not (plan.get('kind') == 'tend' and actor.get('current_job') == 'TendPatient'
+                     and plan.get('reassign_from_patient_id') is not None
+                     and actor.get('current_job_target_id') == plan['reassign_from_patient_id'])):
+        return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_is_providing_other_care'}, combat
+    fresh = {**snapshot, 'combat': combat}
+    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id')
+    if not any(all(row.get(k) == plan.get(k) for k in identity) for row in options_for(fresh).values()):
+        return {'applied': False, 'assignment_accepted': False, 'reason': 'care_selection_changed'}, combat
+    return None, combat
+
+
+def observe_post_combat_assignment(client, snapshot, plan, result):
+    """Acceptance is an assignment result; exact observation still is not treatment completion."""
+    response = result.get('response')
+    endpoint = {'tend': '/api/v1/pawn/medical/tend', 'rest': '/api/v1/pawn/medical/bed-rest'}.get(plan.get('kind'), '/api/v1/pawn/job')
+    accepted = bridge.command_acceptance({'endpoint': endpoint}, response)
+    result.update(applied=accepted is True, assignment_accepted=accepted, completion='unverified')
+    try:
+        combat = client.get('/api/v1/combat/state', map_id=snapshot['map']['id'])
+        if not isinstance(combat, dict) or not isinstance(combat.get('colonists'), list):
+            raise bridge.RimApiError('Incomplete care readback')
+        result['job_observed'] = post_combat_job_observed(combat, plan)
+        if result['job_observed']:
+            result['in_progress'] = True
+        else:
+            result['reason'] = 'care_job_not_observed'
+    except bridge.RimApiError:
+        result.update(job_observed=None, outcome_unknown=True, reason='care_readback_unknown')
+    return result

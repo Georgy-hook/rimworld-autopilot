@@ -1,3 +1,4 @@
+from care_transport import bind_care_readback
 import copy
 from pathlib import Path
 import sys
@@ -143,7 +144,8 @@ class RoutineCareThermalReplay(unittest.TestCase):
             if ep.endswith('/projects'):return {'projects':s['development']['construction_projects']}
             if ep.endswith('/buildings'):return []
             return {}
-        client.get.side_effect=get;client.post.return_value={'applied':True}
+        client.get.side_effect=get;client.post.return_value={'success':True}
+        bind_care_readback(client,s)
         with patch.object(d,'publish_post_combat_care_overlay'),patch.object(d.bridge,'append_log'):
             record=d.run_post_combat_care_cycle(client,Agent(),s,Path('unused'))
         raw=record['decision']['raw']

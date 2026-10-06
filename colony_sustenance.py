@@ -4,7 +4,7 @@ from colony_retry import failure_record, recent as retry_recent
 
 _KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
-    "sustenance_food_batch": "Choose one loaded food, preservation or butcher recipe batch at a usable table with skilled enabled workers and fresh reachable ingredients. Compare human reserves, animal feed, ingredient efficiency, spoilage, kitchen cleanliness and poisoning; production remains ordinary work. Existing unused feed bills can be paused deliberately, preserving human emergency kibble alternatives.",
+    "sustenance_food_batch": "Choose a feasible food or butcher recipe batch, fishing workflow, or explicit kitchen preparation. Preparation cleans or configures a kitchen and produces no food; a food bill still requires a usable table, enabled skilled worker and reachable ingredients. Compare human reserves, animal feed, fuel, spoilage and poisoning. Existing unused feed bills can be paused deliberately.",
     "sustenance_food_policy": "Choose an existing food policy for one colonist. Compare allowed reachable foods, scarcity, raw-food poisoning, ideology and mood; changing policy does not feed the pawn.",
     "sustenance_preservation": "Choose an existing cooler target or food-storage priority. Compare power, room temperature, spoiling stock, hauling and access; a setpoint is not proof of a frozen room.",
     "sustenance_animal_welfare": "Choose one animal medicine policy or existing allowed area. Compare illness, pregnancy, nutrition, rest, reachable feed, beds and human medicine reserves. Pen animals use pens rather than allowed areas.",
@@ -253,7 +253,9 @@ def choose(agent, state, action, snapshot):
     rows = []
     for kind in kinds:
         key, plan = next((key, p) for key, p in plans.items() if p["kind"] == kind)
-        rows.append((kind, kind, _effects(context, plan), key))
+        purpose = {"job": "Kitchen preparation: cleaning only; produces no food",
+                   "kitchenhome": "Kitchen preparation: home area only; produces no food"}.get(kind, kind)
+        rows.append((kind, purpose, _effects(context, plan), key))
     kind = stage(rows, "sustenance_purpose", "Choose purpose or defer. Compare independently retained cost, risk and waiting.")
     if kind is None:
         shown.extend(plans)
@@ -306,7 +308,12 @@ def execute(client, snapshot, map_state, action, selected):
     return {"applied": True, "reason": result.get("reason"), "response": result}
 
 def assess(action, snapshot):
-    return {"benefit": DESCRIPTIONS.get(action, "unsupported"), "cost": "Ingredients, hauling, electricity, medicine or retained animal products depending on selected policy.", "risk": "Food poisoning, inaccessible feed, power interruption or irreversible ordinary slaughter; inspect loaded alternatives.", "inaction": "Current hunger, spoilage, illness, breeding and consumption continue.", "uncertainty": "Fresh context and server revalidation establish policy availability; ordinary work and biological outcomes remain pending."}
+    benefit = DESCRIPTIONS.get(action, "unsupported")
+    if action == "sustenance_food_batch":
+        plans = options(snapshot.get("development", {}).get("sustenance", {}), action)
+        if plans and all(p.get("kind") in {"job", "kitchenhome"} for p in plans.values()):
+            benefit = "Kitchen preparation only: clean local filth or include the enclosed kitchen in home area. No feasible food recipe or fishing workflow is currently offered; this action produces no food."
+    return {"benefit": benefit, "cost": "Ingredients, hauling, electricity, medicine or retained animal products depending on selected policy.", "risk": "Food poisoning, inaccessible feed, power interruption or irreversible ordinary slaughter; inspect loaded alternatives.", "inaction": "Current hunger, spoilage, illness, breeding and consumption continue.", "uncertainty": "Fresh context and server revalidation establish policy availability; ordinary work and biological outcomes remain pending."}
 
 
 def summary(snapshot):

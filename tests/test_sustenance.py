@@ -1,4 +1,6 @@
 import unittest
+import copy
+import json
 from unittest.mock import patch
 import colony_sustenance as module
 
@@ -6,6 +8,46 @@ class Client:
     def __init__(self, context): self.context=context; self.posts=[]
     def get(self,*args,**kwargs): return self.context
     def post(self,*args,**kwargs): self.posts.append(kwargs['body']); return {'applied':True,'reason':'ordinary_policy_changed'}
+
+
+class KitchenPreparationSequences(unittest.TestCase):
+    @patch('colony_retry.time.time', return_value=1000)
+    def test_preparation_decline_does_not_hide_recipe_after_fuel_arrives(self, clock):
+        prep = {'key': 'job:CleanFilth:1:9', 'kind': 'job', 'target_id': 9,
+                'value': 'CleanFilth:1', 'label': 'Clean nearby kitchen filth',
+                'cost': 'Worker time', 'risk': 'Competing labor'}
+        context = {'available': True, 'options': [prep], 'tables': [
+            {'id': 8, 'fuel': 0, 'fuel_capacity': 20, 'usable': False, 'bills': []}]}
+        snap = {'map': {'id': 1}, 'game': {'tick': 20000},
+                'development': {'sustenance': context}}
+        state = {}; client = Client(context)
+        self.assertIn('sustenance_food_batch', module.prepare(snap, state))
+        card = module.assess('sustenance_food_batch', snap)
+        self.assertIn('Kitchen preparation only', card['benefit'])
+        self.assertIn('produces no food', card['benefit'])
+        with patch.object(module, 'ask_laya_choice', return_value=('defer', {})) as ask:
+            selected, _ = module.choose(None, {}, 'sustenance_food_batch', snap)
+        self.assertIn('preparation', ask.call_args.args[4]['o0'])
+        self.assertIn('produces no food', ask.call_args.args[4]['o0'])
+        self.assertFalse(module.execute(client, snap, state, 'sustenance_food_batch', selected)['applied'])
+        state = json.loads(json.dumps(state))
+        snap['game']['tick'] += 100
+        self.assertNotIn('sustenance_food_batch', module.prepare(snap, state))
+        # Endpoint-shaped observation after actual fuel/ingredient feasibility
+        # changes: the native endpoint supplies a new executable bill plan.
+        context['tables'][0].update(fuel=10, usable=True)
+        recipe = {'key': 'bill:8:CookMealSimple', 'kind': 'bill', 'target_id': 8,
+                  'value': 'CookMealSimple', 'label': 'Cook simple meals',
+                  'cost': 'Reachable ingredients and cook time', 'risk': 'Food poisoning'}
+        context['options'].append(recipe)
+        self.assertIn('sustenance_food_batch', module.prepare(snap, state))
+        self.assertEqual(list(module.options(context, 'sustenance_food_batch')), [recipe['key']])
+        self.assertNotIn('Kitchen preparation only', module.assess('sustenance_food_batch', snap)['benefit'])
+        self.assertTrue(module.execute(client, snap, state, 'sustenance_food_batch',
+                                       {'sustenance_policy': recipe['key']})['applied'])
+        self.assertEqual(client.posts, [{'map_id': 1, 'key': recipe['key']}])
+        # Accepted bill is not asserted to have made meals or restored nutrition.
+        self.assertEqual(context['tables'][0]['bills'], [])
 
 class SustenanceTests(unittest.TestCase):
     def setUp(self):

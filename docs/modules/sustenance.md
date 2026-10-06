@@ -32,6 +32,8 @@ Secondary source discovery/cross-checks (consulted 2026-10-02): [Food](https://r
 
 ## Contract and validation
 
+Food-batch cards distinguish feasible food workflows from preparation alone. A preparation-only observation explicitly says that cleaning or home-area setup produces no food; a later feasible recipe remains available after preparation is declined. Cleaning targets belong to an actual enclosed kitchen room, or to the same outdoor room within three cells of the food table's interaction cell. An outdoor room identifier never makes distant map filth a kitchen target. Native capacity, enabled Cleaning, reachability, reservations and protected care-job checks still apply.
+
 `GET /api/v1/sustenance/context` provides real alternatives and facts. `POST /api/v1/sustenance/policy` accepts only a freshly regenerated exact option key, never arbitrary recipe/code/property names. Python partitions keys into five registered actions and rereads options before posting. Native Laya chooses purpose, target subject and actual policy/operator; short aliases plus five separate consequence fields retain subject hunger/medicine, kitchen cleanliness and storage temperature evidence. Defer is available at every stage. No deterministic chosen policy. Applied means policy/bill/job acceptance only. Fresh missing options return applied=false.
 
 Python tests cover domain partition/cooldown, stale-target rejection, native downside/defer choices, exact-key posting and distinguishing pasture shortfalls from sufficient stored feed. An 80-animal regression verifies the final starving subject remains visible/selectable within 312 state tokens, with every consequence field retained. Shared C# build verifies installed API signatures. No game/model launches were performed.

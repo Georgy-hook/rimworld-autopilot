@@ -25,6 +25,12 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [0.0.7 release preparation and remaining gates](RELEASE_READINESS_0.0.7.md)
+- [Clinical context and truthful waiting, 2026-10-06](audits/clinical-context-wait-2026-10-06.md)
+- [Production deferral and kitchen boundary, 2026-10-06](audits/food-deferral-kitchen-2026-10-06.md)
+- [Allied Berserk and exact post-combat care, 2026-10-06](audits/allied-berserk-care-contract-2026-10-06.md)
+- [Dated colony durations and cause evidence](playtests/Colony-lifetimes-2026-10-06.md)
+- [Theentbum final defeat and confirmed causes, 2026-10-06](playtests/Theentbum-2026-10-06.md)
 - [Resolved growth modal and forced pause, 2026-10-06](audits/growth-dialog-pause-2026-10-06.md)
 - [Starvation care prerequisites, scoped yielding and nutrition context, 2026-10-06](audits/starvation-care-yield-2026-10-06.md)
 

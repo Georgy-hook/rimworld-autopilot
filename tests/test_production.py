@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from unittest.mock import patch
 import colony_production as p
@@ -66,9 +67,13 @@ class ProductionTests(unittest.TestCase):
             self.assertNotIn('production_utilities',p.prepare(s,state))
     def test_defer_records_cooldown_without_api_mutation(self):
         s=self.snapshot(); c=Client({}); m={};p.prepare(s,m)
-        r=p.execute(c,s,m,'production_feed_batch',{'production_policy':'defer'})
+        with patch.object(p,'ask_laya_choice',return_value=('defer',{})):
+            selected,_=p.choose(None,{},'production_feed_batch',s)
+        r=p.execute(c,s,m,'production_feed_batch',selected)
         self.assertFalse(r['applied']); self.assertEqual([],c.calls)
-        self.assertEqual(20000,m['production_selection_dwell']['production_feed_batch']['3']['tick'])
+        entries=m['production_selection_defers']['production_feed_batch']
+        self.assertEqual(20000,next(iter(entries.values()))['tick'])
+        self.assertNotIn('production_selection_dwell',m)
         self.assertNotIn('production_feed_batch',p.prepare(self.snapshot(),m))
     def test_risk_and_defer_reach_native_choice(self):
         s=self.snapshot();p.prepare(s,{})
@@ -170,6 +175,101 @@ class LogisticsProductionTests(unittest.TestCase):
     def test_defer_never_creates_zone_or_interrupts_worker(self):
         client=Client({});result=p.execute(client,self.snapshot(),{},'production_material_logistics',{'production_policy':'defer'})
         self.assertFalse(result['applied']);self.assertEqual(client.calls,[])
+
+
+class ProductionDeferSequences(unittest.TestCase):
+    action = 'production_material_logistics'
+
+    def observation(self, plans, tick=20000):
+        return {'map': {'id': 1}, 'game': {'tick': tick}, 'development': {
+            'production': {'logistics_context': {'options': copy.deepcopy(plans)}}}}
+
+    def test_unattributed_defer_does_not_blanket_lock_unshown_options(self):
+        plan = LogisticsProductionTests().plan(); state = {}
+        first = self.observation([plan])
+        p.execute(Client({}), first, state, self.action, {'production_policy': 'defer'})
+        self.assertIn(self.action, p.prepare(self.observation([plan], 20100), state))
+
+    @patch('colony_retry.time.time')
+    def test_declined_subject_survives_json_clock_floors_and_worker_drift(self, clock):
+        clock.return_value = 1000
+        plan = LogisticsProductionTests().plan()
+        state = {}; client = Client({})
+        first = self.observation([plan])
+        p.prepare(first, state)
+        p.execute(client, first, state, self.action, {
+            'production_policy': 'defer', 'shown_production_options': [plan['key']]})
+        state = json.loads(json.dumps(state))
+        drift = {**plan, 'key': plan['key'] + ':another_worker', 'worker_id': 99,
+                 'label': 'Observed again', 'stock': 500, 'cells': list(reversed(plan['cells']))}
+        # Neither clock alone expires a deliberate refusal.
+        for tick, now in ((20250, 1001), (50000, 1119), (49999, 1200)):
+            clock.return_value = now
+            self.assertNotIn(self.action, p.prepare(self.observation([drift], tick), state))
+        clock.return_value = 1200
+        self.assertIn(self.action, p.prepare(self.observation([drift], 50000), state))
+        self.assertEqual(client.calls, [])
+
+    @patch('colony_retry.time.time', return_value=1000)
+    def test_unshown_subject_new_material_and_new_footprint_remain_available(self, clock):
+        plan = LogisticsProductionTests().plan()
+        other = {**plan, 'key': 'zone:9:Steel', 'target_id': 9}
+        state = {}; first = self.observation([plan, other])
+        p.prepare(first, state)
+        p.execute(Client({}), first, state, self.action, {
+            'production_policy': 'defer', 'shown_production_options': [plan['key']]})
+        material = {**plan, 'key': 'zone:8:WoodLog', 'value': 'WoodLog'}
+        footprint = {**plan, 'key': 'zone:8:Steel:2,2', 'cells': [{'x': 2, 'z': 2}]}
+        second = self.observation([plan, other, material, footprint], 20100)
+        self.assertIn(self.action, p.prepare(second, state))
+        self.assertEqual(set(p.logistics_options(second['development']['production'])),
+                         {other['key'], material['key'], footprint['key']})
+        # Seeing a new option must not erase the earlier refusal.
+        self.assertNotIn(self.action, p.prepare(self.observation([plan], 20200), state))
+
+    @patch('colony_retry.time.time')
+    def test_rollback_invalidates_defer_and_accepted_dwell_is_unchanged(self, clock):
+        clock.return_value = 1000
+        plan = LogisticsProductionTests().plan(); state = {}
+        p.execute(Client({}), self.observation([plan]), state, self.action,
+                  {'production_policy': 'defer', 'shown_production_options': [plan['key']]})
+        self.assertIn(self.action, p.prepare(self.observation([plan], 19999), state))
+        # Accepted work still has its ordinary game-time dwell, without the
+        # refusal's real-time floor or opportunity invalidation.
+        accepted = {}; p._remember_selection(accepted, self.observation([plan]), self.action,
+                                            {plan['key']: plan}, 15000)
+        self.assertNotIn(self.action, p.prepare(self.observation([plan], 34999), accepted))
+        self.assertIn(self.action, p.prepare(self.observation([plan], 35000), accepted))
+        self.assertNotIn('production_selection_defers', accepted)
+        # A persisted refusal with future wall-clock history also resets.
+        state = {}; p.execute(Client({}), self.observation([plan]), state, self.action,
+                              {'production_policy': 'defer', 'shown_production_options': [plan['key']]})
+        clock.return_value = 999
+        self.assertIn(self.action, p.prepare(self.observation([plan], 20100), state))
+
+    @patch('colony_retry.time.time', return_value=1000)
+    def test_recipe_new_feasible_recipe_and_feed_target_after_defer(self, clock):
+        for action, fixture, field in (
+            ('production_recipe_batch', RecipeProductionTests(), 'recipe_context'),
+            ('production_feed_batch', ProductionTests(), None)):
+            with self.subTest(action=action):
+                snap = fixture.snapshot(); state = {}; p.prepare(snap, state)
+                context = snap['development']['production']
+                original = p.recipe_options(context) if field else context['feed_options']
+                p.execute(Client({}), snap, state, action,
+                          {'production_policy': 'defer', 'shown_production_options': list(original)})
+                snap['game']['tick'] += 100
+                self.assertNotIn(action, p.prepare(snap, state))
+                if field:
+                    fresh = copy.deepcopy(fixture.plan())
+                    fresh.update(key='new_feasible_recipe', recipe='MakeNewComponent')
+                    context[field]['options'].append(fresh)
+                else:
+                    fresh = copy.deepcopy(context['feed_tables'][0]); fresh['id'] = 44
+                    context['feed_tables'].append(fresh)
+                self.assertIn(action, p.prepare(snap, state))
+                ready = p.recipe_options(context) if field else context['feed_options']
+                self.assertEqual(list(ready), ['new_feasible_recipe'] if field else ['44'])
 
 class IndependentProductionTests(unittest.TestCase):
     def snapshot(self):

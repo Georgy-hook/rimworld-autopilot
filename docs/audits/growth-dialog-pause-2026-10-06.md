@@ -69,4 +69,8 @@ The new native closure after an unmade award selection remains a source/build
 gate rather than a positive live award-selection result. Loading-time
 NullReferenceException duplicates and redundant hazard-guard records remain
 separate open observations; neither was established as the growth modal's
-cause. Hourly observation continues on this same colony.
+cause. Hourly observation continued on this same colony.
+
+The subsequent continuation ended in native Game Over at11:48:46 UTC on
+6 October. All four final residents died; the outcome and paused observation
+are recorded in [the final report](../playtests/Theentbum-2026-10-06.md).

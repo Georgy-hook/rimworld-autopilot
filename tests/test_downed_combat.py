@@ -183,8 +183,11 @@ class FinishDownedTests(unittest.TestCase):
             job=self.holster['current_job']
             self.assertFalse(finish.issue(client,self.snapshot,self.memory,self.holster,self.target)['applied'])
             self.assertFalse(self.holster['is_drafted']);self.assertEqual(job,self.holster['current_job'])
-            self.assertEqual('/api/v1/pawn/job',client.posts[0][0])
-            self.assertTrue(client.posts[0][1]['request_draft_for_finishing'])
+            if change == 'dead_target':
+                self.assertEqual([], client.posts)
+            else:
+                self.assertEqual('/api/v1/pawn/job',client.posts[0][0])
+                self.assertTrue(client.posts[0][1]['request_draft_for_finishing'])
 
     def test_runtime_payload_contains_new_controller(self):
         self.assertIn('colony_downed_combat.py',install_payload.RUNTIME_FILES)

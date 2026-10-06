@@ -16,6 +16,8 @@ Target: installed RimWorld 1.6.4871, Core/Royalty/Ideology/Biotech/Anomaly. Odys
 
 ## Feasibility, finite bills and performance
 
+Deliberate recipe, feed and material-logistics deferrals remember only the alternatives shown at the declined stage. The same workflow stays declined until both 30000 game ticks and 120 real seconds pass. New feasible targets, recipes, materials or stockpile footprints remain selectable; worker/label/stock drift does not restart the question. This JSON-safe refusal history resets on game or real-clock rollback. Accepted work retains its separate game-time dwell and is not treated as completed delivery or production.
+
 A fresh observation scans eligible item/corpse stock once. Reachability/reservability is lazily calculated once per eligible worker and shared across recipe/material variants. Immutable recipe product/category/cost characteristics are cached by loaded RecipeDef. Research, table usability, bills, worker skills/priorities, reservations and mechanitor state are always fresh.
 
 Ingredient allocation uses integer units in one shared pool. No-mix recipes require sufficient units of one allowed def; mixing recipes use loaded IngredientValueGetter.ValuePerUnitOf and whole-unit ceiling allocation. The same stack cannot satisfy multiple ingredient slots. Conservative ordering can decline a recipe that a more elaborate ingredient search could find; vanilla workgiver still performs exact search when the bill starts.

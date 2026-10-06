@@ -1,3 +1,4 @@
+from care_transport import bind_care_readback
 """Regression for the hive pickup and untreated casualty seen in the long run."""
 
 import copy
@@ -107,7 +108,7 @@ class HiveSurvivalTests(unittest.TestCase):
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertNotIn("civilian_retreat", criteria)
         self.assertEqual(bridge.plan_action(snapshot, {"choice": "civilian_retreat"})["kind"], "noop")
-        client = RecordingClient()
+        client = bind_care_readback(RecordingClient(), snapshot)
         agent = ChoosingAgent("tend_987_984")
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(
@@ -151,7 +152,7 @@ class HiveSurvivalTests(unittest.TestCase):
             {"id": 48599, "kind_def": "Spelopede", "position": {"x": 194, "z": 108},
              "lord_job_type": "LordJob_DefendAndExpandHive", "current_job": "LayDown"},
         ]
-        client = RecordingClient()
+        client = bind_care_readback(RecordingClient(), snapshot)
         agent = ChoosingAgent("tend_50204_928")
         with tempfile.TemporaryDirectory() as folder:
             record = director.run_post_combat_care_cycle(

@@ -1,14 +1,14 @@
-"""Model-selected ordinary protection from a named allied murderous rage.
+"""Model-selected ordinary protection from allied murderous rage or Berserk.
 
-Never turn the aggressor into an enemy target or end a mental state.
+Observe native hostility; never force recovery or invent a permanent Berserk victim.
 """
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent
 import rimworld_laya as bridge
 
 ACTIONS={'mental_safety_response'}
-DESCRIPTIONS={'mental_safety_response':'Protect the named victim from an allied murderous rage using an eligible ordinary move, arrest attempt or rescue, or observe. Concurrent raid defense and urgent care remain necessary.'}
-LABELS={'mental_safety_response':'защита жертвы убийственной ярости'}
+DESCRIPTIONS={'mental_safety_response':'Protect allies from murderous rage or Berserk using an eligible ordinary move, arrest attempt or rescue, or observe. Concurrent raid defense and urgent care remain necessary.'}
+LABELS={'mental_safety_response':'защита от агрессии союзника'}
 DOMAINS={'mental_safety_response':'care'}
 ENDPOINT='/api/v1/mental-safety/'
 
@@ -20,8 +20,48 @@ def read(client,snapshot):
     return data
 
 
+def allied_mental_threats(combat):
+    return [p for p in combat.get('colonists') or [] if not p.get('is_dead') and not p.get('is_downed')
+            and p.get('is_in_mental_state') and p.get('mental_state_def') in {'Berserk', 'MurderousRage'}]
+
+
+def reconcile_defence(client, snapshot, state):
+    """Native owns exact job identity; Python requests only a stale recorded lease."""
+    combat = snapshot.get('combat') or {}
+    allies = {p.get('id') for p in combat.get('colonists') or []}
+    need = (state.get('allied_defence_pending') or allied_mental_threats(combat)
+            or any(p.get('current_job') in {'AttackStatic', 'AttackMelee'}
+                   and p.get('current_job_target_id') in allies for p in combat.get('colonists') or []))
+    if not need:
+        return {'cancelled': [], 'pending': False}
+    try:
+        data = read(client, snapshot)
+    except bridge.RimApiError:
+        state['allied_defence_pending'] = True
+        return {'cancelled': [], 'outcome_unknown': True}
+    leases = data.get('defence_orders') or []
+    state['allied_defence_pending'] = bool(leases)
+    cancelled = []
+    for row in leases:
+        if row.get('stale') is not True or not row.get('key'):
+            continue
+        try:
+            result = client.post(ENDPOINT + 'order', body={'map_id': snapshot['map']['id'], 'defence_key': row['key']})
+            if isinstance(result, dict) and result.get('applied') is True:
+                cancelled.append(row.get('actor_id'))
+        except bridge.RimApiError:
+            pass
+    if cancelled:
+        # Refresh before care or raid selects actors; cancellation does not undraft.
+        try:
+            snapshot['combat'] = client.get('/api/v1/combat/state', map_id=snapshot['map']['id'])
+        except bridge.RimApiError:
+            return {'cancelled': cancelled, 'outcome_unknown': True}
+    return {'cancelled': cancelled, 'pending': bool(leases)}
+
+
 def collect(client,snapshot):
-    if not bridge.murderous_rage_context(snapshot.get('combat') or {}):
+    if not allied_mental_threats(snapshot.get('combat') or {}):
         return {'available':True,'map_id':snapshot['map']['id'],'options':[],'orders':[],'threats':[],'blocker':''}
     return read(client,snapshot)
 
@@ -57,7 +97,7 @@ def _distance(data,plan):
 
 
 def _signature(data):
-    return str((sorted((str(t.get('session')),t.get('victim_id')) for t in data.get('threats') or []),
+    return str((sorted((str(t.get('session')),str(t.get('victim_id')),str(t.get('target_id'))) for t in data.get('threats') or []),
                 sorted(str(p.get('key')) for p in data.get('options') or [])))
 
 
@@ -75,12 +115,12 @@ def prepare(snapshot,state):
 def choose(agent,state,action,snapshot):
     data=snapshot['development']['mental_safety'];plans=data.get('plans') or {}
     rows={f'o{i}':p for i,p in enumerate(plans.values())}
-    effects={k:{'benefit':f"{p.get('kind')} actor#{p.get('actor_id')} protects victim#{p.get('victim_id')} from ally#{p.get('aggressor_id')}; {p.get('label')}",'risk':f"native arrest acceptance {p.get('arrest_chance')}; {p.get('risk')}",'cost':'Actor time; ordinary arrest may imprison an ally; raid defense remains needed',
-                'inaction':'Named victim remains at risk','uncertainty':'Accepted job is not completed protection'} for k,p in rows.items()}
+    effects={k:{'benefit':f"{p.get('kind')} actor#{p.get('actor_id')} protects ally#{p.get('victim_id')} from ally#{p.get('aggressor_id')}; {p.get('label')}",'risk':f"native arrest acceptance {p.get('arrest_chance')}; {p.get('risk')}",'cost':'Actor time; ordinary arrest may imprison an ally; raid defense remains needed',
+                'inaction':'Nearby allies remain at risk; Berserk can change targets','uncertainty':'Accepted job is not completed protection'} for k,p in rows.items()}
     effects['observe']={'benefit':'Preserve current care/defense','risk':data.get('blocker') or 'Aggressor may kill victim, including while downed',
-                       'cost':'No protection order','inaction':'Murderous rage continues','uncertainty':'No safe eligible option may exist'}
-    choice,raw=ask_laya_choice(agent,{**state,'decision_facts':{**(state.get('decision_facts') or {}),'mental_risks':[{k:t.get(k) for k in ('aggressor_id','victim_id','mental_state')} for t in data.get('threats')[:4]]},'option_effects':effects},
-        'mental_safety_response','Protect named victim; weigh concurrent raid and care. Arrest can fail. No ally-killing option.',
+                       'cost':'No protection order','inaction':'Allied mental threat continues; Berserk may change targets','uncertainty':'No safe eligible option may exist'}
+    choice,raw=ask_laya_choice(agent,{**state,'decision_facts':{**(state.get('decision_facts') or {}),'mental_risks':[{k:t.get(k) for k in ('aggressor_id','victim_id','mental_state','named_victim','job','target_id')} for t in data.get('threats')[:4]]},'option_effects':effects},
+        'mental_safety_response','Protect allies from the observed mental threat; Berserk has no permanent named victim. Weigh concurrent raid and care. Ordinary arrest can fail.',
         {**{k:p.get('label') for k,p in rows.items()},'observe':'Observe; preserve defense/care, victim remains at risk'},detailed=True)
     if choice not in {*rows,'observe'}:raise ValueError('Unverified mental protection choice')
     return {'plan':rows.get(choice),'considered':list(plans.values())},raw
@@ -124,9 +164,9 @@ def reconcile(client,snapshot,state):
     tick=int(snapshot.get('game',{}).get('tick') or 0);memory=_memory(state,tick);active=memory.get('active')
     if not active:return {'active_ids':[]}
     plan=active['plan']
-    observed_rages=bridge.murderous_rage_context(snapshot.get('combat') or {})
+    observed_rages=allied_mental_threats(snapshot.get('combat') or {})
     combat=snapshot.get('combat') or {}
-    if isinstance(combat.get('colonists'),list) and not any(t.get('aggressor_id')==plan['aggressor_id'] and t.get('victim_id')==plan['victim_id'] for t in observed_rages):
+    if isinstance(combat.get('colonists'),list) and not any(t.get('id')==plan['aggressor_id'] and t.get('mental_state_session')==plan['session'] for t in observed_rages):
         memory.pop('active');return {'active_ids':[],'reason':'mental_state_ended_or_changed_normal_job_retained'}
     try:data=read(client,snapshot)
     except bridge.RimApiError:
@@ -134,7 +174,7 @@ def reconcile(client,snapshot,state):
         # cease peaceful draft protection so urgent defense/care can take over.
         protection=[plan['actor_id']] if recent(active['progress'],tick,5000) else []
         return {'active_ids':protection,'pending_blocker':'Mental response readback unknown','lease_retained':True,'attention_required':not protection}
-    if not any(t.get('session')==plan['session'] and t.get('victim_id')==plan['victim_id'] for t in data['threats']):
+    if not any(t.get('session')==plan['session'] and (t.get('mental_state')=='Berserk' or t.get('victim_id')==plan['victim_id']) for t in data['threats']):
         memory.pop('active');return {'active_ids':[],'reason':'mental_state_ended_or_changed_normal_job_retained'}
     snapshot.setdefault('development',{})['mental_safety']=data
     if not _observed(data,plan):

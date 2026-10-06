@@ -1,6 +1,7 @@
 """Live fuel allocation and electricity choices; policy changes use vanilla controls."""
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
+import json
 
 DESCRIPTIONS = {"production_utilities": "Choose a building's power switch or automatic refueling policy. Compare fuel stocks, production, room temperature and loss of service. Switches require colonist work; disabling refueling preserves unallocated fuel but does not extinguish existing fuel.",
                 "production_feed_batch": "Choose an existing usable table for one researched kibble batch, or defer to preserve food. Uses live protein/greens nutrition and produces the loaded recipe's animal feed. A bill is accepted work, not produced food; loaded recipe filters can consume human meat or fertilized eggs; compare ideology and breeding costs."}
@@ -16,6 +17,8 @@ ENDPOINTS = {"context": "/api/v1/production/context", "recipes": "/api/v1/produc
 BACKOFF_TICKS = 250
 UTILITY_DEFER_TICKS = 30000
 UTILITY_DEFER_SECONDS = 120
+SELECTION_DEFER_TICKS = 30000
+SELECTION_DEFER_SECONDS = 120
 
 
 def _read(client, snapshot, endpoint):
@@ -70,8 +73,42 @@ def _ready_plans(plans, map_state, action, tick):
     for old_key in list(dwell):
         if not retry_recent(dwell[old_key], tick, dwell[old_key].get("duration", 15000)):
             del dwell[old_key]
-    return {key: plan for key, plan in plans.items() if str(key) not in entries
-            and _selection_scope(action, key, plan) not in dwell}
+    declined = (map_state.get("production_selection_defers") or {}).get(action) or {}
+    for scope in list(declined):
+        if not retry_recent(declined[scope], tick, SELECTION_DEFER_TICKS):
+            del declined[scope]
+    ready = {}
+    for key, plan in plans.items():
+        scope = _selection_scope(action, key, plan)
+        old = declined.get(scope + "|" + _selection_opportunity(action, plan))
+        if str(key) not in entries and scope not in dwell and old is None:
+            ready[key] = plan
+    return ready
+
+
+def _selection_opportunity(action, plan):
+    # Plans already passed native feasibility. Bind the actual workflow, not
+    # labels, stock fluctuations or interchangeable worker IDs. New materials,
+    # recipes and targets have their own scopes; changed zone footprints reopen.
+    fields = ("kind", "target_id", "value", "cells") if action == "production_material_logistics" else (
+        "building_id", "recipe", "material")
+    identity = {field: plan.get(field) for field in fields}
+    if action == "production_material_logistics" and isinstance(identity["cells"], list):
+        identity["cells"] = sorted(identity["cells"], key=lambda cell: (cell.get("x", 0), cell.get("z", 0)))
+    if action == "production_feed_batch":
+        identity = {"building": (plan.get("building") or {}).get("id"), "policy": plan.get("policy"),
+                    "ingredients": (plan.get("building") or {}).get("ingredients")}
+    return json.dumps(identity, sort_keys=True)
+
+
+def _remember_defer(map_state, snapshot, action, plans):
+    history = map_state.setdefault("production_selection_defers", {}).setdefault(action, {})
+    tick = int(snapshot.get("game", {}).get("tick") or 0)
+    for key, plan in plans.items():
+        opportunity = _selection_opportunity(action, plan)
+        history[_selection_scope(action, key, plan) + "|" + opportunity] = {
+            **failure_record(tick, SELECTION_DEFER_SECONDS),
+            "opportunity": opportunity}
 
 
 def _selection_scope(action, key, plan):
@@ -357,7 +394,8 @@ def choose(agent, state, action, snapshot):
         key=stage(buildings[subject],'production_utility_policy')
     else:
         key=stage(list(plans.items()),'production_feed_table')
-    return {'production_policy':key or 'defer', **({'shown_utility_options':list(dict.fromkeys(shown_utilities))} if action == 'production_utilities' and key is None else {})},{'stages':stages}
+    return {'production_policy':key or 'defer', **({'shown_utility_options':list(dict.fromkeys(shown_utilities))} if action == 'production_utilities' and key is None else {}),
+            **({'shown_production_options': list(plans)} if action == 'production_feed_batch' and key is None else {})},{'stages':stages}
 
 
 def execute(client, snapshot, map_state, action, selected):
@@ -374,9 +412,9 @@ def execute(client, snapshot, map_state, action, selected):
             observed = (recipe_options(context) if action == "production_recipe_batch" else
                         logistics_options(context) if action == "production_material_logistics" else
                         context.get("feed_options") or {})
-            if "shown_production_options" in selected:
-                observed = {k: v for k, v in observed.items() if k in selected["shown_production_options"]}
-            _remember_selection(map_state, snapshot, action, observed, BACKOFF_TICKS)
+            shown = selected.get("shown_production_options") or []
+            observed = {k: v for k, v in observed.items() if k in shown}
+            _remember_defer(map_state, snapshot, action, observed)
         return {"applied": False, "reason": "laya_deferred_production"}
 
     context = snapshot.get("development", {}).get("production", {})

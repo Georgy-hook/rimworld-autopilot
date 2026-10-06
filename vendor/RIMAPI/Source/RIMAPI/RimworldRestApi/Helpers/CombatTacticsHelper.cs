@@ -56,6 +56,8 @@ namespace RIMAPI.Helpers
                         .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
+                if (target != null && MentalSafetyHelper.Allied(target) && !MentalSafetyHelper.ActiveAlliedAggressor(target))
+                    return ApiResult<CombatTacticResponseDto>.Fail("Allied target is no longer an active mental threat; no fighters drafted.");
                 if (target == null && tactic != "psycast_support" && tactic != "psycast_control")
                     return ApiResult<CombatTacticResponseDto>.Fail("No living active hostile target remains; no fighters drafted.");
                 int retreatPathAttempts = 0; // Shared by every selected fighter in this order.
@@ -126,7 +128,7 @@ namespace RIMAPI.Helpers
                             }
                             Job attack = JobMaker.MakeJob(JobDefOf.AttackMelee, closeThreat);
                             attack.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(attack))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,attack))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
@@ -207,7 +209,7 @@ namespace RIMAPI.Helpers
                         }
                         Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                         shot.playerForced = true;
-                        if (pawn.jobs.TryTakeOrderedJob(shot)) result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                        if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot)) result.AttackingPawnIds.Add(pawn.thingIDNumber);
                     }
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
@@ -230,7 +232,7 @@ namespace RIMAPI.Helpers
                         {
                             Job attack = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                             attack.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(attack))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,attack))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             else
                             {
@@ -310,7 +312,7 @@ namespace RIMAPI.Helpers
                                 }
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(shot))
+                                if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                     result.AttackingPawnIds.Add(pawn.thingIDNumber);
                                 continue;
                             }
@@ -377,7 +379,7 @@ namespace RIMAPI.Helpers
                             }
                             Job attack = JobMaker.MakeJob(JobDefOf.AttackMelee, intercept);
                             attack.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(attack))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,attack))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
@@ -435,7 +437,7 @@ namespace RIMAPI.Helpers
                             }
                             Job attack = JobMaker.MakeJob(JobDefOf.AttackMelee, target);
                             attack.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(attack))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,attack))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
@@ -449,7 +451,7 @@ namespace RIMAPI.Helpers
                             }
                             Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                             shot.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(shot))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
@@ -509,7 +511,7 @@ namespace RIMAPI.Helpers
                             {
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(shot))
+                                if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                     result.AttackingPawnIds.Add(pawn.thingIDNumber);
                                 continue;
                             }
@@ -569,7 +571,7 @@ namespace RIMAPI.Helpers
                                 }
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(shot))
+                                if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                     result.AttackingPawnIds.Add(pawn.thingIDNumber);
                                 continue;
                             }
@@ -625,7 +627,7 @@ namespace RIMAPI.Helpers
                             // shoots while the covering group attacks separately.
                             Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                             shot.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(shot))
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
@@ -636,7 +638,7 @@ namespace RIMAPI.Helpers
                             {
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(shot))
+                                if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
                                     result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             }
                             else
@@ -700,7 +702,7 @@ namespace RIMAPI.Helpers
                     JobDef jobDef = ranged ? JobDefOf.AttackStatic : JobDefOf.AttackMelee;
                     Job attack = JobMaker.MakeJob(jobDef, target);
                     attack.playerForced = true;
-                    if (pawn.jobs.TryTakeOrderedJob(attack))
+                    if (MentalSafetyHelper.TakeDefenceOrder(pawn,attack))
                         result.AttackingPawnIds.Add(pawn.thingIDNumber);
                 }
                 return ApiResult<CombatTacticResponseDto>.Ok(result);

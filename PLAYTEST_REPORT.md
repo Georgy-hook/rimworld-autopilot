@@ -512,3 +512,45 @@ The short continuation does not establish sustainable food or a completed
 ending. Positive live unmade-award selection, loading NullReferenceException
 duplicates and redundant hazard-guard logging remain separate verification
 items. [Causal report](docs/audits/growth-dialog-pause-2026-10-06.md).
+
+## Theentbum: final defeat after growth-modal recovery — 2026-10-06
+
+Native Game Over arrived at tick 2771391. The observer stopped at 11:48:46 UTC
+and the director completed at 11:48:46.607, paused tick 2771459, population 0,
+caravans 0, no victory. All four final residents died: the child was beaten to
+death at 2623288; the adult with go-juice dependency died of BloodLoss at 2633482;
+the remaining female founder and last caregiver died of Malnutrition at 2721806
+and 2770992. Native letters and the final saved XML confirm these causes.
+
+Installed source dd80168/package ba80742 had resumed this same colony at
+11:00:12.222, tick 2571161. The last segment lasted 48m34s and advanced 200230
+ticks to Game Over, about 3.337 game days. Technical pauses/replays and the
+earlier discarded child-starvation branches are excluded. The successful
+growth-window acknowledgement did not establish survival; no repeat of that
+modal stall explains the terminal losses.
+
+Starvation triggered an allied Berserk letter; combat orders targeted that
+ally. Accepted tending did not prevent his blood-loss death. The last
+caregiver became catatonic from recreation deprivation, and both remaining
+patients starved. Repeated production deferrals and unavailable-fighter waits,
+empty cooking/cooling fuel, scarce prepared meals and final exposed beds are
+recorded as follow-up findings rather than a proved single root cause.
+Research barely advanced and no sale was recorded; 90 silver was a caravan gift.
+
+The prior autosave 2751140 was retained separately; the final 2771459 save was
+verified on disk at 12:04:54.955 UTC. Logs/memory are preserved privately.
+Hourly automation is paused, all Laya/observer/monitor workers are stopped,
+and RimWorld remains on the final pause. No code changes or new run were made
+for this documentation request. [Final report](docs/playtests/Theentbum-2026-10-06.md).
+
+The full retained history contains about 3h56m of elapsed autonomous phases
+over 5–6 October; 48m34s is only the last segment. Total progression from
+baseline tick 40 was 46.189 game days, including technical loading ticks.
+[Duration history](docs/playtests/Colony-lifetimes-2026-10-06.md) qualifies the
+phase boundaries and distinguishes discarded branches.
+
+The subsequent user request authorized offline repairs and 0.0.7 preparation.
+Confirmed production cooldown, kitchen footprint, allied Berserk/care and
+clinical prompt defects were corrected; 1174 tests and native compilation pass.
+These changes were not played in the ended colony or a new one. See
+[0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md).

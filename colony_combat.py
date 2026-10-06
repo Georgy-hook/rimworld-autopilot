@@ -58,10 +58,10 @@ def protected_response_ids(snapshot: dict[str, Any]) -> set[int]:
         if not isinstance(plan,dict) or plan.get('kind') not in ('evacuate','arrest','rescue'):continue
         actor=people.get(plan.get('actor_id')) or {};rage=people.get(plan.get('aggressor_id')) or {}
         if (actor.get('is_dead') or actor.get('is_downed') or actor.get('is_in_mental_state')
-            or not actor.get('id') or rage.get('mental_state_def')!='MurderousRage'
+            or not actor.get('id') or rage.get('mental_state_def') not in {'MurderousRage','Berserk'}
             or not rage.get('is_in_mental_state') or not plan.get('session')
             or rage.get('mental_state_session')!=plan['session']
-            or rage.get('mental_state_target_id')!=plan.get('victim_id')):continue
+            or (rage.get('mental_state_def')=='MurderousRage' and rage.get('mental_state_target_id')!=plan.get('victim_id'))):continue
         if plan['kind']=='evacuate':
             cell=actor.get('current_job_cell') or {};wanted=plan.get('cell') or {}
             exact=actor.get('current_job')=='Goto' and all(k in cell and k in wanted and cell[k]==wanted[k] for k in ('x','z'))
