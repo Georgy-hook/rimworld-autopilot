@@ -12415,6 +12415,8 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     def actionable_window(row: dict[str, Any]) -> bool:
         window_type = str(row.get("window_type") or "")
         return (((window_type.startswith("Dialog_NodeTree") or window_type in {"Dialog_MessageBox", "FloatMenu"}) and bool(row.get("enabled_options")))
+                or (window_type == "Dialog_GrowthMomentChoices" and row.get("confirmation_only") is True
+                    and row.get("window_id") is not None and len(row.get("enabled_options") or []) == 1)
                 or (window_type.startswith("Dialog_NamePlayer") and bool(row.get("suggested_names"))))
 
     # RimWorld draws newer dialogs above older ones. Match the visible top
@@ -12424,6 +12426,7 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     if dialogue is None:
         return None
     naming = str(dialogue.get("window_type") or "").startswith("Dialog_NamePlayer")
+    growth_ack = dialogue.get("window_type") == "Dialog_GrowthMomentChoices" and dialogue.get("confirmation_only") is True
     options = list(dict.fromkeys(str(label) for label in
                                   dialogue["suggested_names" if naming else "enabled_options"] if label))
     if not options:
@@ -12431,6 +12434,8 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     map_state = (map_state_for_snapshot(state, snapshot) if snapshot.get("map", {}).get("id") is not None
                  else state.setdefault("native_session", {}))
     key = "|".join([str(dialogue.get("window_type")), str(dialogue.get("dialog_text") or "")[:120], *options])
+    if growth_ack:
+        key += "|" + str(dialogue["window_id"])
     if time.time() < float((map_state.get("deferred_dialogs") or {}).get(key) or 0):
         return None
     criteria = {f"option_{index}": label for index, label in enumerate(options)}
@@ -12459,10 +12464,18 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
         } for key, label in criteria.items()}
         model_state["decision_facts"] = {"downed": model_state["downed"], "threats": model_state["threats"],
                                          "population": model_state["population"]}
-    selected, raw = ask_laya_choice(agent, model_state, "live_dialogue",
-        ("Choose a name for the colony/faction from game-generated suggestions."
-         if naming else
-         "Choose a visible RimWorld dialogue option after weighing colony population, survival and any quest risk."), criteria)
+        if growth_ack:
+            model_state["option_effects"] = {key: {
+                "benefit": "Acknowledge the completed growth information and release its forced pause.",
+                "risk": "Existing traits and passions remain unchanged; no unmade award is selected.",
+                "cost": "No resources or work assignment.",
+                "inaction": "This informational modal holds the colony on pause.",
+                "uncertainty": "Native readiness and exact window identity are checked again before OK."
+            } for key in criteria}
+    instructions = ("Choose a name for the colony/faction from game-generated suggestions." if naming else
+                    "Acknowledge a native informational growth window with its displayed OK; awards requiring choices are handled separately." if growth_ack else
+                    "Choose a visible RimWorld dialogue option after weighing colony population, survival and any quest risk.")
+    selected, raw = ask_laya_choice(agent, model_state, "live_dialogue", instructions, criteria)
     if selected == "defer":
         map_state.setdefault("deferred_dialogs", {})[key] = time.time() + 60
         result = {"applied": False, "reason": "Laya deferred the dialogue for 60 seconds"}
@@ -12477,6 +12490,15 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
         try:
             result = client.post("/api/v1/ui/window/name" if naming else "/api/v1/ui/window/choose",
                                  body=body)
+            if growth_ack:
+                remaining = client.get("/api/v1/ui/windows")
+                gone = isinstance(remaining, list) and not any(
+                    row.get("window_id") == dialogue["window_id"] for row in remaining)
+                if not gone:
+                    map_state.setdefault("deferred_dialogs", {})[key] = time.time() + 60
+                result = {"applied": gone, "completion": "window_closed" if gone else "unverified",
+                          "reason": "growth_information_acknowledged" if gone else "growth_window_closure_unverified",
+                          "response": result}
         except bridge.RimApiError as exc:
             map_state.setdefault("deferred_dialogs", {})[key] = time.time() + 60
             result = {"applied": False, "error": str(exc),

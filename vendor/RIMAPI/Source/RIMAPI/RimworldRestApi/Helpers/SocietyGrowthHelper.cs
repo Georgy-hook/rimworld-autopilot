@@ -6,6 +6,7 @@ using RimWorld;
 using Verse;
 using RIMAPI.Core;
 using RIMAPI.Models;
+using HarmonyLib;
 namespace RIMAPI.Helpers
 {
     public static class SocietyGrowthHelper
@@ -51,7 +52,13 @@ namespace RIMAPI.Helpers
                 else if(request.TraitIndex>=0 && letter.traitChoices!=null && request.TraitIndex<letter.traitChoices.Count)trait=letter.traitChoices[request.TraitIndex];
                 else if(letter.traitChoices?.Count>0 || (letter.traitChoiceCount>0 && letter.traitChoices==null))
                 {result.Reason="trait_choice_no_longer_valid";return ApiResult<CapabilityOrderResultDto>.Ok(result);}
-                letter.MakeChoices(skills,trait);Find.LetterStack.RemoveLetter(letter);result.Applied=true;result.Reason="native_growth_choices_applied";
+                letter.MakeChoices(skills,trait);
+                // A real choice can originate from the visible growth dialog.
+                // Close only this letter's now-resolved window; retain others.
+                foreach (var window in Find.WindowStack.Windows.OfType<Dialog_GrowthMomentChoices>()
+                    .Where(w => Traverse.Create(w).Field("letter").GetValue<ChoiceLetter_GrowthMoment>() == letter).ToList())
+                    window.Close();
+                Find.LetterStack.RemoveLetter(letter);result.Applied=true;result.Reason="native_growth_choices_applied";
             }
             return ApiResult<CapabilityOrderResultDto>.Ok(result);
         }

@@ -25,6 +25,7 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Resolved growth modal and forced pause, 2026-10-06](audits/growth-dialog-pause-2026-10-06.md)
 - [Starvation care prerequisites, scoped yielding and nutrition context, 2026-10-06](audits/starvation-care-yield-2026-10-06.md)
 
 - [Worker-choice stall, food context and utility repairs, 2026-10-05](audits/worker-food-utility-recovery-2026-10-05.md)

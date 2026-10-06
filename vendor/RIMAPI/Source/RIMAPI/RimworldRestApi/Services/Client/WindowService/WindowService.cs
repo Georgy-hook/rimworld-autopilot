@@ -22,6 +22,21 @@ namespace RIMAPI.Services
         private readonly ConditionalWeakTable<Window, List<NameCandidate>> _nameCandidates =
             new ConditionalWeakTable<Window, List<NameCandidate>>();
 
+        private static ChoiceLetter_GrowthMoment InformationalGrowthLetter(Window window)
+        {
+            if (!(window is Dialog_GrowthMomentChoices)) return null;
+            var view = Traverse.Create(window);
+            var letter = view.Field("letter").GetValue<ChoiceLetter_GrowthMoment>();
+            if (letter == null || (!letter.ArchiveView && (letter.passionGainsCount != 0
+                || letter.traitChoiceCount != 0 || letter.ShowInfoTabs))) return null;
+            // Mirror the installed 1.6 OK button. Unmade growth choices are
+            // handled by SocietyGrowthHelper, never by a generic close.
+            return view.Method("CanClose").GetValue<AcceptanceReport>().Accepted ? letter : null;
+        }
+
+        private static string GrowthDialogText(Window window)
+            => Traverse.Create(window).Field("text").GetValue<TaggedString>().Resolve();
+
         private static List<NameCandidate> BuildNameCandidates(Window window)
         {
             var view = Traverse.Create(window);
@@ -88,6 +103,12 @@ namespace RIMAPI.Services
                                 .Where(option => !option.Disabled && option.action != null).Select(option => option.Label).ToList()
                                 ?? new List<string>();
                         }
+                        if (w is Dialog_GrowthMomentChoices)
+                        {
+                            row.DialogText = GrowthDialogText(w);
+                            row.ConfirmationOnly = InformationalGrowthLetter(w) != null;
+                            if (row.ConfirmationOnly) row.EnabledOptions.Add("OK".Translate().ToString());
+                        }
                         list.Add(row);
                     }
                 }
@@ -114,6 +135,20 @@ namespace RIMAPI.Services
                 if (top == null || top.GetType().Name != request.WindowType
                     || (request.WindowId.HasValue && request.WindowId != RuntimeHelpers.GetHashCode(top)))
                     return ApiResult.Fail("The requested window is no longer the active window.");
+                if (top is Dialog_GrowthMomentChoices)
+                {
+                    var letter = InformationalGrowthLetter(top);
+                    if (!request.WindowId.HasValue || letter == null
+                        || request.DialogText != GrowthDialogText(top)
+                        || request.OptionLabel != "OK".Translate().ToString())
+                        return ApiResult.Fail("Growth acknowledgement changed or still requires award choices.");
+                    // The same callback as DoWindowContents: ArchiveView makes
+                    // MakeChoices a no-op; a no-award letter uses empty choices.
+                    letter.MakeChoices(new List<SkillDef>(), null);
+                    top.Close();
+                    Find.LetterStack.RemoveLetter(letter);
+                    return ApiResult.Ok();
+                }
                 if (top is Dialog_MessageBox message)
                 {
                     if (request.DialogText != message.text.ToString())
@@ -219,6 +254,7 @@ namespace RIMAPI.Services
                 var toClose = windowStack.Windows
                     .Where(w =>
                     {
+                        if (w is Dialog_GrowthMomentChoices) return false;
                         var typeName = w.GetType().Name;
                         if (byType)
                         {

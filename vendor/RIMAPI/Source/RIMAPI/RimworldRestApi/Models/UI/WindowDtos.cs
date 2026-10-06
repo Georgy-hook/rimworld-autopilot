@@ -53,6 +53,7 @@ namespace RIMAPI.Models
         public string WindowType { get; set; }
         public bool ForcePause { get; set; }
         public bool BlocksInput { get; set; }
+        public bool ConfirmationOnly { get; set; }
         public string DialogText { get; set; }
         public List<string> EnabledOptions { get; set; } = new List<string>();
         public List<string> SuggestedNames { get; set; } = new List<string>();
