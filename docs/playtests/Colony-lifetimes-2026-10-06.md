@@ -18,6 +18,7 @@ Dates use Moscow time. Run labels below are anonymized; they do not expose playe
 | 3 Oct | R03-B | Autonomous segment 48m44s | 15.453 | Blood loss, disease and kidnapping |
 | 3–5 Oct | R05-A | Unknown; three technical continuations | 2.49 from reboot checkpoint | Suspended technical run, all alive |
 | 5–6 Oct | R06-A | ≈3h56m retained autonomous phases; final segment 48m34s | 46.189 total progression; 3.337 final segment | Beating, blood loss and malnutrition |
+| 6 Oct | R06-B | Published 0.0.7, one generation, ≈39m44s to native Game Over detection | 5.141 | Three blood-loss deaths; emergency survivor infection |
 
 R06-A lasted about **3h56m across seven retained autonomous phases** before
 definitive defeat. The final 48m34s is only its last continuation. Metadata gives
@@ -35,6 +36,18 @@ Unrecorded shorter delays inside phases were not subtracted. These figures
 measure retained autonomous elapsed phases, not continuous productive execution.
 
 Death evidence is graded separately from outcome. A lethal health severity in a save supports an inference; it is not a native death-cause letter.
+
+R06-B began at 13:16:44.651655 UTC, baseline 25, and ended at Game Over 308496,
+detected 13:56:28 UTC. All four causes are confirmed by native death letters:
+three founders BloodLoss, emergency survivor WoundInfection. One founder had
+megaspider wounds, the other two rat-teeth wounds. The prior disk save 300000
+does not contain the last death; native live evidence, letters and director
+memory establish defeat. [Outcome report](Release-007-2026-10-06.md).
+
+Subsequently the user requested closure and offline repairs. Terminal XML 308589
+was saved at 15:10:53 UTC and RimWorld exited at 15:10:55 UTC. This replaces the older
+save as the latest retained checkpoint; it does not extend the colony's 39m44s
+autonomous lifetime. No new colony was started.
 
 - R14: one founder died in a discarded blocked-path branch; exact cause unverified. The completed replay retained all three.
 - R29-A: two founders died after insect injuries; exact causes unknown.

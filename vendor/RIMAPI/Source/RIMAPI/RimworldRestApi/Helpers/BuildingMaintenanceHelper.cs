@@ -32,12 +32,16 @@ namespace RIMAPI.Helpers
                 else if (fuel.IsFull)
                     result.Reason = "already_fueled";
                 else if (worker.CurJobDef == JobDefOf.Refuel && worker.CurJob.targetA.Thing == building)
-                    result.Reason = "refueling_in_progress";
+                { result.Reason = "refueling_in_progress"; result.InProgress = true; }
                 else
                 {
+                    if (!ResilienceAutomationHelper.RoutineRouteSafe(worker, building))
+                    { result.Reason = "unsafe_facility_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
                     var scanner = DefDatabase<WorkGiverDef>.GetNamedSilentFail("Refuel")?.Worker as WorkGiver_Scanner;
                     Job job = scanner != null && scanner.HasJobOnThing(worker, building, true)
                         ? scanner.JobOnThing(worker, building, true) : null;
+                    if (job?.targetB.Thing is Thing stock && !ResilienceAutomationHelper.RoutineRouteSafe(worker, stock))
+                    { result.Reason = "unsafe_fuel_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
                     result.Applied = job != null && worker.jobs.TryTakeOrderedJob(job);
                     result.Reason = result.Applied ? "refuel_job_assigned" : "fuel_unavailable_or_building_reserved";
                 }

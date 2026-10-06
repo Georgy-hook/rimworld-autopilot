@@ -44,16 +44,16 @@ class CombatModuleTests(unittest.TestCase):
         self.assertIn('withdraw_and_regroup',tactics)
         self.assertIn('backstep_fire',tactics)
         self.assertNotIn('hold_cover',tactics)
-    def test_zero_contact_does_not_protect_tending_worker(self):
+    def test_zero_contact_requires_explicit_care_suspension_not_a_group_draft(self):
         s=self.snapshot(current_job='TendPatient',current_job_target_id=3)
         s['combat']['colonists'].append(self.pawn(id=3,tendable_now=True,is_downed=True))
-        self.assertEqual(set(),c.protected_emergency_care_ids(s))
+        self.assertEqual({1},c.protected_emergency_care_ids(s))
         s['combat']['colonists'][0]['distance_to_nearest_opponent']=10
         self.assertEqual({1},c.protected_emergency_care_ids(s))
-    def test_unknown_distance_cannot_protect_medic(self):
+    def test_unknown_distance_cannot_authorize_care_cancellation(self):
         s=self.snapshot(current_job='TendPatient',current_job_target_id=3,distance_to_nearest_opponent=None)
         s['combat']['colonists'].append(self.pawn(id=3,tendable_now=True,is_downed=True))
-        self.assertEqual(set(),c.protected_emergency_care_ids(s))
+        self.assertEqual({1},c.protected_emergency_care_ids(s))
     def test_rescue_and_feed_downed_nonbleeding_patient_are_protected(self):
         for job in ['Rescue', 'FeedPatient']:
             s=self.snapshot(current_job=job,current_job_target_id=3,distance_to_nearest_opponent=20)

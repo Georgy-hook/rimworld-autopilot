@@ -552,5 +552,78 @@ phase boundaries and distinguishes discarded branches.
 The subsequent user request authorized offline repairs and 0.0.7 preparation.
 Confirmed production cooldown, kitchen footprint, allied Berserk/care and
 clinical prompt defects were corrected; 1174 tests and native compilation pass.
-These changes were not played in the ended colony or a new one. See
-[0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md).
+At that preparation checkpoint these changes had not yet been played in the
+ended colony or a new one. See [0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md).
+
+## Published 0.0.7: new random colony ended before first hourly review — 2026-10-06
+
+The separate run on tile 119304 used source f6786a2/package 5dc1168. One generation,
+Cassandra/Medium/permadeath; autonomy began 13:16:44 UTC at tick 25. Native Game Over
+arrived at 308496 and was detected 13:56:28 UTC: approximately 39m44s, 5.141 game days.
+Population 0, caravans 0, victory=false; the final pause is 308589. Director,
+observer and read-only monitor exited without manual process termination.
+
+Native letters confirm three founder deaths from BloodLoss and the emergency
+man-in-black death from WoundInfection. The sole fighter first had megaspider
+wounds; the two pacifist founders later acquired rat-teeth wounds. The survivor
+stopped his own bleeding, ate and rested, but right-leg infection 0.996 exceeded
+immunity 0.6527 before death. Treatment quality was initially 9.8%, later 24.5%.
+
+Remaining findings include tending/retreat alternation for the same caregivers,
+nine redundant self-tend HTTP 500s while care was already running, 44 medical
+policy deferrals and 10 rest choices returning exact_care_job_in_progress. These
+are observed competing/repeated orders; their individual causal contributions
+need separate investigation. Initial shelter and some food/recreation facilities
+were actually completed. No research or sale was recorded; final campfire fuel 0
+despite 161 accessible wood. The bounded tail contains 451 decision records;
+the full decisions log was not read.
+
+The first hourly review after 14:22 UTC confirmed the already ended run. The last
+disk save 300000 predates the terminal death; live evidence, letters and memory
+verify the outcome. One pre-autonomy NRE remained unchanged in Player.log.
+Hourly automation is paused. No fixes, replay, new colony or memory reset were
+performed during observation. [Detailed outcome](docs/playtests/Release-007-2026-10-06.md).
+
+## Authorized offline repairs after the release run — 2026-10-06
+
+At the user's request the terminal state was saved and actual disk XML tick
+308589 verified at 15:10:53 UTC. RimWorld quit normally; process exit was
+verified at 15:10:55 UTC. The hourly automation remains paused. This later
+technical save is separate from the hourly review's older save at 300000.
+
+The care/retreat conflict was reproduced offline: generic protection previously
+disappeared at contact or on exposed travel. Clinical tending, feeding and rescue
+now retain ownership in Python, native group tactics and the draft/attack APIs.
+An exact `caregiver_retreat` choice lets Laya explicitly weigh abandoning one
+patient against an immediate pawn/turret threat. Native POST rechecks the actor,
+job, patient, carried pawn and escape route before replacing care. Group orders
+cannot implicitly make that decision. The accepted exact escape retains its
+actor until that native Job finishes; another doctor can still help the patient.
+Rejected identical escape routes are bounded by native retry memory.
+
+Redundant self-tend proposals are suppressed while the actor already provides
+care; repeated native tending of the same patient preserves the current job.
+Medicine inability is distinguished from a disabled automatic Doctor priority.
+The 44 medical-policy deferrals were ceiling choices, not refusals to perform
+treatment: the last survivor already permitted Best medicine. Proposals now
+require an actual stock-access improvement or a genuine scarcity tradeoff.
+Native context includes permissions/potency/quality limits for stocked
+medicines and actual infection immunity/tend facts. Medical defer memory ignores
+unrelated hunger changes and spans both 120 real seconds and 30000 game ticks,
+unless a meaningful clinical or supply change occurs.
+
+The repeated rest requests found an already observed LayDown. The previous
+validation returned early without configuring recovery priorities; now the
+selected priorities are set once while that exact rest job continues. Urgent
+temperature maintenance can also be offered to a sick but mobile survivor,
+with recovery cost stated explicitly and active clinical care still protected.
+Rejected refueling no longer creates an issued marker, observed ongoing
+refueling is not reoffered, and the native facility/fuel routes are checked.
+
+Verification: **1204 Python tests passed**, including 30 added regressions/source
+contracts; four prior protection expectations were updated to require an
+explicit care suspension. Release-1.6 compilation: **0 warnings, 0 errors**.
+Offline inventory: **308 routes**, no missing literal calls or duplicate routes.
+No game, autonomous director, colony, rollback or memory reset was launched for
+these repairs. Native job completion, escape success and future survival remain
+gameplay checks. [Repair details](docs/playtests/Release-007-offline-fixes-2026-10-06.md).

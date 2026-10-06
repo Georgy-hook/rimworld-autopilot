@@ -71,6 +71,7 @@ namespace RIMAPI.Services
                     NativeOptions = CombatNativeHelper.Options(map),
                     HostileBuildings = map.listerBuildings.allBuildingsNonColonist.Where(b=>!b.Destroyed && b.HostileTo(Faction.OfPlayer) && !b.Position.Fogged(map)).Select(b=>(object)new{id=b.thingIDNumber,name=b.LabelShort,kind_def=b.def.defName,is_building=true,is_turret=b is Building_Turret,active_threat=CombatNativeHelper.ActiveStructure(b),dormant=!(b.TryGetComp<CompCanBeDormant>()?.Awake ?? true),position=new PositionDto{X=b.Position.x,Y=b.Position.y,Z=b.Position.z},powered=b.TryGetComp<CompPowerTrader>()?.PowerOn ?? true,weapon_range=(b as Building_Turret)?.AttackVerb?.EffectiveRange ?? 0f,hit_points_percent=(float)b.HitPoints/b.MaxHitPoints}).ToList(),
                     GameTick = Find.TickManager?.TicksGame ?? 0,
+                    CareRetreatPawnIds = CombatNativeHelper.CareRetreatPawnIds(map),
                     Colonists = colonists.Select(p => ToCombatPawn(p, false, hostiles)).ToList(),
                     Hostiles = hostiles.Select(p => ToCombatPawn(p, true, colonists)).ToList(),
                     Prisoners = prisoners.Select(p => ToCombatPawn(p, false, colonists)).ToList(),

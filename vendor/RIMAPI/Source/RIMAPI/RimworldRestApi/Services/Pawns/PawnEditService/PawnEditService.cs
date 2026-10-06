@@ -242,6 +242,11 @@ namespace RIMAPI.Services
             {
                 Pawn pawn = GetPawn(request.PawnId);
 
+                if (request.IsDrafted.HasValue && pawn.drafter != null
+                    && request.IsDrafted.Value != pawn.drafter.Drafted
+                    && (CombatNativeHelper.HasClinicalCareJob(pawn) || CombatNativeHelper.HasCareRetreat(pawn)))
+                    return ApiResult.Fail("Active patient care is owned; use an exact caregiver_retreat order to suspend it.");
+
                 if (request.Kill && !pawn.Dead) pawn.Kill(null);
                 if (request.Resurrect && pawn.Dead) ResurrectionUtility.TryResurrect(pawn);
 

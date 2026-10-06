@@ -7,10 +7,12 @@ CARE_JOBS = {"tendpatient", "rescue", "feedpatient"}
 
 def helpers(snapshot, patient_id, doctor=False):
     combat = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
+    retreating = bridge.combat_planner.protected_care_retreat_ids(snapshot)
     rows = []
     for pawn in snapshot.get("colonists") or []:
         live = combat.get(str(pawn.get("id"))) or {}
         if (str(pawn.get("id")) == str(patient_id) or pawn.get("downed") or pawn.get("dead")
+                or pawn.get("id") in retreating
                 or pawn.get("in_mental_state") or live.get("is_in_mental_state")
                 or pawn.get("is_drafted") or live.get("is_drafted")
                 or float((pawn.get("capacities") or {}).get("moving", 1)) <= 0
@@ -393,6 +395,10 @@ def validate_post_combat_plan(client, snapshot, plan, options_for):
     if (not actor or not patient or patient.get('is_dead') or actor.get('is_dead')
             or actor.get('is_downed') or actor.get('is_in_mental_state') or actor.get('is_drafted')):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_or_patient_changed'}, combat
+    if actor.get('id') in bridge.combat_planner.protected_care_retreat_ids({'combat': combat}):
+        return {'applied': False, 'assignment_accepted': False, 'job_observed': False,
+                'escape_job_observed': True, 'in_progress': True, 'completion': 'unverified',
+                'reason': 'care_escape_in_progress'}, combat
     if post_combat_job_observed(combat, plan):
         return {'applied': False, 'assignment_accepted': False, 'job_observed': True,
                 'in_progress': True, 'completion': 'unverified', 'reason': 'exact_care_job_in_progress'}, combat

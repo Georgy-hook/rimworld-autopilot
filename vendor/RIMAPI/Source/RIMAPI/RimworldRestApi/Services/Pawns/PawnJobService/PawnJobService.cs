@@ -98,6 +98,8 @@ namespace RIMAPI.Services
                 if (attackJob && target.Thing is Pawn alliedTarget && MentalSafetyHelper.Allied(alliedTarget)
                     && !MentalSafetyHelper.ActiveAlliedAggressor(alliedTarget))
                     return ApiResult.Fail("allied_attack_target_no_longer_active");
+                if (attackJob && (CombatNativeHelper.HasClinicalCareJob(pawn) || CombatNativeHelper.HasCareRetreat(pawn)))
+                    return ApiResult.Fail("attack_patient_care_owned; use exact caregiver_retreat to suspend care");
 
                 if (request.KillIncappedTarget)
                 {
@@ -267,6 +269,11 @@ namespace RIMAPI.Services
                     || !doctor.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
                     return ApiResult.Fail("Selected doctor is not currently controllable for treatment");
                 bool reassign = request.ReassignFromPatientId.HasValue;
+                // Repeating the exact assignment is readback, not a new job.
+                // Keep medicine pickup and tend progress, including self-tending.
+                if (!reassign && doctor.CurJobDef == JobDefOf.TendPatient
+                    && doctor.CurJob.targetA.Thing == patient)
+                    return ApiResult.Ok();
                 if (reassign)
                 {
                     Pawn oldPatient = doctor.CurJob?.targetA.Thing as Pawn;
@@ -282,8 +289,7 @@ namespace RIMAPI.Services
                         || rate <= 0f)
                         return ApiResult.Fail("Emergency reassignment requires the exact stable current tend patient and a different patient with active bleeding");
                 }
-                else if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
-                    || doctor.CurJobDef == JobDefOf.FeedPatient)
+                else if (CombatNativeHelper.HasClinicalCareJob(doctor) || CombatNativeHelper.HasCareRetreat(doctor))
                     return ApiResult.Fail("Selected doctor is already providing patient care");
                 if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))
                     return ApiResult.Fail("Selected doctor cannot reserve and reach the patient");
@@ -314,6 +320,8 @@ namespace RIMAPI.Services
 
                 if (!HealthAIUtility.ShouldSeekMedicalRest(patient))
                     return ApiResult.Fail("medical_rest_not_indicated");
+                if (CombatNativeHelper.HasClinicalCareJob(patient) || CombatNativeHelper.HasCareRetreat(patient))
+                    return ApiResult.Fail("patient_is_providing_care; recovery must wait for current care");
                 if (patient.CurJobDef == JobDefOf.Ingest)
                     return ApiResult.Fail("patient_is_eating");
 

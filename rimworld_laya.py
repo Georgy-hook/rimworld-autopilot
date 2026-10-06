@@ -46,6 +46,7 @@ COMBAT_CHOICES = {
     "focus_mechanoids",
     "focus_insects",
     "emergency_self_tend",
+    "caregiver_retreat",
     "release_trained_animals",
     "recall_combat_animals",
 }
@@ -935,7 +936,10 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             criteria["civilian_retreat"] = (
                 "Move mobile civilians, including pacifists, away from the threat instead of leaving them to sleep or haul nearby."
             )
-        drafted = any(pawn.get("is_drafted") for pawn in living_colonists)
+        drafted = any(pawn.get("is_drafted") and pawn.get("id") not in protected
+                      and not (pawn.get("current_job") == "Goto"
+                               and combat_planner.errand_exposed(snapshot, pawn.get("position")))
+                      for pawn in living_colonists)
         safe_ranged_pairs = [
             (pawn, weapon)
             for pawn in fighters
@@ -1049,15 +1053,16 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if not staging and any(first_number(pawn.get("distance_to_nearest_opponent"), 0) > 20
                                for pawn, _ in safe_ranged_pairs):
             criteria["equip_ranged_weapon"] = "Give suitable unarmed colonists nearby ranged weapons; they must survive the trip to pick them up."
-        if any(
-            pawn.get("tendable_now") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
-            and first_number(pawn.get("moving"), 1) >= 0.65
-            and first_number(pawn.get("distance_to_nearest_opponent"), 9999) > 4
-            for pawn in snapshot["combat"].get("colonists", [])
-        ):
+        if combat_planner.self_tend_candidates(snapshot):
             criteria["emergency_self_tend"] = (
                 "A mobile injured colonist may leave the firing line to self-tend. Close enemies can kill them "
                 "during treatment; staying may cause death from bleeding, while withdrawal reduces team firepower."
+            )
+        if combat_planner.native_tactical_options(snapshot, "caregiver_retreat"):
+            criteria["caregiver_retreat"] = (
+                "Explicitly suspend one doctor's current care to escape a verified immediate attacker. "
+                "The patient loses treatment, feeding or rescue; keeping care may instead cost the doctor. "
+                "Other caregivers retain their jobs."
             )
         if not criteria:
             criteria = {
@@ -1075,7 +1080,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             # A generic focus-fire order repositions out-of-range shooters
             # toward its target. At a passive hive that is an attack order,
             # even when the model's text says to hold cover.
-            allowed = {"civilian_retreat", "withdraw_and_regroup", "backstep_fire",
+            allowed = {"civilian_retreat", "caregiver_retreat", "withdraw_and_regroup", "backstep_fire",
                        "prepare_undrafted", "continue_safe_colony_work", "hold_and_observe",
                        "emergency_self_tend", "equip_ranged_weapon", "equip_melee_weapon",
                        "equip_emp_weapon", "recall_combat_animals"}
@@ -1086,7 +1091,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             # Legacy positioning/tactics resolve Pawn targets. Native weapon
             # commands explicitly support Thing targets such as active turrets.
             criteria = {key: value for key, value in criteria.items() if key in {
-                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure"}}
+                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}}
             criteria["hold_and_observe"] = "Keep current orders; the active hostile structure still threatens its area."
             criteria["continue_safe_colony_work"] = "Continue work outside verified turret exposure; leave the hostile structure intact."
         criteria = {key: value for key, value in criteria.items() if key not in snapshot.get("_combat_blocked_choices", [])}
@@ -1099,7 +1104,10 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 "criteria": criteria,
             }
         }
-    if any(bool(c.get("is_drafted")) for c in snapshot["combat"]["colonists"]):
+    retreating = combat_planner.protected_care_retreat_ids(snapshot)
+    if any(bool(c.get("is_drafted")) and not combat_planner.active_clinical_care(c)
+           and c.get("id") not in retreating
+           for c in snapshot["combat"]["colonists"]):
         return {
             "post_combat_action": {
                 "type": "choice",
@@ -1190,7 +1198,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
         choice = "keep_current_plan"
     if choice not in SAFE_WORK_TYPES and choice not in COMBAT_CHOICES and choice != "keep_current_plan":
         raise ValueError(f"Unsupported combat choice {choice!r}")
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
         rows = combat_planner.native_tactical_options(snapshot, choice)
         aliases = {f"n{i}": row for i, row in enumerate(rows.values())}
         criteria = {key: str(row.get("label") or key) for key, row in aliases.items()}
@@ -1201,7 +1209,9 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
                             "uncertainty": "Reassess changing range, health, ammunition and targets."}
         selected, native_raw = ask_laya_choice(agent, {"option_effects": effects,
             "decision_facts": {"tactic": choice, "hostiles": len(combat_planner.live_hostiles(snapshot))}},
-            "native_weapon_order", "Choose one verified actor, weapon and target with explicit costs and collateral risks, or defer.", criteria)
+            "native_weapon_order", ("Choose the exact caregiver whose existing care will be suspended. Compare danger to the doctor with loss of treatment, feeding or rescue for the patient, or defer."
+                                    if choice == "caregiver_retreat" else
+                                    "Choose one verified actor, weapon and target with explicit costs and collateral risks, or defer."), criteria)
         raw["native_weapon_order"] = native_raw
         return {"choice": "hold_and_observe" if selected == "defer" else choice, "confidence": confidence,
                 "reason": reason, "raw": raw, "native_plan": aliases.get(selected)}
@@ -1302,11 +1312,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
 
     medical_target_id = None
     if choice == "emergency_self_tend":
-        patients = [pawn for pawn in snapshot["combat"].get("colonists", [])
-                    if pawn.get("tendable_now") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
-                    and first_number(pawn.get("moving"), 1) >= 0.65
-                    and first_number(pawn.get("distance_to_nearest_opponent"), 9999) > 4
-                    ]
+        patients = combat_planner.self_tend_candidates(snapshot)
         if len(patients) > 1:
             medical_question = {"medical_target": {
                 "type": "choice",
@@ -1594,19 +1600,22 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             "engage_ranged", "engage_melee", "draft_best_defender", "preemptive_strike",
             "focus_mechanoids", "focus_insects", "equip_melee_weapon", "equip_emp_weapon",
         }
-    ) - {"stand_down", "withdraw_and_regroup", "civilian_retreat", "backstep_fire",
+    ) - {"stand_down", "withdraw_and_regroup", "civilian_retreat", "caregiver_retreat", "backstep_fire",
          "equip_melee_weapon", "equip_emp_weapon"}:
         return {"kind": "noop", "description": "Avoid advancing into a passive guarded hive"}
     resume_command = None
     if snapshot["map"]["enemies"] > 0 and snapshot["game"].get("is_paused"):
         resume_command = {"endpoint": "/api/v1/game/speed", "query": {"speed": 1}}
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
         selected = decision.get("native_plan")
         if not isinstance(selected, dict) or selected not in combat_planner.native_tactical_options(snapshot, choice).values():
             return {"kind": "noop", "description": "Native weapon/target choice changed; request a new decision"}
         body = {"map_id": snapshot["map"]["id"], "tactic": choice,
                 "fighter_ids": [selected["fighter_id"]], "target_pawn_id": selected["target_id"],
                 "defense_building_id": selected.get("defense_building_id", 0)}
+        if choice == "caregiver_retreat":
+            body.update(expected_current_job=selected["expected_current_job"],
+                        expected_care_patient_id=selected["expected_care_patient_id"])
         commands = [{"endpoint": "/api/v1/combat/tactic", "body": body}]
         if resume_command:
             commands.append(resume_command)
@@ -1643,6 +1652,9 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         if combat_planner.live_hostiles(snapshot):
             protected.clear()
         protected.update(combat_planner.protected_response_ids(snapshot))
+        protected.update(combat_planner.protected_care_retreat_ids(snapshot))
+        protected.update(c.get("id") for c in snapshot["combat"]["colonists"]
+                         if combat_planner.active_clinical_care(c))
         drafted = [c for c in snapshot["combat"]["colonists"]
                    if c.get("is_drafted") and c.get("id") not in protected]
         commands = [
@@ -1661,11 +1673,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
     if choice == "emergency_self_tend":
         patient_id = decision.get("medical_target_id")
-        patient = next((pawn for pawn in snapshot["combat"].get("colonists", [])
-                        if pawn.get("id") == patient_id and pawn.get("tendable_now")
-                        and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
-                        and first_number(pawn.get("moving"), 1) >= 0.65
-                        and first_number(pawn.get("distance_to_nearest_opponent"), 9999) > 4), None)
+        patient = next((pawn for pawn in combat_planner.self_tend_candidates(snapshot)
+                        if pawn.get("id") == patient_id), None)
         if patient is None:
             return {"kind": "noop", "description": "No mobile self-tend patient remains"}
         commands = []
@@ -1949,7 +1958,11 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             "commands": commands,
         }
     if choice == "prepare_undrafted":
-        drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")]
+        protected = combat_planner.protected_emergency_care_ids(snapshot)
+        drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")
+                   and c.get("id") not in protected
+                   and not (c.get("current_job") == "Goto"
+                            and combat_planner.errand_exposed(snapshot, c.get("position")))]
         if not drafted:
             return {"kind": "noop", "description": "No colonist remains drafted"}
         commands = [
@@ -2408,13 +2421,16 @@ def load_agent(model: str, device: str) -> Any:
 
 _COMBAT_RECOVERY_CHOICES = {'withdraw_and_regroup', 'civilian_retreat', 'emergency_self_tend', 'prepare_undrafted', 'hold_and_observe', 'stand_down'}
 
-_NATIVE_RETRY_TACTICS = {'emp_control', 'smoke_advance', 'mortar_reload', 'mortar_counterbattery', 'attack_structure'}
+_NATIVE_RETRY_TACTICS = {'emp_control', 'smoke_advance', 'mortar_reload', 'mortar_counterbattery', 'attack_structure', 'caregiver_retreat'}
 
 
 def _combat_attempt_identity(choice, body):
-    return json.dumps({'choice': choice, 'tactic': body.get('tactic'),
+    identity = {'choice': choice, 'tactic': body.get('tactic'),
         'target': body.get('target_pawn_id'), 'fighters': sorted(body.get('fighter_ids') or []),
-        'defense': body.get('defense_building_id', 0)}, sort_keys=True)
+        'defense': body.get('defense_building_id', 0)}
+    if body.get('tactic') == 'caregiver_retreat':
+        identity.update(care_job=body.get('expected_current_job'), patient=body.get('expected_care_patient_id'))
+    return json.dumps(identity, sort_keys=True)
 
 
 def _combat_retry_prepare(snapshot, memory, signature):
@@ -2439,7 +2455,9 @@ def _combat_retry_prepare(snapshot, memory, signature):
     for option in native:
         identity = _combat_attempt_identity(option.get('tactic'), {'tactic': option.get('tactic'),
             'target_pawn_id': option.get('target_id'), 'fighter_ids': [option.get('fighter_id')],
-            'defense_building_id': option.get('defense_building_id', 0)})
+            'defense_building_id': option.get('defense_building_id', 0),
+            'expected_current_job': option.get('expected_current_job'),
+            'expected_care_patient_id': option.get('expected_care_patient_id')})
         if not any(row.get('identity') == identity for row in active): filtered.append(option)
     snapshot.setdefault('combat', {})['native_options'] = filtered
     snapshot['_combat_blocked_attempts'] = active
@@ -2513,7 +2531,8 @@ def _combat_retry_record(memory, signature, decision, action, result):
 
 def protect_response_commands(snapshot: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
     """Keep native explicit actor lists scoped; empty lists never expand to all."""
-    protected=combat_planner.protected_response_ids(snapshot)
+    protected=(combat_planner.protected_response_ids(snapshot)
+               | combat_planner.protected_care_retreat_ids(snapshot))
     if not protected or action.get('kind')!='commands':return action
     commands=[]
     for original in action.get('commands') or []:

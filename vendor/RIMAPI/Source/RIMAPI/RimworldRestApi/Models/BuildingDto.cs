@@ -52,6 +52,7 @@ namespace RIMAPI.Models
     public class BuildingRefuelResultDto
     {
         public bool Applied { get; set; }
+        public bool InProgress { get; set; }
         public string Reason { get; set; }
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }

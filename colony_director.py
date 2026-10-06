@@ -5894,15 +5894,20 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         dev["heat_threat"]["empty_coolers"] = sum(
             row.get("def") == "PassiveCooler" and float(row.get("current_fuel") or 0) <= 0
             for row in fuel_buildings)
+    refueling = {str(p.get('current_job_target_id')) for p in snapshot.get('combat', {}).get('colonists') or []
+                 if p.get('current_job') == 'Refuel' and not p.get('is_dead') and not p.get('is_downed')}
     refuel_options = {
         str(row["id"]): row for row in fuel_buildings
         if row.get("id") is not None and row.get("current_fuel") is not None
+        and str(row['id']) not in refueling
         and float(row["current_fuel"]) < max(1, float(row.get("fuel_capacity") or 0) * 0.25)
         and int(item_counts.get(str(row.get("fuel_type") or "")) or 0) > 0
         and not bridge.combat_planner.errand_exposed(snapshot, row.get("position"))
         and not issued_recently(map_state, f"refuel:{row['id']}", tick, retry_ticks=3000)
     }
-    if refuel_options and worker_criteria(snapshot, "Hauling"):
+    refuel_options = {key: row for key, row in refuel_options.items()
+                      if refuel_worker_criteria(snapshot, {key: row})}
+    if refuel_options and refuel_worker_criteria(snapshot, refuel_options):
         details["refuel_options"] = refuel_options
         dev["refuel_options"] = refuel_options
         one_time.append("refuel_building")
@@ -6533,6 +6538,7 @@ def active_care_pawn_ids(snapshot: dict[str, Any], *, allow_thermal_yield: bool 
     result: set[str] = {str(pid) for pid in
                        (snapshot.get("development") or {}).get("wildlife_active_group_ids") or []}
     result.update(str(pid) for pid in (snapshot.get("development") or {}).get("mental_safety_active_ids") or [])
+    result.update(str(pid) for pid in bridge.combat_planner.protected_care_retreat_ids(snapshot))
     pawn_ids = {str(p.get("id")) for p in snapshot.get("colonists") or []}
     live = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
     for original in snapshot.get("colonists") or []:
@@ -6549,7 +6555,7 @@ def active_care_pawn_ids(snapshot: dict[str, Any], *, allow_thermal_yield: bool 
     return result
 
 
-def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]:
+def worker_criteria(snapshot: dict[str, Any], skill_name: str, *, allow_recovery: bool = False) -> dict[str, str]:
     result: dict[str, str] = {}
     work_def = next((row for row in (snapshot.get("development") or {}).get("work_types") or []
                      if isinstance(row, dict) and str(row.get("def_name") or row.get("name")) == skill_name), {})
@@ -6564,7 +6570,7 @@ def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]
         pawn = cold_shelter_worker_state(snapshot, original) if cold_building else original
         if eligible_cold is not None and str(pawn.get("id")) not in eligible_cold:
             continue
-        if pawn.get("downed") or pawn.get("in_mental_state") or bridge.active_recovery_diseases(pawn):
+        if pawn.get("downed") or pawn.get("in_mental_state") or (not allow_recovery and bridge.active_recovery_diseases(pawn)):
             continue
         work_name = "Hauling" if skill_name == "Hauling" else skill_name
         priority = (pawn.get("work_priorities") or {}).get(work_name)
@@ -6593,6 +6599,27 @@ def worker_criteria(snapshot: dict[str, Any], skill_name: str) -> dict[str, str]
             f"moving {caps.get('moving', 1)}, manipulation {caps.get('manipulation', 1)}, sight {caps.get('sight', 1)}; {conditions}"
         )
     return result
+
+
+def refuel_worker_criteria(snapshot: dict[str, Any], options: dict | None = None) -> dict[str, str]:
+    """Sick mobile workers may choose urgent temperature maintenance, not routine hauling.
+
+    Treatment, patient feeding and carrying still own their actors and patients.
+    This exposes the tradeoff to Laya instead of making an empty heater
+    impossible to refuel when the only mobile survivor is recovering.
+    """
+    dev = snapshot.get('development') or {}
+    options = options if options is not None else dev.get('refuel_options') or {}
+    thermal = bool(options) and bool(dev.get('cold_threat') or dev.get('heat_threat')) and all(
+        row.get('def') in {'Campfire', 'PassiveCooler'} and float(row.get('current_fuel') or 0) <= 0
+        for row in options.values())
+    eligible = worker_criteria(snapshot, 'Hauling', allow_recovery=thermal)
+    living = {str(p.get('id')): p for p in snapshot.get('combat', {}).get('colonists') or []}
+    people = {str(p.get('id')): p for p in snapshot.get('colonists') or []}
+    return {key: note + ('; interrupting recovery costs rest/immunity time; restoring temperature may benefit patients' if thermal else '')
+            for key, note in eligible.items() if not any(
+                {**people.get(key, {}), **living.get(key, {})}.get(k)
+                for k in ('dead', 'is_dead', 'downed', 'is_downed', 'is_drafted', 'in_mental_state', 'is_in_mental_state'))}
 
 
 def foraging_worker_criteria(snapshot: dict[str, Any]) -> dict[str, str]:
@@ -6753,8 +6780,9 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
                          f"fuel {row.get('current_fuel')}/{row.get('fuel_capacity')} {row.get('fuel_type')}"
                          for key, row in dev["refuel_options"].items()}}
         q["worker_pawn"] = {"type": "choice", "instructions":
-            "Choose one mobile hauler; preserve doctors actively tending, feeding or rescuing patients.",
-            "criteria": worker_criteria(snapshot, "Hauling")}
+            "Choose one mobile hauler; preserve doctors actively tending, feeding or rescuing patients. "
+            "A sick mobile worker may perform urgent temperature maintenance, at the cost of recovery time; compare that with continued cold or heat.",
+            "criteria": refuel_worker_criteria(snapshot)}
     elif action == "build_passive_cooler" and dev.get("cool_room_options"):
         q["cool_room"] = {
             "type": "choice",
@@ -9301,12 +9329,16 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         options = details.get("refuel_options") or {}
         target_id = str(details.get("refuel_target") or (next(iter(options)) if len(options) == 1 else ""))
         worker_id = str(details.get("worker_pawn") or "")
-        if target_id not in options or worker_id not in worker_criteria(snapshot, "Hauling"):
+        if target_id not in options or worker_id not in refuel_worker_criteria(snapshot, {target_id: options[target_id]}):
             return {"applied": False, "reason": "No verified facility and available hauler selected"}
         response = client.post("/api/v1/builder/refuel", body={
             "map_id": map_id, "building_id": int(target_id), "worker_pawn_id": int(worker_id)})
-        issued[f"refuel:{target_id}"] = tick
-        return {"applied": bool(response.get("applied")), "reason": response.get("reason"),
+        accepted = response.get("applied") is True
+        in_progress = response.get("in_progress") is True
+        if accepted or in_progress:
+            issued[f"refuel:{target_id}"] = tick
+        return {"applied": accepted, "assignment_accepted": accepted, "in_progress": in_progress,
+                "completion": "unverified", "reason": response.get("reason"),
                 "building": options[target_id].get("def"), "worker": int(worker_id), "response": response}
     if choice == "eat_available_meal":
         options = details.get("hungry_eater_options") or {}
@@ -11790,10 +11822,12 @@ def post_combat_care_options(snapshot: dict[str, Any],
         if str(pawn.get("current_job") or "").lower() == "tendpatient"
         and pawn.get("current_job_target_id") is not None
     }
+    retreating = bridge.combat_planner.protected_care_retreat_ids(snapshot)
     available_helpers = [pawn for pawn in colonists
                if not pawn.get("is_dead") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
                and str(pawn.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS
                and not pawn.get("is_drafted")
+               and pawn.get('id') not in retreating
                and bridge.first_number(pawn.get("moving"), 1) > 0
                and bridge.first_number(pawn.get("manipulation"), 1) > 0]
     doctors = [pawn for pawn in available_helpers if can_do_medicine(pawn)]
@@ -11942,6 +11976,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
         # doctor before blood loss finally downs them.
         can_self_tend = (
             not patient.get("is_downed") and not patient.get("is_in_mental_state")
+            and patient_id not in retreating
             and can_do_medicine(patient)
             and bridge.first_number(patient.get("moving"), 1) > 0.1
             and bridge.first_number(patient.get("manipulation"), 1) > 0.1
@@ -11969,7 +12004,8 @@ def post_combat_care_options(snapshot: dict[str, Any],
         patient_id = int(patient["id"])
         details = capabilities.get(patient_id) or {}
         if (patient.get("is_dead") or patient.get("is_downed") or patient.get("is_in_mental_state")
-                or patient_id in active_patients or not bridge.active_recovery_diseases(details)
+                or patient_id in active_patients or patient_id in retreating
+                or not bridge.active_recovery_diseases(details)
                 or details.get("should_seek_medical_rest") is False
                 or str(patient.get("current_job") or "").lower() in PROTECTED_CARE_JOBS | {"ingest"}):
             continue
@@ -12373,6 +12409,20 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                 client, snapshot, selected, lambda fresh: post_combat_care_options(fresh, buildings))
             if validation is not None:
                 result = validation
+                if selected.get("kind") == "rest" and validation.get("job_observed") is True:
+                    # The patient is already in this bed. Complete the selected
+                    # recovery policy without restarting LayDown; otherwise the
+                    # unchanged priorities reoffer the same rest choice forever.
+                    responses = [client.post("/api/v1/colonist/work-priority", body={
+                        "id": selected["patient_id"], "work": work, "priority": 1,
+                    }) for work in ("Patient", "PatientBedRest")]
+                    accepted = [bridge.command_acceptance({"endpoint": "/api/v1/colonist/work-priority"}, response)
+                                for response in responses]
+                    configured = all(value is True for value in accepted)
+                    result = {**validation, "applied": configured, "policy_configured": configured,
+                              "assignment_accepted": False, "priority_responses": responses,
+                              "outcome_unknown": any(value is None for value in accepted),
+                              "reason": "already_resting_priorities_configured" if configured else "rest_priority_configuration_unconfirmed"}
             else:
                 snapshot = {**snapshot, "combat": fresh_combat}
                 doctor = next((pawn for pawn in snapshot["combat"]["colonists"]
