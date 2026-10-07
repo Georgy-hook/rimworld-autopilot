@@ -10,6 +10,11 @@ namespace RIMAPI.Helpers
 {
     public static class CombatNativeHelper
     {
+        public static bool PredationIntent(bool dead, bool downed, string job, bool playerPrey) => !dead && !downed && job == "PredatorHunt" && playerPrey;
+        public static bool ActivePredation(Pawn pawn) => pawn != null && PredationIntent(pawn.Dead, pawn.Downed,
+            pawn.CurJobDef?.defName, pawn.CurJob?.targetA.Thing is Pawn prey && prey.Faction == Faction.OfPlayer);
+        public static bool IsPlayerThreat(Pawn pawn) => pawn != null
+            && (pawn.HostileTo(Faction.OfPlayer) || ActivePredation(pawn));
         private static readonly HashSet<string> Care=new HashSet<string>{"TendPatient","Rescue","FeedPatient","DoBill","Deathrest","Breastfeed","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafety","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessongiving","Lessonreceiving","PrisonerInterrogateIdentity"};
         private static readonly Dictionary<int, KeyValuePair<Pawn, Job>> CareRetreats = new Dictionary<int, KeyValuePair<Pawn, Job>>();
         public static void RememberCareRetreat(Pawn pawn, Job job) =>
@@ -30,7 +35,8 @@ namespace RIMAPI.Helpers
         public static bool ImmediateCareThreat(Pawn pawn, Thing enemy)
         {
             if (enemy == null || enemy.Destroyed || !enemy.Spawned || enemy.Map != pawn.Map
-                || !enemy.HostileTo(Faction.OfPlayer) || enemy.Position.Fogged(pawn.Map)) return false;
+                || !(enemy is Pawn threat ? IsPlayerThreat(threat) : enemy.HostileTo(Faction.OfPlayer))
+                || enemy.Position.Fogged(pawn.Map)) return false;
             if (enemy is Building_Turret turret)
                 return ActiveStructure(turret) && turret.AttackVerb.CanHitTarget(pawn);
             if (!(enemy is Pawn attacker) || attacker.Dead || attacker.Downed) return false;
@@ -66,7 +72,7 @@ namespace RIMAPI.Helpers
             if (HasClinicalCareJob(pawn) || HasCareRetreat(pawn)) return true;
             if (!HasCareJob(pawn)) return false;
             List<Pawn> threats = pawn.Map.mapPawns.AllPawnsSpawned
-                .Where(e => !e.Dead && !e.Downed && e.HostileTo(Faction.OfPlayer)).ToList();
+                .Where(e => !e.Dead && !e.Downed && IsPlayerThreat(e)).ToList();
             if (threats.Any(e => e.Position.InHorDistOf(pawn.Position, 4f))) return false;
             if (pawn.Map.listerBuildings.allBuildingsNonColonist.Any(b => ActiveStructure(b)
                 && b.Position.InHorDistOf(pawn.Position, 4f))) return false;
@@ -85,7 +91,7 @@ namespace RIMAPI.Helpers
         public static bool ActiveStructure(Thing thing) => thing is Building_Turret turret && !thing.Destroyed && thing.HostileTo(Faction.OfPlayer)
             && (thing.TryGetComp<CompCanBeDormant>()?.Awake ?? true) && (thing.TryGetComp<CompPowerTrader>()?.PowerOn ?? true)
             && (thing.TryGetComp<CompInitiatable>()?.Initiated ?? true) && turret.AttackVerb!=null;
-        private static IEnumerable<Thing> Targets(Map map) => map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer) && !p.Position.Fogged(map)).Cast<Thing>()
+        private static IEnumerable<Thing> Targets(Map map) => map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && IsPlayerThreat(p) && !p.Position.Fogged(map)).Cast<Thing>()
             .Concat(map.listerBuildings.allBuildingsNonColonist.Where(b=>!b.Destroyed && b.HostileTo(Faction.OfPlayer) && !b.Position.Fogged(map) && ActiveStructure(b)).Cast<Thing>());
         private static bool Fighter(Pawn pawn) => !pawn.Dead && !pawn.Downed && !pawn.InMentalState && !pawn.WorkTagIsDisabled(WorkTags.Violent) && !Protected(pawn);
         private static Dictionary<string,string> Effects(string benefit,string risk,string cost,string uncertainty)=>new Dictionary<string,string>{{"benefit",benefit},{"risk",risk},{"cost",cost},{"inaction","Hostile attacks/coverage persist; ordinary defense may suffice"},{"uncertainty",uncertainty}};

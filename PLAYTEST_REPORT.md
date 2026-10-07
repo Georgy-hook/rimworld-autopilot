@@ -899,3 +899,40 @@ Disk 2280000 / mtime09:36:59 UTC verified; services healthy, stderr0,
 Player.log still old3331bytes. Reports and comparison retained in private outputs.
 No full decision history read; each tail at most8MB/100records. Hourly ACTIVE,
 next10:23 UTC, expanded assessment now in the automation prompt.
+
+## Quest-review colony concluded by user; 0.0.8 corrections — 2026-10-07
+
+Single landing, 07:21:26–10:27:09 UTC, **3h05m43s**, 44.82 game days, no
+rollback or technical pause during autonomy. Founder A died of Scratch at
+1400386 (08:49:27 observation); Founder B died of Bruise at2004266
+(09:23:27 observation). Founder C was kidnapped at2109028: death unverified.
+The bonded dog died of Blood loss860978; the tamed rhinoceros was executed
+by cutting2040602 during a starvation-triggered Slaughterer break. A later
+arrival's Burn death2679614 is recorded separately, membership unverified.
+Original founders lost; final campaign nativeGameOver=false/victory=false:
+the man in black was alive/downed/catatonic/hunger0, and a fresh quest arrival
+was healthy and performing Rescue. User ended this run; do not fabricate a
+complete native defeat or attribute every loss to the same code defect.
+
+Final2689439: food0/medicine0, no surviving real beds/research bench/generator/
+stove. Sleeping spots outdoors, major fire visible in the final base screenshot,
+roof-collapse letters. Several raid letters, last late attack2580000, do not
+establish how many raids were repelled. Microelectronics77/3000, completed
+sales0. Initial shelter succeeded; sustainable food, permanent growth and a
+compatible ending plan did not. Full private report has named outcomes,
+screenshots, map coordinates, bounded decision samples and save evidence.
+
+Stopped the one director, observer and monitor, paused scheduled observation,
+verified XML2689439/mtime10:27:35UTC and campaign, copied final save, then closed
+RimWorld. Their last 'running' status files precede termination, not proof of
+continued processes. No new map was generated during the repairs.
+
+Recovery audit: [root causes and limits](docs/audits/roinor-recovery-2026-10-07.md).
+1235 tests,311 routes(no missing literal calls/duplicates), native build0warnings/
+0errors, six actual predator-intent boundary cases. Cached-model crop replay
+now selects human food for both option orders; startup replay exits equipment
+to hunting after two observed offline acknowledgments. Live completion remains
+unverified. Development continues as0.0.8; published0.0.7 advanced to stablemain
+anddeveloping without force. Obsolete merged branch names removed; historical
+clean checkouts preserved detached. Branch rename closed oldPR4, so a replacement
+candidate PR carries its continuation.

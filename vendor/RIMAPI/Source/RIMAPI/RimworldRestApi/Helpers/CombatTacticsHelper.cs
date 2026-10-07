@@ -34,7 +34,7 @@ namespace RIMAPI.Helpers
                 if(new[]{"emp_control","smoke_advance","mortar_counterbattery","mortar_reload","attack_structure"}.Contains(tactic))return ApiResult<CombatTacticResponseDto>.Ok(CombatNativeHelper.Apply(map,request));
                 if (tactic == "stand_down")
                 {
-                    if (map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                    if (map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         || map.listerBuildings.allBuildingsNonColonist.Any(CombatNativeHelper.ActiveStructure))
                         return ApiResult<CombatTacticResponseDto>.Fail("Hostiles remain; stand down no longer feasible.");
                     foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.drafter?.Drafted == true
@@ -53,9 +53,9 @@ namespace RIMAPI.Helpers
                 if (fighters.Count == 0)
                     return ApiResult<CombatTacticResponseDto>.Fail("No selected healthy fighter is available on this map.");
                 Pawn target = request.TargetPawnId.HasValue
-                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                     : map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
                 if (target != null && MentalSafetyHelper.Allied(target) && !MentalSafetyHelper.ActiveAlliedAggressor(target))
@@ -113,7 +113,7 @@ namespace RIMAPI.Helpers
                 if (tactic == "melee_hold_line")
                 {
                     Pawn closeThreat = map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
                     bool threatened = closeThreat != null
@@ -159,7 +159,7 @@ namespace RIMAPI.Helpers
                     foreach (Pawn pawn in fighters)
                     {
                         Pawn nearest = map.mapPawns.AllPawnsSpawned
-                            .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                            .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                             .OrderBy(p => pawn.Position.DistanceToSquared(p.Position))
                             .FirstOrDefault();
                         if (nearest == null) continue;
@@ -299,7 +299,7 @@ namespace RIMAPI.Helpers
                             && p.drafter?.Drafted == true && IsRanged(p))
                         .ToList();
                     List<Pawn> threats = map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .ToList();
                     foreach (Pawn pawn in fighters)
                     {
@@ -494,7 +494,7 @@ namespace RIMAPI.Helpers
                         Pawn pawn = ordered[i];
                         Pawn nearestThreat = (tactic == "backstep_fire" || tactic == "withdraw_and_regroup")
                             ? map.mapPawns.AllPawnsSpawned
-                                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                                 .OrderBy(p => pawn.Position.DistanceToSquared(p.Position))
                                 .FirstOrDefault() ?? target
                             : target;
@@ -902,7 +902,7 @@ namespace RIMAPI.Helpers
         private static bool RetreatRouteSafe(Pawn pawn, PawnPath path)
         {
             List<Pawn> threats = pawn.Map.mapPawns.AllPawnsSpawned
-                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToList();
+                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)).ToList();
             var turrets = pawn.Map.listerBuildings.allBuildingsNonColonist.OfType<Building_Turret>()
                 .Where(CombatNativeHelper.ActiveStructure).ToList();
             // Allow a first step out of existing contact and bends in a narrow
@@ -992,7 +992,7 @@ namespace RIMAPI.Helpers
             Map map = pawn.Map;
             bool melee = tactic == "melee_block" || tactic == "door_defense" || tactic == "rush_ranged" || tactic == "infestation_choke";
             List<Pawn> nearbyHostiles = melee ? null : map.mapPawns.AllPawnsSpawned
-                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToList();
+                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)).ToList();
             IEnumerable<IntVec3> candidates = GenRadial.RadialCellsAround(desired, 7f, true)
                 .Where(cell => cell.InBounds(map) && cell.Standable(map) && !cell.Fogged(map)
                     && !cell.ContainsStaticFire(map) && !HasFriendlyTrap(cell, map)

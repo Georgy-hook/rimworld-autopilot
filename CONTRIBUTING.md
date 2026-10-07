@@ -35,5 +35,6 @@ behavioral assertions and transport readback before treating its result as evide
 Offline tests and a C# build do not require launching RimWorld or model weights.
 Live tests must be separately authorized and recorded as gameplay, technical
 replay or direct intervention. The current candidate targets `developing`
-through PR #4; `main` is the stable branch. Do not rename branches or publish
-a release as part of an audit.
+through the candidate PR on `feature/0.0.8`; `main` is the stable `v0.0.7` package.
+Branch cleanup and preparation of 0.0.8 were explicitly requested on 7 October.
+Do not publish a candidate release as part of an audit.

@@ -47,6 +47,7 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }
+        public bool AllowShortThermalErrand { get; set; }
     }
 
     public class BuildingRefuelResultDto
@@ -56,6 +57,7 @@ namespace RIMAPI.Models
         public string Reason { get; set; }
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }
+        public object FuelRouteFacts { get; set; }
     }
 
     public class PowerGeneratorInfoDto : BuildingDto

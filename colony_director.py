@@ -2073,8 +2073,24 @@ def focus_heatstroke_choices(snapshot: dict[str, Any], actions: list[str]) -> li
 
 def action_description(name: str, snapshot: dict[str, Any]) -> str:
     module = colony_modules.owner(name)
-    if module is not None:
+    if module is not None and name not in {"harvest_at_risk_crops", "create_growing_zone", "configure_crop"}:
         return module.DESCRIPTIONS[name]
+    if name == "harvest_at_risk_crops":
+        plan = (snapshot.get("development") or {}).get("capability_plans", {}).get(name, {})
+        return (f"Harvest dying plants for {plan.get('products')}; expected human nutrition "
+                f"{plan.get('expected_human_nutrition')}. Wood and medicine are not food. "
+                "Harvest, delivery and any cooking still require work.")
+    if name in {"create_growing_zone", "configure_crop"}:
+        needs = capabilities.food_planning_facts(snapshot)
+        return (f"Establish viable crops: field output estimate {needs['potential_crop_nutrition_per_day']} "
+                f"nutrition/day versus human demand {needs['human_demand_per_day']}; "
+                f"stored food {needs['stored_food_days']} days. Food harvest takes days; "
+                "flowers supply zero human food. Preserve existing viable food crops.")
+    if name == "connect_power_consumer":
+        plans = (snapshot.get("development") or {}).get("power_consumer_options") or {}
+        return (f"Connect existing unpowered consumers: {[p.get('def') for p in plans.values()]}. "
+                "An electric stove cannot cook and a cooler cannot preserve food until its actual network has power. "
+                "This action places missing conduits; verify completed wiring and power_on afterwards.")
     if name == "refuel_building":
         options = (snapshot.get("development") or {}).get("refuel_options") or {}
         targets = ", ".join(f"{row.get('def')} {float(row.get('current_fuel') or 0):.0f}/"
@@ -3004,6 +3020,13 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     }
     if fuel_gap:
         replenishment.add("harvest_nearby_trees")
+    dying_harvest = ((snapshot.get("development") or {}).get("capability_plans") or {}).get("harvest_at_risk_crops") or {}
+    if dying_harvest.get("expected_human_nutrition") == 0:
+        replenishment.discard("harvest_at_risk_crops")
+        if not fuel_gap:
+            actions = [a for a in actions if a != "harvest_at_risk_crops"]
+    if capabilities.food_planning_facts(snapshot)["renewable_food_gap"]:
+        replenishment.add("create_growing_zone")
     # Eating an existing meal does not replenish the pantry. Do not focus an
     # otherwise productive cycle around that action alone.
     if not replenishment.intersection(actions):
@@ -3021,7 +3044,8 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "expand_home_area", "hold_survival",
         "resilience_rescue", "resilience_tend", "resilience_feed", "resilience_temperature",
         "sustenance_food_batch", "sustenance_food_policy", "sustenance_preservation",
-        "production_feed_batch",
+        "production_feed_batch", "create_growing_zone", "configure_crop", "connect_power_consumer",
+        "care_for_injured_animal", "sustenance_animal_welfare",
     }
     # A worker lost to a mental break cannot gather food or feed patients.
     # Retain only already-feasible short recreation responses in this urgent
@@ -6775,6 +6799,9 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
             },
         }
     elif action == "refuel_building" and dev.get("refuel_options"):
+        q["refuel_exposure"] = {"type": "choice", "instructions": "Choose whether to allow a short temperature exposure for this refuel order. Native checks still reject dangerous routes and ill workers.",
+            "criteria": {"normal": "Use comfortable routes only; a cold outdoor fuel stack may remain inaccessible.",
+                         "short_thermal": "Allow at most 12 cells for a near-empty cooking/heating/cooling device, only a mobile worker without significant heatstroke/hypothermia and temperature within 40C of clothing comfort; poison, hostile and fallout checks remain. Costs a short exposure but may restore food or safe shelter."}}
         q["refuel_target"] = {"type": "choice", "instructions":
             "Choose which completed facility needs fuel first; compare patient heatstroke, meal supply and electricity.",
             "criteria": {key: f"{row.get('def')} at {row.get('position')}: "
@@ -7053,6 +7080,8 @@ def _choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str],
     def survival_tradeoff(name: str) -> str:
         if not low_food:
             return ""
+        if name in {"harvest_at_risk_crops", "create_growing_zone", "configure_crop", "connect_power_consumer"}:
+            return action_description(name, snapshot)
         prefix = (f"Food runway about {food_runway} days: {int(resources.get('meals') or 0)} meals, "
                   f"{int(resources.get('raw_food') or 0)} raw food items for {people_count} people. ")
         development = snapshot.get("development") or {}
@@ -9125,9 +9154,13 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         if selected not in (snapshot["development"].get("bed_assignment_options") or {}):
             return {"applied": False, "reason": "Selected pawn-bed pair is no longer available"}
         pawn_id, bed_id = map(int, selected.split("|", 1))
-        result = client.post("/api/v1/pawn/medical/bed-rest", body={
+        result = client.post("/api/v1/pawn/bed/assign", body={
             "patient_pawn_id": pawn_id, "bed_building_id": bed_id,
         })
+        accepted = bridge.command_acceptance({"endpoint": "/api/v1/pawn/bed/assign"}, result)
+        if accepted is not True:
+            return {"applied": False, "reason": "sleeping_bed_assignment_unconfirmed", "response": result,
+                    "outcome_unknown": accepted is None}
         map_state.setdefault("assigned_real_beds", {})[str(pawn_id)] = bed_id
         return {"applied": True, "pawn_id": pawn_id, "bed_id": bed_id, "response": result}
     if choice == "prepare_emergency_medical_bed":
@@ -9332,8 +9365,10 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         worker_id = str(details.get("worker_pawn") or "")
         if target_id not in options or worker_id not in refuel_worker_criteria(snapshot, {target_id: options[target_id]}):
             return {"applied": False, "reason": "No verified facility and available hauler selected"}
-        response = client.post("/api/v1/builder/refuel", body={
-            "map_id": map_id, "building_id": int(target_id), "worker_pawn_id": int(worker_id)})
+        body = {"map_id": map_id, "building_id": int(target_id), "worker_pawn_id": int(worker_id)}
+        if details.get("refuel_exposure") == "short_thermal":
+            body["allow_short_thermal_errand"] = True
+        response = client.post("/api/v1/builder/refuel", body=body)
         accepted = response.get("applied") is True
         in_progress = response.get("in_progress") is True
         if accepted or in_progress:
@@ -11928,10 +11963,14 @@ def post_combat_care_options(snapshot: dict[str, Any],
                           if infections else "")
         # A rescuer carrying this very patient must be allowed to switch to
         # field tending if their bleeding is critical. Rescue never stops it.
-        rescuer_doctors = [pawn for pawn in colonists
+        # A rescuer still walking to an untreated patient can choose field
+        # tending first. Once carrying starts, that exact rescue is protected.
+        rescuer_doctors = [{**pawn, "reassign_from_rescue_patient_id": patient_id} for pawn in colonists
                            if bleeding >= 1.5 and int(pawn.get("current_job_target_id") or 0) == patient_id
                            and str(pawn.get("current_job") or "").lower() == "rescue"
+                           and not pawn.get("carrying_pawn_id") and not pawn.get("carrying_player_pawn")
                            and not pawn.get("is_dead") and not pawn.get("is_downed")
+                           and not pawn.get("is_drafted") and not pawn.get("is_in_mental_state")
                            and can_do_medicine(pawn)]
         deadline = medical_recovery.triage({**patient, "health_conditions": conditions})[1]
         reassignment_doctors = []
@@ -11965,6 +12004,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
             options[key] = {"patient_id": patient_id, "doctor_id": int(doctor["id"]), "kind": "tend",
                             "self_tend": False,
                             "reassign_from_patient_id": doctor.get("reassign_from_patient_id"),
+                            "reassign_from_rescue_patient_id": doctor.get("reassign_from_rescue_patient_id"),
                             "estimated_bleedout_ticks": medical_recovery.triage({**patient, "health_conditions": conditions})[1],
                             "summary": (disease_care_summary(capabilities.get(patient_id) or {}) + " "
                                         + f"Patient {patient.get('name')}; "
@@ -11986,6 +12026,8 @@ def post_combat_care_options(snapshot: dict[str, Any],
         # doctor before blood loss finally downs them.
         can_self_tend = (
             not patient.get("is_downed") and not patient.get("is_in_mental_state")
+            and not patient.get("is_drafted")
+            and str(patient.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS
             and patient_id not in retreating
             and can_do_medicine(patient)
             and bridge.first_number(patient.get("moving"), 1) > 0.1
@@ -12014,6 +12056,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
         patient_id = int(patient["id"])
         details = capabilities.get(patient_id) or {}
         if (patient.get("is_dead") or patient.get("is_downed") or patient.get("is_in_mental_state")
+                or patient.get("is_drafted")
                 or patient_id in active_patients or patient_id in retreating
                 or not bridge.active_recovery_diseases(details)
                 or details.get("should_seek_medical_rest") is False
@@ -12472,6 +12515,8 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                         "self_tend": selected["self_tend"],
                         **({"reassign_from_patient_id": selected["reassign_from_patient_id"]}
                            if selected.get("reassign_from_patient_id") is not None else {}),
+                        **({"reassign_from_rescue_patient_id": selected["reassign_from_rescue_patient_id"]}
+                           if selected.get("reassign_from_rescue_patient_id") is not None else {}),
                     })
                     result = {"applied": True, "response": response}
                     if patient_hold is not None:

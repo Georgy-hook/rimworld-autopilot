@@ -192,12 +192,22 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
                           and number(p.get("hunger")) is not None and number(p.get("hunger")) <= .1
                           for p in care_people)
     recreation = recreation_pressure(snapshot)
+    animals = [a for a in snapshot.get("animals") or [] if not a.get("dead")]
+    animal_bleed = max((number(a.get("bleeding_rate")) or 0 for a in animals), default=0)
     care_risks = None
-    if thermal or bleed_rate >= .05 or malnutrition >= .15 or dependent_hungry or recreation:
+    food_stock = number(resources.get("nutrition"))
+    food_days = round(food_stock / (1.6 * len(care_people)), 1) if food_stock is not None and care_people else None
+    if thermal or bleed_rate >= .05 or animal_bleed >= .05 or malnutrition >= .15 or dependent_hungry or recreation or (food_days is not None and food_days < 5):
         care_risks = {"meals": resources.get("meals"), "least_food_level": least_food,
                       "bleed_rate_max": bleed_rate,
                       "downed": sum(bool(p.get("downed") or p.get("is_downed")) for p in care_people),
                       "threats": (snapshot.get("map") or {}).get("enemies", 0)}
+        if food_days is not None and food_days < 5:
+            care_risks["food_days"] = food_days
+            care_risks["stored_nutrition"] = food_stock
+        if animal_bleed >= .05:
+            care_risks["animal_bleed_max"] = animal_bleed
+            care_risks["downed_animals"] = sum(bool(a.get("downed")) for a in animals)
         if malnutrition:
             care_risks["malnutrition_max"] = malnutrition
         if dependent_hungry:

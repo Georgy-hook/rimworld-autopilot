@@ -27,7 +27,7 @@ namespace RIMAPI.Services
                     .Where(p => p != null && !p.Dead)
                     .ToList();
                 var hostiles = map.mapPawns.AllPawnsSpawned
-                    .Where(p => p != null && !p.Dead && p.HostileTo(Faction.OfPlayer)
+                    .Where(p => p != null && !p.Dead && CombatNativeHelper.IsPlayerThreat(p)
                         && IsActionableHostile(p, colonists, map))
                     .ToList();
                 var prisoners = map.mapPawns.PrisonersOfColony
@@ -36,7 +36,7 @@ namespace RIMAPI.Services
                 var neutralDowned = map.mapPawns.AllPawnsSpawned
                     .Where(p => p != null && !p.Dead && p.Downed && p.RaceProps?.Humanlike == true
                         && !p.IsColonist && !p.IsPrisonerOfColony
-                        && !p.HostileTo(Faction.OfPlayer))
+                        && !CombatNativeHelper.IsPlayerThreat(p))
                     .ToList();
                 var weapons = map.listerThings.AllThings
                     .Where(t => t != null && t.Spawned && !t.Destroyed && t.def != null

@@ -21,7 +21,13 @@ namespace RIMAPI.Helpers
             public string label;
             public string cost;
             public string risk;
+            // IntVec3 exposes recursive Unity vector properties. Keep game
+            // coordinates internal and serialize only the primitive DTO.
+            [Newtonsoft.Json.JsonIgnore]
             public IntVec3[] cells;
+            [Newtonsoft.Json.JsonProperty("cells")]
+            public PositionDto[] CellPositions => cells?.Select(c => new PositionDto
+                { X = c.x, Y = c.y, Z = c.z }).ToArray();
         }
 
         private static bool Material(Thing thing)

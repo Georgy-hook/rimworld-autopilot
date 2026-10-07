@@ -25,14 +25,14 @@ class CareCombatSourceContracts(unittest.TestCase):
     def test_explicit_combat_target_checked_before_drafting(self):
         source = (HELPERS / 'CombatTacticsHelper.cs').read_text(encoding='utf-8')
         target_lookup = source[source.index('Pawn target = request.TargetPawnId'):source.index('var result = new CombatTacticResponseDto')]
-        self.assertRegex(target_lookup, r'FirstOrDefault\([^;]+!p\.Dead && !p\.Downed && p\.HostileTo\(Faction\.OfPlayer\)')
+        self.assertRegex(target_lookup, r'FirstOrDefault\([^;]+!p\.Dead && !p\.Downed && CombatNativeHelper\.IsPlayerThreat\(p\)')
         self.assertIn('no fighters drafted', target_lookup)
 
     def test_stand_down_rechecks_pawns_and_active_structures(self):
         source = (HELPERS / 'CombatTacticsHelper.cs').read_text(encoding='utf-8')
         guard = source[source.index('if (tactic == "stand_down")'):source.index('List<Pawn> fighters')]
         self.assertLess(guard.index('Hostiles remain'), guard.index('pawn.drafter.Drafted = false'))
-        self.assertIn('!p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)', guard)
+        self.assertIn('!p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)', guard)
         self.assertIn('Any(CombatNativeHelper.ActiveStructure)', guard)
 
     def test_exact_tending_is_idempotent_before_other_care_rejection(self):

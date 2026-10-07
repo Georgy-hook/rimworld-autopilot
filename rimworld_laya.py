@@ -2209,7 +2209,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
 
 
 _NO_BODY_COMMANDS = {"/api/v1/game/speed", "/api/v1/pawn/edit/status", "/api/v1/pawn/job",
-    "/api/v1/pawn/medical/tend", "/api/v1/pawn/medical/bed-rest", "/api/v1/pawn/medical/feed",
+    "/api/v1/pawn/medical/tend", "/api/v1/pawn/medical/bed-rest", "/api/v1/pawn/medical/feed", "/api/v1/pawn/bed/assign",
     "/api/v1/colonist/work-priority", "/api/v1/colonists/work-priority"}
 
 

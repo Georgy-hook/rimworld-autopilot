@@ -681,7 +681,7 @@ class DirectorTests(unittest.TestCase):
         result = director.execute_action(client, snapshot, state, "assign_real_bed",
                                          {"bed_assignment": "1|20"})
         self.assertTrue(result["applied"])
-        client.post.assert_called_with("/api/v1/pawn/medical/bed-rest", body={
+        client.post.assert_called_with("/api/v1/pawn/bed/assign", body={
             "patient_pawn_id": 1, "bed_building_id": 20,
         })
         result = director.execute_action(client, snapshot, state, "prepare_emergency_medical_bed",

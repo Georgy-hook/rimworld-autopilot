@@ -587,9 +587,22 @@ def _ask(agent: Any, state: dict[str, Any], question_id: str, instructions: str,
              "income": chosen.get("economy_product") or current.get("economy_product"),
              "people": state.get("population"), "food": state.get("food"),
              "sheltered_beds": state.get("sheltered_beds"), "income_blocked": state.get("income_blocked")}
+    if facts["endgame"] == "imperial_ascension":
+        facts["ending_requirements"] = "Empire relations, royal rank, throne room and defense of the visiting high stellarch; hostile Empire raiding can block this goal."
+    elif facts["endgame"] == "anomaly_void":
+        facts["ending_requirements"] = "Monolith study, containment and the final anomaly encounter; unrelated royal titles do not complete it."
     effects, english = {}, {}
     for key, label in criteria.items():
         description = label if not any('\u0400' <= char <= '\u04ff' for char in label) else key.replace('_', ' ')
+        if question_id == "doctrine_primary_direction" and key in DIRECTIONS:
+            row = DIRECTIONS[key]
+            description += ": " + ", ".join(row.get("mechanics") or ())
+        if question_id == "doctrine_diplomacy":
+            description = {
+                "raider": "Raid other factions for resources; hostile Empire relations conflict with imperial ascent. Raises retaliation and combat burden.",
+                "friendly": "Improve relations and trade; supports access to allies and the Empire.",
+                "neutral": "Avoid new wars and preserve trade routes; reassess each faction's actual relations.",
+            }.get(key, description)
         benefit, risk, cost = (ENDING_EFFECTS[key] if question_id == "doctrine_endgame" else
             (description, "This focus can divert labor and resources from survival or the selected ending",
              "Only actual feasible research, construction and work may execute this intention"))

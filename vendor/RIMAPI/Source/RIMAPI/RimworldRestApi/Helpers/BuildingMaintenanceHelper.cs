@@ -35,13 +35,26 @@ namespace RIMAPI.Helpers
                 { result.Reason = "refueling_in_progress"; result.InProgress = true; }
                 else
                 {
-                    if (!ResilienceAutomationHelper.RoutineRouteSafe(worker, building))
+                    bool shortThermal = request.AllowShortThermalErrand && fuel.Fuel <= 1f
+                        && (building.def == ThingDefOf.Campfire || building.def.defName == "PassiveCooler" || building.def.defName == "FueledStove");
+                    if (!ResilienceAutomationHelper.RefuelRouteSafe(worker, building, shortThermal))
                     { result.Reason = "unsafe_facility_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
                     var scanner = DefDatabase<WorkGiverDef>.GetNamedSilentFail("Refuel")?.Worker as WorkGiver_Scanner;
                     Job job = scanner != null && scanner.HasJobOnThing(worker, building, true)
                         ? scanner.JobOnThing(worker, building, true) : null;
-                    if (job?.targetB.Thing is Thing stock && !ResilienceAutomationHelper.RoutineRouteSafe(worker, stock))
-                    { result.Reason = "unsafe_fuel_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
+                    if (job?.targetB.Thing is Thing stock)
+                    {
+                        result.FuelRouteFacts = new { fuel_thing_id=stock.thingIDNumber,
+                            fuel_position=new PositionDto {X=stock.Position.x,Y=stock.Position.y,Z=stock.Position.z},
+                            fuel_temperature=stock.Position.GetTemperature(worker.Map),
+                            worker_comfort_min=worker.GetStatValue(StatDefOf.ComfyTemperatureMin),
+                            worker_comfort_max=worker.GetStatValue(StatDefOf.ComfyTemperatureMax),
+                            short_thermal_requested=request.AllowShortThermalErrand,
+                            short_thermal_eligible=shortThermal && ResilienceAutomationHelper.ShortThermalErrandEligible(worker,stock)
+                                && stock.Position.DistanceToSquared(building.Position) <= 144 };
+                        if (!ResilienceAutomationHelper.RefuelRouteSafe(worker, stock, shortThermal && stock.Position.DistanceToSquared(building.Position) <= 144))
+                        { result.Reason = "unsafe_fuel_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
+                    }
                     result.Applied = job != null && worker.jobs.TryTakeOrderedJob(job);
                     result.Reason = result.Applied ? "refuel_job_assigned" : "fuel_unavailable_or_building_reserved";
                 }

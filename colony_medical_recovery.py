@@ -339,6 +339,12 @@ def focus(snapshot, actions):
     if not food or not (recovery or waiting or active):
         return actions
     dev["patient_recovery_focus"] = sorted(recovery)
+    # A care job owns its actor, not every worker on the map. Once the
+    # required care is already underway, let spare workers replenish food.
+    # Every executor still protects the exact active clinical job.
+    if not recovery and helpers(snapshot, None):
+        dev["patient_recovery_parallel_work"] = True
+        return actions
     urgent = recovery | {"resilience_tend", "tend_colonist", "care_for_injured_animal", "feed_hungry_animal",
                          "rescue_downed_animal", "open_blocked_food_path", "resilience_rescue", "resilience_feed",
                          "prioritize_firefighting", "resilience_temperature", "hold_survival"}
@@ -405,10 +411,14 @@ def validate_post_combat_plan(client, snapshot, plan, options_for):
     if (str(actor.get('current_job') or '').casefold() in CARE_JOBS
             and not (plan.get('kind') == 'tend' and actor.get('current_job') == 'TendPatient'
                      and plan.get('reassign_from_patient_id') is not None
-                     and actor.get('current_job_target_id') == plan['reassign_from_patient_id'])):
+                     and actor.get('current_job_target_id') == plan['reassign_from_patient_id'])
+                 and not (plan.get('kind') == 'tend' and actor.get('current_job') == 'Rescue'
+                          and plan.get('reassign_from_rescue_patient_id') == patient.get('id')
+                          and actor.get('current_job_target_id') == patient.get('id')
+                          and not actor.get('carrying_pawn_id') and not actor.get('carrying_player_pawn'))):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_is_providing_other_care'}, combat
     fresh = {**snapshot, 'combat': combat}
-    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id')
+    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id', 'reassign_from_rescue_patient_id')
     if not any(all(row.get(k) == plan.get(k) for k in identity) for row in options_for(fresh).values()):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_selection_changed'}, combat
     return None, combat

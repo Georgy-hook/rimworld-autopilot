@@ -7,8 +7,9 @@ The public installer link is:
 GitHub looks for that exact asset name on the latest published, non-prerelease release. Keep the filename unchanged for every stable version.
 
 The tagged base is **v0.0.7, 6 October 2026**. The working branch contains later
-unpublished corrections and retains product `VERSION=0.0.7` until another release
-is explicitly prepared. Start with the
+unpublished corrections for the explicitly requested `0.0.8` candidate on
+`feature/0.0.8`; `main` and `developing` point at the published `v0.0.7` package.
+The candidate is not a published release or tag. Start with the
 [documentation index](README.md) and current module/audit reports.
 [0.0.6 release readiness](RELEASE_READINESS_0.0.6.md) is historical evidence.
 Before tagging, close applicable regression gates with offline tests and

@@ -116,19 +116,27 @@ namespace RIMAPI.Helpers
                 allowSociallyImproper:false, allowHarvest:false, forceScanWholeMap:false,
                 ignoreReservations:false, calculateWantedStackCount:false, allowVenerated:true);
         public static bool RoutineRouteSafe(Pawn worker, Thing target) => Safe(worker,target);
+        public static bool RefuelRouteSafe(Pawn worker, Thing target, bool shortThermal) => Safe(worker,target,false,shortThermal);
+        public static bool ShortThermalErrandEligible(Pawn worker, Thing target) =>
+            worker.Position.DistanceToSquared(target.Position) <= 144
+            && worker.health.capacities.GetLevel(PawnCapacityDefOf.Moving) >= .5f
+            && !worker.health.hediffSet.hediffs.Any(h => (h.def == HediffDefOf.Hypothermia || h.def == HediffDefOf.Heatstroke) && h.Severity >= .1f)
+            && target.Position.GetTemperature(worker.Map) >= worker.GetStatValue(StatDefOf.ComfyTemperatureMin)-40f
+            && target.Position.GetTemperature(worker.Map) <= worker.GetStatValue(StatDefOf.ComfyTemperatureMax)+40f;
         public static bool RescueRouteSafe(Pawn worker, Thing target) => Safe(worker,target,true);
         // The native tend workgiver accepts Deadly; automation explicitly requires Some.
         // Nearby live hostiles additionally reject civilian routes, including passive hive guards.
-        private static bool Safe(Pawn worker, Thing target, bool rescueExposure = false)
+        private static bool Safe(Pawn worker, Thing target, bool rescueExposure = false, bool shortThermal = false)
         {
             if (!worker.CanReach(target, PathEndMode.Touch, Danger.Some) || target.IsForbidden(worker)) return false;
             if (!rescueExposure && (worker.Map.gasGrid.DensityAt(target.Position, GasType.ToxGas) > 0
                 || worker.Map.gasGrid.DensityAt(target.Position, GasType.DeadlifeDust) > 0
                 || worker.Map.gasGrid.DensityAt(target.Position, GasType.RotStink) > 0)) return false;
             float temperature=target.Position.GetTemperature(worker.Map);
-            if (!rescueExposure && (temperature < worker.GetStatValue(StatDefOf.ComfyTemperatureMin)-10f || temperature > worker.GetStatValue(StatDefOf.ComfyTemperatureMax)+10f)) return false;
+            if (!rescueExposure && (temperature < worker.GetStatValue(StatDefOf.ComfyTemperatureMin)-10f || temperature > worker.GetStatValue(StatDefOf.ComfyTemperatureMax)+10f)
+                && !(shortThermal && ShortThermalErrandEligible(worker,target))) return false;
             if (!rescueExposure && worker.Map.gameConditionManager.ActiveConditions.Any(c => c.def.defName == "ToxicFallout") && !target.Position.Roofed(worker.Map)) return false;
-            foreach (Thing hostile in worker.Map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(worker)).Cast<Thing>()
+            foreach (Thing hostile in worker.Map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && (p.HostileTo(worker) || CombatNativeHelper.ActivePredation(p))).Cast<Thing>()
                 .Concat(worker.Map.listerBuildings.allBuildingsNonColonist.Where(CombatNativeHelper.ActiveStructure).Cast<Thing>()))
             {
                 float range = hostile is Pawn enemy ? enemy.equipment?.Primary?.def.Verbs?.FirstOrDefault()?.range ?? 0f
@@ -208,7 +216,7 @@ namespace RIMAPI.Helpers
             if (target.HasThing) return Safe(worker,target.Thing);
             if (cell.Roofed(map) || map.gameConditionManager.ActiveConditions.Any(c=>c.def.defName=="ToxicFallout")) return false;
             // The corpse route is already checked. Check its continuation to storage too.
-            foreach (Thing hostile in map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && p.HostileTo(worker)).Cast<Thing>()
+            foreach (Thing hostile in map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && (p.HostileTo(worker) || CombatNativeHelper.ActivePredation(p))).Cast<Thing>()
                 .Concat(map.listerBuildings.allBuildingsNonColonist.Where(CombatNativeHelper.ActiveStructure).Cast<Thing>()))
             {
                 float range=hostile is Pawn enemy ? enemy.equipment?.Primary?.def.Verbs?.FirstOrDefault()?.range ?? 0f

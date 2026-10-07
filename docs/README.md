@@ -1,6 +1,6 @@
-# Documentation index — after 0.0.7
+# Documentation index — 0.0.8 candidate
 
-The working branch is `fix/0.0.7-cold-start`, targeting `developing` in PR #4.
+The working branch is `feature/0.0.8`, targeting `developing` through the candidate pull request.
 Tag `v0.0.7` records the 6 October release; this working branch contains later
 corrections. A dated test result describes its tested
 revision and scenario; it does not establish the current build's runtime result.
@@ -27,6 +27,9 @@ revision and scenario; it does not establish the current build's runtime result.
 - [Contributing and offline checks](../CONTRIBUTING.md), [Windows release process](RELEASING.md)
 
 ## Evidence and history
+
+- [0.0.8 recovery changes and remaining live gates](RELEASE_READINESS_0.0.8.md)
+- [Final quest-review colony outcome and root causes](audits/roinor-recovery-2026-10-07.md)
 
 - [Colony screenshots, layout, losses, raids, economy and comparison](COLONY_VERIFICATION.md)
 - [0.0.7 release preparation and remaining gates](RELEASE_READINESS_0.0.7.md)
