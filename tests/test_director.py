@@ -1172,6 +1172,11 @@ class DirectorTests(unittest.TestCase):
                     "development": {"building_counts": {}, "zones": [], "things": [],
                                     "item_counts": {}, "current_research": {},
                                     "finished_research": [], "work_tables": []}}
+        # A saved economic intent needs a real local resident. Empty-map planning
+        # is covered separately and waits for native world/ending evidence.
+        snapshot['colonists'] = [{'id': 1, 'name': 'Worker', 'hunger': .8, 'rest': .8,
+                                  'health': 1, 'work_priorities': {'Growing': {'priority': 1, 'disabled': False}}}]
+        snapshot['combat']['colonists'] = [{'id': 1, 'is_dead': False, 'is_downed': False}]
         map_state = {"anchor": {"x": 10, "z": 10}, "issued": {},
                      "doctrine": {"schema_version": 2, "economy_product": "crops"},
                      "income_strategy": "crops", "doctrine_tick": 1000}

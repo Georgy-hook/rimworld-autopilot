@@ -82,3 +82,10 @@ Targeted offline resilience tests: 21 pass, covering semantic cooldown, new/disc
 Expired and future-tick issued/deferred/failed history is pruned during prepare using the corresponding cooldown horizon; empty buckets and memory are removed. JSON save/load preserves discrete defer signatures, and rollback invalidates future history. A 20000-entry expired history regression leaves only still-current records.
 
 The director exposes severe downed starvation before wound-only triage through the same resilience options and executor. The native per-pawn need rate estimates starvation time; incomplete evidence remains unknown. See [starvation care and yield audit](../audits/starvation-care-yield-2026-10-06.md).
+
+Downed nonbleeding thermal exposure also has a separate clinical response before
+wound-only triage. Exact same-patient nonbleeding frostbite tending may yield to
+native Rescue only with a usable roofed safe-temperature bed and verified route;
+food is not required. Feeding, lifted patients, queued care and real medical disease
+remain protected. Tending frostbite is not warming, and a bed-targeted LayDown is
+not physical bed arrival. See [the Dayouinum correction](../audits/dayouinum-thermal-care-2026-10-07.md).

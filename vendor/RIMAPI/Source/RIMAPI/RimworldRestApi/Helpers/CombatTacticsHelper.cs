@@ -511,6 +511,8 @@ namespace RIMAPI.Helpers
                             float distance = (float)Math.Sqrt(dx * dx + dz * dz);
                             if (distance <= range - 2f && CanShootTarget(pawn, pawn.Position, target))
                             {
+                                if (pawn.CurJobDef == JobDefOf.AttackStatic && pawn.CurJob.targetA.Thing == target)
+                                { result.AttackingPawnIds.Add(pawn.thingIDNumber); continue; }
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
                                 if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))

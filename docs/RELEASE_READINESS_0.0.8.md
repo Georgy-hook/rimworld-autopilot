@@ -32,3 +32,13 @@ screenshots, layout comparisons and cause evidence. The
 [food commitment corrections](audits/lenrobum-food-commitment-2026-10-07.md)
 passed1245 tests and cached-model starvation replay; the next authorized random
 colony must establish sustained food production and actual survival.
+
+The following Dayouinum cold landing ended after54m22s: two founders died from
+hypothermia, one from blood loss, and the replacement was kidnapped. The
+[thermal-care correction](audits/dayouinum-thermal-care-2026-10-07.md) adds exact
+safe-temperature rescue, response-before-wound context, failed-pair memory and
+temperature-aware fuel evidence. Gates:1256Python tests,311routes,8actual native
+thermal boundaries, zero-warning Release-1.6 and cached-model thermal sequence
+in both option orders. Actual warming and repeated heating remain live gates.
+At user request the final save was verified, the game closed and observation
+paused; no new colony or0.0.8 release was started.

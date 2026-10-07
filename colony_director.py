@@ -28,6 +28,7 @@ import colony_society
 import colony_reasoning
 import colony_outcomes
 import colony_medical_recovery as medical_recovery
+import colony_retry as retry_clock
 import colony_resilience as resilience
 import colony_downed_combat as downed_combat
 import colony_wildlife as wildlife
@@ -2093,10 +2094,11 @@ def action_description(name: str, snapshot: dict[str, Any]) -> str:
                 "This action places missing conduits; verify completed wiring and power_on afterwards.")
     if name == "refuel_building":
         options = (snapshot.get("development") or {}).get("refuel_options") or {}
-        targets = ", ".join(f"{row.get('def')} {float(row.get('current_fuel') or 0):.0f}/"
+        targets = ", ".join(f"{row.get('def')} at {row.get('current_temperature', 'unknown')}C {float(row.get('current_fuel') or 0):.0f}/"
                             f"{float(row.get('fuel_capacity') or 0):.0f} {row.get('fuel_type')}"
                             for row in list(options.values())[:3])
         return (f"Refuel an existing facility ({targets}) with a mobile hauler and stocked fuel. "
+                "An empty campfire stops heating even under a roof; hypothermia can return. Auto-refuel is a setting, not delivered fuel. "
                 "An empty passive cooler leaves patients exposed to heatstroke; food bills also require a fueled stove.")
     if name == "build_butcher_spot":
         count = int((snapshot.get("development") or {}).get("butchery_gap") or 0)
@@ -3914,6 +3916,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     current = str((dev["current_research"] or {}).get("name") or "none")
     details: dict[str, Any] = {}
     one_time: list[str] = []
+    dev.pop('no_local_workers', None)
+    if not snapshot.get('colonists') and not snapshot.get('combat', {}).get('colonists'):
+        dev['no_local_workers'] = True
+        return ['hold_survival'], {'reason': 'no_local_workers; observe native ending and world state'}
     item_counts = dev.get("item_counts", {})
     can_work = lambda work: bridge.choose_worker(snapshot.get("colonists", []), work) is not None
     # Research benches are Building_ResearchBench, not Building_WorkTable;
@@ -6841,7 +6847,7 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
         q["refuel_target"] = {"type": "choice", "instructions":
             "Choose which completed facility needs fuel first; compare patient heatstroke, meal supply and electricity.",
             "criteria": {key: f"{row.get('def')} at {row.get('position')}: "
-                         f"fuel {row.get('current_fuel')}/{row.get('fuel_capacity')} {row.get('fuel_type')}"
+                         f"{row.get('current_temperature', 'unknown')}C roofed={row.get('roofed', 'unknown')}; fuel {row.get('current_fuel')}/{row.get('fuel_capacity')} {row.get('fuel_type')}; auto-refuel does not prove delivery"
                          for key, row in dev["refuel_options"].items()}}
         q["worker_pawn"] = {"type": "choice", "instructions":
             "Choose one mobile hauler; preserve doctors actively tending, feeding or rescuing patients. "
@@ -8324,7 +8330,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         binding = medical_recovery.care_order_fields(native)
         active = [row for row in fresh.get('active_orders') or []
                   if str(row.get('target_id')) == pid and row.get('kind') in ('feed', 'rescue', 'tend')]
-        own_stable_tend_to_feed = (choice == 'feed_hungry_colonist' and binding.get('expected_current_job') == 'TendPatient'
+        own_stable_tend_to_feed = ((choice == 'feed_hungry_colonist' or choice == 'rescue_downed_colonist' and native.get('thermal_rescue') is True) and binding.get('expected_current_job') == 'TendPatient'
             and str(binding.get('expected_care_patient_id')) == pid and active and all(
                 row.get('kind') == 'tend' and str(row.get('worker_id')) == worker
                 and row.get('job_def') == 'TendPatient' and not row.get('carried_thing_id') for row in active))
@@ -11911,7 +11917,10 @@ def post_combat_care_options(snapshot: dict[str, Any],
         details = capabilities.get(int(pawn["id"])) or {}
         medicine = (details.get("skills") or {}).get("Medicine") or {}
         doctor_work = (details.get("work_priorities") or {}).get("Doctor") or {}
-        return not bool(medicine.get("disabled")) and not doctor_work.get("disabled")
+        return (not bool(medicine.get("disabled")) and not doctor_work.get("disabled")
+                and not details.get('downed') and not details.get('dead') and not details.get('in_mental_state')
+                and bridge.first_number((details.get('capacities') or {}).get('moving'), 1) > 0
+                and bridge.first_number((details.get('capacities') or {}).get('manipulation'), 1) > 0)
 
     active_patients = {
         int(pawn["current_job_target_id"])
@@ -11922,6 +11931,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
     retreating = bridge.combat_planner.protected_care_retreat_ids(snapshot)
     available_helpers = [pawn for pawn in colonists
                if not pawn.get("is_dead") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
+               and not any((capabilities.get(int(pawn['id'])) or {}).get(k) for k in ('downed', 'dead', 'in_mental_state'))
                and str(pawn.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS
                and not pawn.get("is_drafted")
                and pawn.get('id') not in retreating
@@ -12051,6 +12061,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
             key = f"tend_{patient_id}_{int(doctor['id'])}"
             patient_pos = patient.get("position") or {}
             doctor_pos = doctor.get("position") or {}
+            if (bleeding == 0 and not bridge.active_recovery_diseases(capabilities.get(patient_id) or {})
+                    and bridge.combat_planner.errand_exposed(snapshot, patient_pos, origin=doctor_pos)):
+                continue  # Routine frostbite tending must not send civilians back into a guarded hive.
             distance = (f", {round(squared_distance(patient_pos, doctor_pos) ** 0.5)} cells away"
                         if patient_pos and doctor_pos else "")
             options[key] = {"patient_id": patient_id, "doctor_id": int(doctor["id"]), "kind": "tend",
@@ -12058,7 +12071,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
                             "reassign_from_patient_id": doctor.get("reassign_from_patient_id"),
                             "reassign_from_rescue_patient_id": doctor.get("reassign_from_rescue_patient_id"),
                             "estimated_bleedout_ticks": medical_recovery.triage({**patient, "health_conditions": conditions})[1],
-                            "summary": (disease_care_summary(capabilities.get(patient_id) or {}) + " "
+                            "summary": (("Tend frostbite wounds; this does not remove lethal cold or warm the patient. Compare rescue to warm shelter. "
+                                         if any(h.get('def_name') == 'Hypothermia' for h in conditions) else "")
+                                        + disease_care_summary(capabilities.get(patient_id) or {}) + " "
                                         + f"Patient {patient.get('name')}; "
                                         + (f"bleedout ~{round(deadline)} ticks; " if deadline is not None else "no active bleedout; ")
                                         + f"Doctor {doctor.get('name')} medicine {doctor.get('medicine_skill', 0)}{distance}; "
@@ -12172,6 +12187,62 @@ def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
                and (bridge.first_number(row.get("bleeding_rate")) > 0
                     or severe_disease_patient(snapshot, int(row["id"])))
                for row in colonists)
+
+
+def run_urgent_thermal_cycle(client: bridge.RimApiClient, agent: Any,
+                             snapshot: dict[str, Any], map_state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
+    """Compare a native safe thermal relocation before wound-only bedside treatment."""
+    if not any(p.get('downed') and not p.get('dead') and any(
+            h.get('def_name') in {'Hypothermia', 'Heatstroke'} and float(h.get('severity') or 0) >= .1
+            for h in p.get('health_conditions') or []) for p in snapshot.get('colonists') or []):
+        return None
+    context = resilience.collect(client, snapshot)
+    snapshot.setdefault('development', {})['resilience'] = context
+    resilience.prepare(snapshot, map_state)
+    patients = {str(p['pawn_id']): p for p in context.get('patients') or []}
+    def thermal_only(row):
+        patient = patients.get(str(row.get('target_id')), {})
+        conditions = patient.get('conditions') or []
+        return (patient.get('bleeding_total') == 0 and not bridge.active_recovery_diseases({'health_conditions': conditions})
+                and not any(h.get('life_threatening') and h.get('def_name') not in {'Hypothermia', 'Heatstroke', 'Frostbite', 'Malnutrition', 'BloodLoss'} for h in conditions))
+    options = {k: row for k, row in context.get('plans', {}).get('resilience_rescue', {}).items()
+               if row.get('thermal_rescue') is True and thermal_only(row) and (not medical_recovery.care_order_fields(row)
+                    or medical_recovery.offered_care_yield(snapshot, row) is not None)}
+    if not options:
+        return None
+    effects = {k: resilience.thermal_rescue_effects(patients.get(str(row['target_id']), {}), row) for k, row in options.items()}
+    criteria = {k: value['benefit'] for k, value in effects.items()}
+    # First compare the clinical response, then the exact native actor/patient.
+    # Actor IDs alone must not stand in for the warming benefit in the response head.
+    response_criteria = {'rescue_to_shelter': next(iter(criteria.values())),
+                         'defer': 'Keep treating frostbite outside and delay moving the freezing patient into shelter'}
+    criteria['defer'] = 'Keep treating frostbite outside and delay moving the freezing patient into shelter'
+    effects['defer'] = {'benefit': 'Continue frostbite treatment or other current work', 'risk': 'Thermal illness can kill before treatment finishes',
+                        'cost': 'No relocation', 'inaction': 'Patient remains exposed', 'uncertainty': 'Current job is not temperature recovery'}
+    decision_state = {'decision_facts': {'task': 'Downed patient cannot reach shelter. Tending frostbite does not cure hypothermia.',
+        'patients': [{'id': p.get('pawn_id'), 'bleeding': p.get('bleeding_total'), 'in_bed': p.get('in_bed'),
+                      'illness': [(h.get('def_name'), h.get('severity'), h.get('life_threatening')) for h in p.get('conditions') or []
+                                  if h.get('def_name') in {'Hypothermia', 'Heatstroke'}]} for p in patients.values()
+                     if p.get('pawn_id') in {row['target_id'] for row in options.values()}]},
+        'option_effects': {'rescue_to_shelter': next(iter(effects.values())), 'defer': effects['defer']}}
+    response, raw = ask_laya_choice(agent, decision_state, 'urgent_thermal_response',
+        'Choose the next clinical response: rescue to shelter or keep current care. Tending frostbite cannot warm the patient; hypothermia can be fatal while treatment continues.', response_criteria, detailed=True)
+    if response == 'defer':
+        key = 'defer'
+    elif len(options) == 1:
+        key = next(iter(options))
+    else:
+        key, binding_raw = ask_laya_choice(agent, {'decision_facts': decision_state['decision_facts'], 'option_effects': effects},
+            'urgent_thermal_rescue', 'Choose the exact patient and caregiver for rescue. Compare safe bed temperature, travel and current care. Defer if another job is more urgent.', criteria, detailed=True)
+        binding_raw['response_choice'] = raw
+        raw = binding_raw
+    selected = ({'defer': True, 'deferred_subjects': list({str(row['target_id']) for row in options.values()})}
+                if key == 'defer' else resilience.order_fields(options[key]))
+    result = resilience.execute(client, snapshot, map_state, 'resilience_rescue', selected)
+    record = {'timestamp': bridge.utc_now(), 'mode': 'urgent-thermal-rescue', 'tick': snapshot['game'].get('tick'),
+              'candidates': list(criteria), 'decision': {'choice': key, 'raw': raw}, 'result': result}
+    bridge.append_log(log_path, record)
+    return record
 
 
 def run_urgent_nutrition_cycle(client: bridge.RimApiClient, agent: Any,
@@ -12349,7 +12420,8 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
 def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                                snapshot: dict[str, Any], log_path: Path,
                                *, live_threat: bool = False,
-                               focus_downed: bool = False) -> dict[str, Any] | None:
+                               focus_downed: bool = False,
+                               map_state: dict[str, Any] | None = None) -> dict[str, Any] | None:
     hostiles = bridge.combat_planner.live_hostiles(snapshot)
     if hostiles and not live_threat:
         return None
@@ -12363,6 +12435,16 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     if any(p.get("def_name") == "Hypothermia" for p in bridge.thermal_emergency_context(snapshot.get("colonists") or [])):
         collect_medical_thermal_context(client, snapshot)
     options = post_combat_care_options(snapshot, buildings)
+    failures = (map_state or {}).get('care_assignment_failures')
+    if not isinstance(failures, dict):
+        failures = {}
+        if map_state is not None: map_state['care_assignment_failures'] = failures
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    for name, failure in list(failures.items()):
+        if (name not in options or not retry_clock.recent(failure, tick, 2000)
+                or failure.get('state') != medical_recovery.care_failure_state(snapshot, options[name])):
+            failures.pop(name, None)
+    options = {name: row for name, row in options.items() if name not in failures}
     options = {name: row for name, row in options.items()
                if row.get("kind") != "tend" or patient_care_is_urgent(snapshot, row.get("patient_id"))
                or not routine_care_can_yield_to_warmth(snapshot, row.get("doctor_id"))}
@@ -12576,6 +12658,9 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                 result = medical_recovery.observe_post_combat_assignment(client, snapshot, selected, result)
     except bridge.RimApiError as exc:
         result = {"applied": False, "error": str(exc)}
+    if selected and result.get('applied') is False and not any(result.get(k) for k in ('in_progress', 'deferred', 'outcome_unknown')):
+        failures[choice] = {**retry_clock.failure_record(tick, seconds=30),
+                            'state': medical_recovery.care_failure_state(snapshot, selected)}
     record = {"timestamp": bridge.utc_now(),
               "mode": "live-threat-care" if live_threat else "post-combat-care",
               "candidates": list(options), "decision": {"choice": choice, "raw": raw},
@@ -13168,6 +13253,12 @@ def main() -> int:
                     elapsed = time.monotonic() - started
                     time.sleep(max(0.0, 2.0 - elapsed))
                     continue
+                thermal_record = run_urgent_thermal_cycle(client, agent, snapshot, map_state, args.log)
+                if thermal_record is not None:
+                    save_state(args.state, state)
+                    print(f"[{thermal_record['timestamp']}] thermal rescue: {stdout_result(thermal_record['result'])}", flush=True)
+                    if thermal_record['result'].get('applied'):
+                        snapshot = bridge.collect_snapshot(client)
                 nutrition_record = run_urgent_nutrition_cycle(client, agent, snapshot, map_state, args.log)
                 if nutrition_record is not None:
                     save_state(args.state, state)
@@ -13181,7 +13272,7 @@ def main() -> int:
                     now = time.monotonic()
                     if care_gate == "assign" and now >= next_post_combat_care_cycle:
                         care_record = run_post_combat_care_cycle(
-                            client, agent, snapshot, args.log, focus_downed=True)
+                            client, agent, snapshot, args.log, focus_downed=True, map_state=map_state)
                         next_post_combat_care_cycle = time.monotonic() + (
                             2.0 if care_record and care_record["result"].get("applied") else 8.0)
                         if care_record is not None:
@@ -13203,7 +13294,7 @@ def main() -> int:
                     now = time.monotonic()
                     if live_threat_care_needed(snapshot) and now >= next_live_threat_care_cycle:
                         care_record = run_post_combat_care_cycle(
-                            client, agent, snapshot, args.log, live_threat=True)
+                            client, agent, snapshot, args.log, live_threat=True, map_state=map_state)
                         care_choice = str((care_record or {}).get("decision", {}).get("choice") or "")
                         next_live_threat_care_cycle = time.monotonic() + (
                             8.0 if care_choice in {"withdraw_civilian", "defer_care"}
@@ -13217,7 +13308,7 @@ def main() -> int:
                     if living_hostiles and all(h.get("is_downed") for h in living_hostiles):
                         now = time.monotonic()
                         if post_combat_pending and now >= next_post_combat_care_cycle:
-                            care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log)
+                            care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log, map_state=map_state)
                             if care_record is None:
                                 post_combat_pending = recurring_entity_unresolved(snapshot)
                                 next_post_combat_care_cycle = now + args.interval
@@ -13356,7 +13447,7 @@ def main() -> int:
                     if (post_combat_pending and care_gate != "assign"
                             and (not care_in_progress or urgent_care_actionable(snapshot))
                             and now >= next_post_combat_care_cycle):
-                        care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log)
+                        care_record = run_post_combat_care_cycle(client, agent, snapshot, args.log, map_state=map_state)
                         if care_record is None:
                             post_combat_pending = False
                             post_combat_care_failures = 0

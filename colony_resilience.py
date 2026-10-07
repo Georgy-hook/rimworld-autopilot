@@ -351,6 +351,19 @@ def nutrition_defer_effects(context: dict) -> dict:
             'uncertainty': 'Current job may help another patient; it does not guarantee food reaches this patient'}
 
 
+def thermal_rescue_effects(patient: dict, row: dict) -> dict:
+    illness = ','.join(f"{h.get('def_name')}={h.get('severity')}" for h in patient.get('conditions') or []
+                      if h.get('def_name') in {'Hypothermia', 'Heatstroke'})
+    danger = 'life-threatening ' if any(h.get('life_threatening') for h in patient.get('conditions') or []
+                                      if h.get('def_name') in {'Hypothermia', 'Heatstroke'}) else ''
+    replacement = row.get('care_yield_reason') == 'nonbleeding_tend_to_thermal_rescue_same_patient'
+    return {'benefit': f"Carry the patient from {row.get('current_temperature')}C into a {row.get('destination_temperature')}C indoor bed to reduce {danger}{illness}",
+            'risk': 'Temperature exposure continues during the trip; the safe bed and route are checked again before departure',
+            'cost': f"Caregiver {row.get('worker_id')} travels {row.get('travel_distance')} cells; " + ('same nonbleeding patient switches from frostbite tending to rescue, other caregivers keep working' if replacement else 'this idle helper becomes occupied'),
+            'inaction': 'Tending frostbite does not remove cold. Delaying shelter leaves the patient exposed to potentially lethal temperature',
+            'uncertainty': 'Native safe bed and route verified; assignment is not arrival, warming, cooling or recovery'}
+
+
 def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, dict]:
     context = snapshot.get('development', {}).get('resilience', {})
     plans = context.get('plans', {}).get(action) or {}
@@ -363,6 +376,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
     def effects(row: dict) -> dict:
         patient = people.get(subject(row), {})
+        if row.get('thermal_rescue') is True:
+            return thermal_rescue_effects(patient, row)
         if row['kind'] in ('feed', 'rescue') and nutrition_facts(patient)['malnutrition'] is not None:
             return nutrition_effects(patient, row)
         conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), _immunity_race(h) is True, bool(h.get('tendable_now'))), reverse=True)
@@ -407,7 +422,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
                 'inaction': consequence,
                 'uncertainty': 'Negative not clear; matching sample analysis needed; infected doctor can lie' if row['kind'] in ('inspect', 'interrogate', 'interrogation_policy') else f"immunity/day={h.get('immunity_per_day')} severity/day={h.get('severity_modifiers_per_day')}; job not recovery"}
     defer = {'benefit': 'Preserve current jobs/resources', 'risk': 'Illness/exposure/collapse can persist', 'cost': 'No new dose/food/labor', 'inaction': 'Autonomous work continues', 'uncertainty': 'No recovery guarantee'}
-    nutritional = action in ('resilience_feed', 'resilience_rescue') and any(nutrition_facts(people.get(subject(row), {}))['malnutrition'] is not None for row in plans.values())
+    thermal = any(row.get('thermal_rescue') is True for row in plans.values())
+    nutritional = not thermal and action in ('resilience_feed', 'resilience_rescue') and any(nutrition_facts(people.get(subject(row), {}))['malnutrition'] is not None for row in plans.values())
     if nutritional:
         defer = nutrition_defer_effects(context)
     targets = {}
@@ -418,12 +434,14 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         targets.setdefault(target, f"{people.get(target, {}).get('name', row.get('target', target))}; {target_effects[target]['benefit']}")
     targets['defer'] = 'Keep current work; dependent patients remain unfed and starvation can kill' if nutritional else 'Preserve current jobs/resources; hazards may persist.'
     target_effects['defer'] = defer
-    instructions = 'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.'
+    instructions = ('Choose normal rescue out of lethal temperature or defer. Tending frostbite does not warm or cool a patient. Fresh native bed and route checks protect ongoing bleeding, infection, feeding and carrying.' if thermal else
+        'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.')
     target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
     if target == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if subject(row) == target}
-    choices = {k: (f"{row.get('worker', row['worker_id'])}; {nutrition_description(people.get(subject(row), {}))}; {row['kind']}" if row['kind'] in ('feed', 'rescue') else
+    choices = {k: (thermal_rescue_effects(people.get(subject(row), {}), row)['benefit'] if row.get('thermal_rescue') is True else
+                   f"{row.get('worker', row['worker_id'])}; {nutrition_description(people.get(subject(row), {}))}; {row['kind']}" if row['kind'] in ('feed', 'rescue') else
                    f"{row.get('worker', row['worker_id'])}; {row.get('giver', row['kind'])}; Medicine {row.get('medicine_skill')}") for k, row in plans.items()}
     option_effects = {k: effects(row) for k, row in plans.items()}
     for key, row in plans.items():

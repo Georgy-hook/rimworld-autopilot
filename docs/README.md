@@ -28,6 +28,7 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Dayouinum thermal rescue, truthful care evidence and shutdown](audits/dayouinum-thermal-care-2026-10-07.md)
 - [Food commitments and starvation selection after Lenrobum](audits/lenrobum-food-commitment-2026-10-07.md)
 - [0.0.8 recovery changes and remaining live gates](RELEASE_READINESS_0.0.8.md)
 - [Final quest-review colony outcome and root causes](audits/roinor-recovery-2026-10-07.md)

@@ -1329,7 +1329,8 @@ room37 roofed and21.50C by18:29, then26.73C. That did not establish rescue.
 Founder286 died Hypothermia58685, observer18:37:07UTC,13m11s from start;
 founder289 Hypothermia59261,18:37:27UTC,13m31s. Both remained outside the warm
 house. Founder292 BloodLoss92945,18:43:16UTC,19m20s; fresh megaspider wounds,
-actual later bed placement and severe bleeding documented. All human exact
+LayDown targeted bed37788 but actual position161,72 was far from184,174;
+physical bed placement was not proved. Severe bleeding documented. All human exact
 culprit/native letters agree. Labrador30406 BloodLoss94331 native letter;
 wall-clock death time/killer not established. These new cold/care failures
 are recorded separately and are not claimed fixed by the earlier food patch.
@@ -1353,3 +1354,100 @@ report outputs/colony-008-food-commitment-20261007.md and current run's
 review-20261007-184706 evidence/card/SVG/death records. First full hourly
 review no earlier than19:25UTC/22:25MSK; continue this same campaign without
 source/game changes during observation, stop only on native full ending.
+
+## 2026-10-07 — Dayouinum native defeat at first hourly review
+
+Same one-random-map campaign1e4b7bc1228b42f282d6a7dbcca28884, tile51033,
+Cassandra/Medium/Permadeath. Native GameOver934203, observer19:18:19UTC,
+54m22s continuous autonomy /15.57 game days from baseline20. Review19:28:59UTC
+paused934368, zero people/caravans, victoryfalse. Director/observer/monitor
+ended normally on native confirmation; visible game remains responsive.
+No technical pause, restart, rollback or memory reset during the run.
+
+New verified loss is kidnapping of sole replacement38032 by Pest Army791905,
+native letter plus kidnapped_pawns/health0.619. Last seen alive19:14:27UTC/
+788197, first absent19:15:28/812442; wall-clock is only an interval. No
+confirmed death of this inhabitant. Previously recorded founder286/289
+Hypothermia58685/59261, founder292 BloodLoss92945 and Labrador30406
+BloodLoss94331 unchanged; do not count this kidnapping as another death.
+
+Base still13woodwalls/1door/3sleeping spots; roofed room37,18.69C at finale,
+outside17.65C, campfire0fuel. Earlier room min-28.11/max29.68C in minute
+samples, failed actual warm rescue already documented. Two butcher spots
+157,69 and162,177, one bill each/campfire one bill; recreation pin added.
+No electrical network, research bench, fields, commercial workshop or new
+research.55minute samples all growing_zones/crop_plants0; seasonfalse.
+No full route verification. Real inspected PNG19:32:52UTC/934368 shows
+compact house near mountains, no completed defense line; hide_ui retained UI.
+
+Nutrition8.85 remains/23meals+1raw, medicine31.54of55stock samples nonzero,
+sole zero at forbidden-supplies baseline. Actual repeated Ingest and one
+campfire DoBill observed; source of each stack/long-term output unverified.
+Different failure path from earlier starvation: cold/clinical founder losses,
+then raid kidnapping despite stored food. Cold biome cannot certify edible
+crop preservation and all food-loop regressions. No recorded sales/ledger
+entries or new ending milestone; anomaly_level0 after sampled investigations.
+Doctrine imperial/anomaly/raider still lacks demonstrated coherent execution.
+
+Raid announcements324000/787000; complete first outcome unknown, second
+confirmed kidnapped sole resident. Not recorded as two repelled raids. Bounded
+last100choices19:06:08-19:18:19: positioning/cover without attacking IDs,
+later focus-fire with attacking38032, then accepted melee and three empty
+appliedfalse no-ops. Later inspection confirms commands=[] on those three;
+they preserved the current job, not three failed reissued attacks. Completion unverified; this sequence does not establish
+the sole cause of loss.12hold rows after worker absence interleaved with other
+choices; zero-worker waiting is not rescue. Future correction needs actual
+combat/cold-care sequence evidence, not assumed HTTP completion.
+
+## 2026-10-07 — Dayouinum corrections and shutdown at user request
+
+The same campaign's final paused tick934368 was saved on disk19:48:27UTC,
+XML/campaign/mtime verified, then native quit succeeded; RimWorld process absent.
+Director, observer and private monitor already exited at native defeat. Automation
+laya remains PAUSED. No new colony, restart, rollback, memory reset or live replay.
+
+Recorded31104 exposes a nonbleeding downed patient with Hypothermia0.643,
+life_threatening=true, frostbite tending active, while roofed bedroom37 was21.50C.
+The previous exact-care yield supported starvation only: life-threatening cold
+blocked the transition from TendPatient to Rescue, and rescue tied to food feasibility.
+Thermal rescue now has a separate exact same-patient clinical binding, native usable
+roofed bed at safe temperature and route checks, repeated at POST. It requires no
+food. Bleeding, immune disease, feeding, lifted patients and queued care stay protected.
+A sick but mobile idle caregiver may be natively considered for this rescue.
+
+The main pipeline compares the thermal response before wound-only care, then its
+exact native actor/patient. Tending frostbite is explicitly not warming. Native
+rescue examines completed safe-temperature beds instead of accepting a nearest
+outdoor spot. Detailed downed/dead caregiver flags are respected; unchanged failed
+care pairs wait at least30real seconds and2000ticks, other patients remain available
+and a material clinical change or rollback reopens the pair. Routine nonbleeding
+care avoids known hostile approaches. Clear shots from the current position preserve
+an exact ongoing AttackStatic. Empty-map development offers no new building/doctrine;
+native world/ending evidence still determines the outcome.
+
+Building telemetry now exports current temperature, room and roof. Refuel prompts
+distinguish an empty cold campfire from auto_refuel configuration. Neither this
+context correction nor accepted jobs prove completed heat maintenance or recovery.
+
+QA:1256Python tests,311route audit/no missing literal calls or duplicates,
+native Release-1.6 zero warnings/errors,8actual native thermal-transfer boundary
+cases. Cached-model CUDA/4CPU full thermal sequence chooses rescue in both native
+option orders and preserves it through8following cycles. This is fixture-native
+feasibility plus offline model/transport, not a live safe-route or warming proof.
+Early direct-ID prompts still chose defer; the final response-then-binding pipeline
+is the tested correction. Generic three-way wound/rescue prompt optimization does
+not establish safety for every illness; the explicit thermal gate avoids wound-only
+triage for this verified nonbleeding exposure case.
+
+Full live rescue-to-bed warming, repeated thermal fuel delivery, infection/wound
+care under a simultaneous attack, and complete raid defense remain future gates.
+The old startup NRE remains unexplained. See
+docs/audits/dayouinum-thermal-care-2026-10-07.md and private correction evidence.
+
+Latest same-campaign stable autosaveXML900000/mtime19:17:31UTC predates
+GameOver; terminal API/letter/observer prove outcome. Stderr0; Player.log4519
+contains earlier single pre-generation NRE and zone-over-Granite warnings,
+no new NRE repeat. No source/game orders, speed changes, savePOST or live
+replay during review. Private final report outputs/colony-008-food-commitment-
+final-20261007-2225.md, prepared192858evidence and terminal card/SVG/photo.
+Hourly automation paused after recording native ending; no new colony started.

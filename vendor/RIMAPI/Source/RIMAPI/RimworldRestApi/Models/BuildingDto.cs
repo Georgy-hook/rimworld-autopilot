@@ -27,6 +27,9 @@ namespace RIMAPI.Models
         public string StuffDefName { get; set; }
         public string Label { get; set; }
         public PositionDto Position { get; set; }
+        public int? RoomId { get; set; }
+        public float? CurrentTemperature { get; set; }
+        public bool Roofed { get; set; }
         public int Rotation { get; set; }
         public PositionDto Size { get; set; }
         public bool RequiresPower { get; set; }

@@ -642,6 +642,9 @@ namespace RIMAPI.Helpers
                         FuelCapacity = fuel?.Props.fuelCapacity,
                         FuelType = fuel?.Props.fuelFilter?.AllowedThingDefs.FirstOrDefault()?.defName,
                         AutoRefuel = fuel?.allowAutoRefuel ?? false,
+                        RoomId = building.GetRoom()?.ID,
+                        CurrentTemperature = building.Position.GetTemperature(building.Map),
+                        Roofed = building.OccupiedRect().All(c => c.Roofed(building.Map)),
                     }
                 );
             }
