@@ -1,7 +1,24 @@
-# 0.0.7 — Unreleased candidate
+# Unreleased corrections after 0.0.7
 
-This section describes source changes in `fix/0.0.7-cold-start`. It is not a
-published installer or a claim of demonstrated autonomous victory. See the
+- Added a common quest/letter review that preserves full public terms within
+  actual Laya token limits, with colony and chosen ending on every page.
+- Added grouped public rewards, exact reward/accepter selection and native
+  offer-version/expiry/eligibility validation; letter and ending entry points
+  cannot bypass the review. Pawn rewards are possible population, not promised labor.
+- Shared pending interaction memory prevents immediate monolith reassignment
+  through another worker/module; nested choices retain food and clinical facts.
+- Audited all 120 installed quest scripts, passed 1223 Python tests and native
+  checks/build. Actual cached Laya deferred the recorded deserter crisis and
+  accepted a prepared trade fixture. No colony was launched with these changes.
+- See the [quest audit](docs/audits/quest-prompts-native-contract-2026-10-07.md)
+  for scope, reproduction and remaining live/monument limitations.
+- Corrected the combined clinical/quest context overflow by deduplicating equal
+  observations and compacting complete thermal facts without dropping dangers.
+
+# 0.0.7 — Tagged base, 6 October 2026
+
+This section records the source changes prepared for tag `v0.0.7`. Later
+working corrections are listed above; no autonomous victory is claimed. See the
 [current documentation index](docs/README.md) and
 [API/loop audit](docs/audits/api-loop-audit-2026-10-02.md) for reviewed coverage.
 
@@ -30,7 +47,8 @@ published installer or a claim of demonstrated autonomous victory. See the
   no missing direct calls or duplicates, five native kitchen-boundary cases
   passed, and Release-1.6 compiled with zero warnings/errors. See
   [0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md) for remaining live and
-  installation checks. These final fixes have not been run in a new colony.
+  installation checks recorded at preparation time. Subsequent colonies and
+  observed failures are documented in the playtest history.
 
 ## Earlier candidate changes
 

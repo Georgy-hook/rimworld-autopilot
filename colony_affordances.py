@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 import hashlib
 import json
+import colony_reasoning as reasoning
+import colony_quests as quests
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 
@@ -45,6 +47,10 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
     dev = snapshot.setdefault("development", {}).setdefault("affordances", {})
     tick = int(snapshot.get("game", {}).get("tick") or 0)
     cooldowns = map_state.setdefault("affordance_cooldowns", {})
+    pending = map_state.setdefault("interaction_pending", {})
+    for key, previous in list(pending.items()):
+        if not retry_recent(previous, tick, 30000):
+            pending.pop(key)
     for key, previous in list(cooldowns.items()):
         if not isinstance(previous, dict) or not isinstance(previous.get("tick"), int) or not isinstance(previous.get("retry_ticks"), int) or not retry_recent(previous, tick, previous["retry_ticks"]):
             cooldowns.pop(key)
@@ -54,7 +60,10 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         prior = cooldowns.get(semantic_identity(row)) or {}
         fingerprint = state_fingerprint(evidence(row))
         cooling = bool(prior) and (prior.get("fingerprint") is None or prior["fingerprint"] == fingerprint)
-        if action and row.get("key") and not cooling:
+        # An accepted menu job is unverified work on this target. Switching
+        # workers must not restart the same investigation every few seconds.
+        target_pending = row.get("kind") == "menu" and interaction_identity(row) in pending
+        if action and row.get("key") and not cooling and not target_pending:
             options[action][row["key"]] = row
     dev["candidates"] = options
     return [a for a, rows in options.items() if rows]
@@ -136,6 +145,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         criteria["defer"] = "Keep current jobs and resources; reconsider later."
         effects["defer"] = assess(action, snapshot)
         key, raw = ask_laya_choice(agent, {"option_effects": effects, "decision_facts": {
+            "care_risks": reasoning.attention_facts(snapshot).get("care_risks"),
+            "quest_colony": {**quests.colony_facts(snapshot), "ending": state.get("endgame")},
             "endgame": state.get("endgame"), "threats": snapshot.get("map", {}).get("enemies"),
             "downed": sum(bool(p.get("downed")) for p in snapshot.get("colonists") or [])}},
             action + "_" + stage, "Compare this actual effect and its downside, including doing nothing.", criteria)
@@ -159,6 +170,9 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         for row in selected.get("defer_options") or []:
             _remember(memory, row, tick, 2500)
         return {"applied": False, "reason": "laya_deferred"}
+    pending = map_state.setdefault("interaction_pending", {})
+    if selected.get("kind") == "menu" and retry_recent(pending.get(interaction_identity(selected)), tick, 30000):
+        return {"applied": False, "reason": "interaction_awaiting_observed_result"}
     try:
         live = collect(client, snapshot)
     except Exception as exc:
@@ -187,8 +201,17 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         return {"applied": False, "reason": "native_order_failed", "error": str(exc)}
     valid = isinstance(result, dict) and isinstance(result.get("applied"), bool)
     accepted = valid and result["applied"]
+    if accepted and selected.get("kind") == "menu":
+        # Real-time and game-time floors both apply; normal tick speed cannot
+        # expire the memory before the next decision. Changed native labels or
+        # target IDs are different effects and remain available immediately.
+        pending[interaction_identity(selected)] = failure_record(tick, seconds=120)
     _remember(memory, selected, tick, 2500 if accepted else 150, accepted=accepted, failed=not accepted)
     return result if valid else {"applied": False, "reason": "invalid_native_response"}
+
+
+def interaction_identity(row: dict) -> str:
+    return hashlib.sha256(json.dumps({k: row.get(k) for k in ("kind", "target_id", "label")}, sort_keys=True).encode()).hexdigest()[:24]
 
 
 def summary(snapshot: dict) -> dict:

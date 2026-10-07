@@ -5245,8 +5245,9 @@ class DirectorTests(unittest.TestCase):
             record = director.run_letter_cycle(client, agent, snapshot, {},
                                                pathlib.Path(folder) / "test.jsonl")
         self.assertEqual(record["decision"]["choice"], "option_1")
-        self.assertEqual(agent.states[0]["able_workers"], 1)
-        self.assertIn("cannot work", agent.states[0]["incoming_labor"])
+        labor = json.loads(agent.states[0]["text"])["labor"]
+        self.assertEqual(labor["able_workers"], 1)
+        self.assertIn("cannot work", labor["incoming_labor"])
         self.assertEqual(set(agent.calls[0]["letter_response"]["criteria"]),
                          {"option_0", "option_1", "defer"})
 

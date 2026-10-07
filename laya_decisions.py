@@ -66,10 +66,24 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     # by one another, and a long action ID is counted in the complete envelope.
     limit = max(4, (budget - 100) // max(1, len(options) * len(fields)))
     care_risks = facts.get("care_risks") if isinstance(facts, dict) else None
-    protected_care_facts = isinstance(care_risks, dict) and bool(care_risks)
+    quest_colony = facts.get("quest_colony") if isinstance(facts, dict) else None
+    protected_units = {key: value for key, value in (("care_risks", care_risks), ("quest_colony", quest_colony))
+                       if isinstance(value, dict) and value}
+    joint_facts = "care_risks" in protected_units and "quest_colony" in protected_units
+    if joint_facts:
+        # The quest collector and clinical collector overlap. Preserve one
+        # complete observation instead of spending the window on duplicate keys.
+        care_risks = dict(care_risks)
+        for clinical_key, colony_key in (("meals", "meals"), ("downed", "downed"), ("threats", "enemies"),
+                                         ("bleed_rate_max", "bleeding")):
+            if clinical_key in care_risks and colony_key in quest_colony and care_risks[clinical_key] == quest_colony[colony_key]:
+                care_risks.pop(clinical_key)
+        protected_units["care_risks"] = care_risks
+    protected_facts = bool(protected_units)
+    compact_thermal = False
     # The collector bounds this factual unit: preserve current clinical and
     # recreation needs together, including cases without a thermal condition.
-    visible["facts"] = {"care_risks": care_risks} if protected_care_facts else clip(facts, min(64, budget // 5))
+    visible["facts"] = protected_units if protected_facts else clip(facts, min(64, budget // 5))
     if "last_outcome" in visible:
         visible["last_outcome"] = clip(visible["last_outcome"], 32)
     for row in visible["effects"].values():
@@ -82,9 +96,17 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
             for row in visible["effects"].values():
                 for field in fields:
                     row[field] = clip(row[field], limit)
-        elif protected_care_facts and "last_outcome" in visible:
+        elif protected_facts and "last_outcome" in visible:
             visible.pop("last_outcome")
-        elif visible["facts"] and not protected_care_facts:
+        elif joint_facts and not compact_thermal and isinstance(care_risks.get("thermal"), dict):
+            # Retain every condition/value/stage/danger flag in readable text.
+            # This is a lossless change of representation, not prefix clipping.
+            compact_thermal = True
+            care_risks["thermal"] = "; ".join(
+                str(name) + " " + ", ".join(f"{key} {value}" for key, value in row.items())
+                if isinstance(row, dict) else f"{name} {row}"
+                for name, row in care_risks["thermal"].items())
+        elif visible["facts"] and not protected_facts:
             visible["facts"] = clip(visible["facts"], max(0, size(visible["facts"]) - 4))
         else:
             raise ValueError("Consequence envelope exceeds Laya state budget")

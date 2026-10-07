@@ -39,6 +39,7 @@ namespace RIMAPI.Models
         public string Text { get; set; }
         public string LetterDef { get; set; }
         public int ArrivalTick { get; set; }
+        public int? QuestId { get; set; }
         public List<string> EnabledOptions { get; set; } = new List<string>();
     }
 
@@ -85,6 +86,48 @@ namespace RIMAPI.Models
     {
         public int QuestId { get; set; }
         public int? AccepterPawnId { get; set; }
+        public string OfferVersion { get; set; }
+        public List<QuestRewardSelectionDto> RewardChoices { get; set; } = new List<QuestRewardSelectionDto>();
+    }
+
+    public class QuestRewardSelectionDto
+    {
+        public int PartIndex { get; set; }
+        public int ChoiceIndex { get; set; }
+    }
+
+    public class QuestRewardChoiceDto
+    {
+        public int ChoiceIndex { get; set; }
+        public List<string> Rewards { get; set; } = new List<string>();
+        public bool PopulationRewardPossible { get; set; }
+    }
+
+    public class QuestRewardGroupDto
+    {
+        public int PartIndex { get; set; }
+        public bool ChoiceUsed { get; set; }
+        public List<QuestRewardChoiceDto> Choices { get; set; } = new List<QuestRewardChoiceDto>();
+    }
+
+    public class QuestAccepterDto
+    {
+        public int PawnId { get; set; }
+        public string Name { get; set; }
+        public bool Downed { get; set; }
+        public bool InMentalState { get; set; }
+        public string CurrentJob { get; set; }
+        public int Social { get; set; }
+    }
+
+    public class QuestDiplomacyDto
+    {
+        public string Faction { get; set; }
+        public string FactionDef { get; set; }
+        public int GoodwillChange { get; set; }
+        public bool MakesHostile { get; set; }
+        public int? CurrentGoodwill { get; set; }
+        public string CurrentRelation { get; set; }
     }
 
     public class RescueMissionRequestDto : ExpeditionRequestDto { }

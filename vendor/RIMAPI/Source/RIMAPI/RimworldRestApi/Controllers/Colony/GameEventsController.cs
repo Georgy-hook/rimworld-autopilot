@@ -5,6 +5,9 @@ using RIMAPI.Http;
 using RIMAPI.Models;
 using RIMAPI.Services;
 using RIMAPI.Helpers;
+using System.Linq;
+using RimWorld;
+using Verse;
 
 namespace RIMAPI.Controllers
 {
@@ -72,6 +75,29 @@ namespace RIMAPI.Controllers
         public async Task GetEventCatalog(HttpListenerContext context)
         {
             await context.SendJsonResponse(GameEventAutomationHelper.GetCatalog());
+        }
+
+        [Get("/api/v1/quests/catalog")]
+        [EndpointMetadata("Every loaded quest script, including DLC, mods and internal utility scripts; never generates quests")]
+        public async Task QuestCatalog(HttpListenerContext context)
+        {
+            await context.SendJsonResponse(ApiResult<object>.Ok(DefDatabase<QuestScriptDef>.AllDefsListForReading
+                .Select(d => new { quest_def = d.defName, mod = d.modContentPack?.Name,
+                    root = d.root?.GetType().Name, auto_accept = d.autoAccept,
+                    hidden = d.defaultHidden, random_offer = d.randomlySelectable,
+                    special = d.isRootSpecial, increases_population = d.rootIncreasesPopulation,
+                    description_rules = d.questDescriptionRules?.Rules.Select(r => r.ToString()).ToArray(),
+                    name_description_rules = d.questDescriptionAndNameRules?.Rules.Select(r => r.ToString()).ToArray() }).ToArray()));
+        }
+
+        [Get("/api/v1/quest/offer")]
+        [EndpointMetadata("Fresh public quest terms, exact reward groups, eligible accepters and stable offer version")]
+        public async Task QuestOffer(HttpListenerContext context)
+        {
+            int id = RequestParser.GetIntParameter(context, "quest_id");
+            var quest = Find.QuestManager.QuestsListForReading.FirstOrDefault(q => q.id == id && !q.Historical && !q.hidden && !q.hiddenInUI);
+            await context.SendJsonResponse(quest == null ? ApiResult<QuestDto>.Fail("quest_no_longer_active") :
+                ApiResult<QuestDto>.Ok(GameEventAutomationHelper.ToQuestDto(quest)));
         }
 
         [Get("/api/v1/events/context")]

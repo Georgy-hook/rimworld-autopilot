@@ -76,6 +76,7 @@ namespace RIMAPI.Helpers
                         Text = letter is ChoiceLetter choice ? choice.Text : null,
                         LetterDef = letter.def?.defName,
                         ArrivalTick = letter.arrivalTick,
+                        QuestId = (letter as ChoiceLetter)?.quest?.id,
                         EnabledOptions = letter is ChoiceLetter choiceLetter
                             ? ReadLetterOptions(choiceLetter)
                             : new List<string>(),
@@ -130,6 +131,8 @@ namespace RIMAPI.Helpers
                 var letter = Find.LetterStack.LettersListForReading.OfType<ChoiceLetter>()
                     .SingleOrDefault(row => row.ID == request.LetterId);
                 if (letter == null) return ApiResult.Fail("Choice letter is no longer present.");
+                if (letter.quest != null && !letter.quest.EverAccepted)
+                    return ApiResult.Fail("quest_offer_review_required_use_quest_accept");
                 if (request.LetterText != null && letter.Text != request.LetterText)
                     return ApiResult.Fail("The choice letter changed before the option was selected.");
                 var options = Traverse.Create(letter).Property("Choices").GetValue<IEnumerable<DiaOption>>()
@@ -157,19 +160,18 @@ namespace RIMAPI.Helpers
         {
             try
             {
-                Quest quest = Find.QuestManager.QuestsListForReading.FirstOrDefault(q => q.id == request.QuestId && !q.Historical);
+                if (request == null) return ApiResult.Fail("quest_request_required");
+                Quest quest = Find.QuestManager.QuestsListForReading.FirstOrDefault(q => q.id == request.QuestId && !q.Historical && !q.hidden && !q.hiddenInUI);
                 if (quest == null) return ApiResult.Fail("The selected active quest no longer exists.");
                 if (quest.EverAccepted) return ApiResult.Ok();
                 Pawn accepter = request.AccepterPawnId.HasValue ? PawnHelper.FindPawnById(request.AccepterPawnId.Value) : null;
-                if (quest.RequiresAccepter && accepter == null)
-                {
-                    accepter = Find.Maps.SelectMany(m => m.mapPawns.FreeColonistsSpawned)
-                        .Where(p => !p.Dead && !p.Downed && !p.InMentalState)
-                        .OrderByDescending(p => p.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0)
-                        .FirstOrDefault();
-                }
-                if (quest.RequiresAccepter && accepter == null)
-                    return ApiResult.Fail("This quest requires an accepter, but no healthy colonist is available.");
+                string error = QuestOfferHelper.Validate(quest, request, accepter);
+                if (error != null) return ApiResult.Fail(error);
+                QuestOfferHelper.SelectRewards(quest, request);
+                // Reward selection may change the active requirement parts.
+                if (!QuestUtility.CanAcceptQuest(quest).Accepted || (quest.RequiresAccepter
+                    && (accepter == null || !QuestUtility.CanPawnAcceptQuest(accepter, quest))))
+                    return ApiResult.Fail("quest_selected_reward_requirements_not_met");
                 quest.Accept(accepter);
                 return ApiResult.Ok();
             }
@@ -183,6 +185,15 @@ namespace RIMAPI.Helpers
 
         public static QuestDto ToQuestDto(Quest quest)
         {
+            return QuestOfferHelper.Describe(quest);
+        }
+
+        public static QuestDto BasicQuestDto(Quest quest)
+        {
+            // Materialize native getters before projecting labels/targets.
+            // Nested mod callbacks cannot invalidate an enumerated scratch list.
+            var factions = quest.InvolvedFactions.ToArray();
+            var targets = quest.QuestLookTargets.ToArray();
             return new QuestDto
             {
                 Id = quest.id,
@@ -190,14 +201,18 @@ namespace RIMAPI.Helpers
                 Name = quest.name,
                 Description = quest.description.ToString(),
                 State = quest.State.ToString(),
-                ExpiryHours = GameTypesHelper.TicksToDays(quest.TicksUntilExpiry) * 24,
+                ExpiryHours = !quest.EverAccepted && quest.acceptanceExpireTick >= 0
+                    ? (float?)(GameTypesHelper.TicksToDays(quest.TicksUntilExpiry) * 24) : null,
+                HasOfferExpiry = !quest.EverAccepted && quest.acceptanceExpireTick >= 0,
+                AcceptedHoursAgo = quest.EverAccepted ? (float?)(GameTypesHelper.TicksToDays(quest.TicksSinceAccepted) * 24) : null,
                 Reward = GameEventsHelper.GetQuestRewardString(quest),
                 EverAccepted = quest.EverAccepted,
                 RequiresAccepter = quest.RequiresAccepter,
                 IncreasesPopulation = quest.IncreasesPopulation,
                 Tags = quest.tags?.ToList() ?? new List<string>(),
-                InvolvedFactions = quest.InvolvedFactions.Select(f => f?.Name).Where(s => !string.IsNullOrEmpty(s)).ToList(),
-                LookTargets = quest.QuestLookTargets.Select(target =>
+                InvolvedFactions = quest.root?.hideInvolvedFactionsInfo == true ? new List<string>() :
+                    factions.Select(f => f?.Name).Where(s => !string.IsNullOrEmpty(s)).ToList(),
+                LookTargets = targets.Select(target =>
                 {
                     WorldObject world = target.WorldObject;
                     Site site = world as Site;

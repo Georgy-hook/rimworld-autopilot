@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from laya_decisions import ask_laya_choice
+import colony_quests as quests
+import colony_reasoning as reasoning
+from colony_retry import recent as retry_recent, failure_record
+from colony_affordances import interaction_identity
 
 DESCRIPTIONS = {"progression_research": "Resolve native prerequisite or supporting infrastructure research for the chosen ending route, comparing alternatives and defer.",
                 "progression_ship": "Compare ordinary ship reactor startup or launch against defer using actual engine blockers and survival facts.",
@@ -66,6 +70,12 @@ def _ending_unchanged(selected, row):
         return False
     for key, value in row.items():
         if key == "expires_in_ticks":
+            continue
+        if kind == "accept" and key == "quest_offer":
+            # Countdown/current-job drift is not a different offer. The native
+            # version binds actual terms; execute still refreshes colony readiness.
+            if (selected.get(key) or {}).get("offer_version") != (value or {}).get("offer_version"):
+                return False
             continue
         if kind == "job" and key in {"current_job", "inspect"}:
             continue  # Native eligibility and protected-worker guards are regenerated.
@@ -206,6 +216,8 @@ def prepare(snapshot, map_state):
         return []
     import colony_sessions
     context["_transition_memory"] = colony_sessions.transition_memory(map_state, "progression_transitions", snapshot)
+    context["_interaction_pending"] = map_state.setdefault("interaction_pending", {})
+    context["_game_tick"] = int((snapshot.get("game") or {}).get("tick") or 0)
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
     chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
@@ -281,6 +293,9 @@ def _transition_row(row):
     observation = dict(row)
     for field in ('expires_in_ticks', 'remaining_points', 'progress', 'inspect', 'description'):
         observation.pop(field, None)
+    if row.get('kind') == 'accept' and isinstance(observation.get('quest_offer'), dict):
+        observation['quest_offer'] = observation['quest_offer'].get('offer_version')
+    observation.pop('quest_plan', None)
     if row.get('kind') == 'journey':
         for field in ('label', 'travelers', 'home_food_nutrition', 'mass', 'capacity', 'approximate_distance_tiles',
                       'travel_estimate_reason', 'travel_days', 'food_margin_days', 'native_approx_food_days', 'daily_nutrition'):
@@ -293,7 +308,15 @@ def ending_options(context):
     import colony_sessions
     rows = _ending_options(context)
     memory = context.get('_transition_memory') or {}
-    return {key: row for key, row in rows.items() if not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
+    pending = context.get('_interaction_pending') or {}
+    tick = int(context.get('_game_tick') or 0)
+    return {key: row for key, row in rows.items() if not (
+        row.get('kind') == 'job' and retry_recent(pending.get(_interaction_key(row)), tick, 30000))
+        and not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
+
+
+def _interaction_key(row):
+    return interaction_identity({"kind": "menu", "target_id": row.get("thing_id"), "label": row.get("label")})
 
 
 def journey_summary(context):
@@ -474,6 +497,8 @@ def choose(agent, state, action, snapshot):
                 selected_rows = [r.get("label") for r in (row.get("selection") or {}).get("rows") or [] if r.get("selected")]
                 effects[key]["risk"] = f"Sell colony; keep {selected_rows}; abandon all others. Opens native consequence confirmation."
         facts = {"journey_needs": journey_summary(context), "stage": target, "native_blockers": (context.get("ending_selection") or {}).get("blocker")}
+        facts["care_risks"] = reasoning.attention_facts(snapshot).get("care_risks")
+        facts["quest_colony"] = {**quests.colony_facts(snapshot), "ending": context.get("chosen_ending_route")}
         if not pending:
             choices["defer"] = "Prepare before committing this route step."
             effects["defer"] = {"benefit": "Preserve colony work.", "cost": "Time.", "risk": "Offer may expire.", "inaction": "Route step postponed.", "uncertainty": "Readiness may change."}
@@ -481,7 +506,15 @@ def choose(agent, state, action, snapshot):
                                     'Choose an ordinary progression step or defer; compare benefit, risk, cost, delay and uncertainty.', choices, detailed=True)
     if first is not None:
         raw["ending_route_choice"] = first
-    return ({'defer': True} if selected == 'defer' else candidates[selected]), raw
+    candidate = {'defer': True} if selected == 'defer' else candidates[selected]
+    if candidate.get("kind") == "accept":
+        choice, review, plan = quests.review(agent, candidate.get("quest_offer") or {}, snapshot,
+            {"chosen_ending_route": context.get("chosen_ending_route")})
+        raw["quest_review"] = review
+        if choice != "accept":
+            return {"defer": True}, raw
+        candidate = {**candidate, "pawn_id": plan.get("accepter_pawn_id") or 0, "quest_plan": plan}
+    return candidate, raw
 
 
 def _execute(client, snapshot, map_state, action, selected):
@@ -503,6 +536,16 @@ def _execute(client, snapshot, map_state, action, selected):
         if candidate is None:
             return {"applied": False, "reason": "ending requirements, option or pawn job changed; new decision required"}
         try:
+            if candidate["kind"] == "job" and retry_recent(
+                (map_state.get("interaction_pending") or {}).get(_interaction_key(candidate)),
+                int((snapshot.get("game") or {}).get("tick") or 0), 30000):
+                return {"applied": False, "reason": "interaction_awaiting_observed_result"}
+            if candidate["kind"] == "accept":
+                import rimworld_laya as bridge
+                result = quests.accept_reviewed(client, selected.get("quest_plan"), bridge.collect_snapshot(client))
+                if result.get("applied"):
+                    _record_cooldown(snapshot, map_state, action)
+                return {**result, "victory_verified": False}
             if candidate["kind"] == "journey":
                 fields = ("map_id", "object_id", "team", "supply_days")
             elif candidate["kind"] in ("odyssey", "world-targeting"):
@@ -516,6 +559,9 @@ def _execute(client, snapshot, map_state, action, selected):
                 query["manifest"] = ",".join(f"{r['def_name']}:{r['count']}" for r in sorted(candidate.get("manifest") or [], key=lambda r: r["def_name"]))
             response = client.post("/api/v1/colony/endings/" + candidate["kind"], query=query)
             applied = response in ("ending_caravan_forming", "ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "gravship_landing_map_selected", "world_target_chosen", "world_target_cancelled")
+            if applied and candidate["kind"] == "job":
+                map_state.setdefault("interaction_pending", {})[_interaction_key(candidate)] = failure_record(
+                    int((snapshot.get("game") or {}).get("tick") or 0), seconds=120)
             if applied and candidate["kind"] not in ("selection", "continuation", "odyssey", "world-targeting"):
                 _record_cooldown(snapshot, map_state, action)
             return {"applied": applied, "reason": str(response), "victory_verified": False, "native_choices_required": True}

@@ -17,6 +17,7 @@ import colony_architect as architect
 import colony_professions as professions
 import colony_inspirations as inspirations
 import colony_events as events
+import colony_quests as quests
 import colony_growth as growth
 import colony_expeditions as expeditions
 from colony_retry import failure_record, recent as retry_recent
@@ -10662,7 +10663,7 @@ def _execute_event_response(
         quest = _event_quest(context, event)
         if not quest:
             return {"applied": False, "reason": "No live quest matches this event."}
-        return client.post("/api/v1/quest/accept", body={"quest_id": int(quest["id"])})
+        return quests.accept_reviewed(client, details.get("quest_plan"), bridge.collect_snapshot(client))
     if response == "prepare_rescue_mission":
         result = expeditions.execute(client, details.get("expedition"))
         if result.get("applied"):
@@ -10864,10 +10865,19 @@ def run_event_cycle(
     options = {name: options[name] for name in available_responses}
     event_model_context = events.event_context_for_model(event, context, snapshot)
     event_model_context["player_preferences"] = laya_preferences.model_context(laya_preferences.load_preferences())
-    response, raw = ask_laya_choice(agent, event_model_context, "event_response",
-        "Choose one proportional response to this verified live event. Prefer reversible normal-game actions and preserve food, medicine, defenders and deadlines.", options)
-    answer = raw.get("answers", {}).get("event_response", {})
     details: dict[str, Any] = {}
+    accept_key = next((key for key in ("accept_quest", "accept_rescue_quest") if key in options), None)
+    if accept_key:
+        snapshot["quest_context"] = context
+        selected, raw, plan = quests.review(agent, _event_quest(context, event) or {}, snapshot,
+            {**{key: map_state[key] for key in ("doctrine", "endgame", "income_strategy") if key in map_state},
+             "player_preferences": event_model_context["player_preferences"]})
+        response = accept_key if selected == "accept" else "defer_rescue" if accept_key == "accept_rescue_quest" else "defer_quest"
+        details["quest_plan"] = plan
+    else:
+        response, raw = ask_laya_choice(agent, event_model_context, "event_response",
+            "Choose one proportional response to this verified live event. Prefer reversible normal-game actions and preserve food, medicine, defenders and deadlines.", options)
+    answer = raw.get("answers", {}).get("event_response", {})
     if response == "trade_now":
         traders = context.get("trade_opportunities") or []
         trader_question = {"event_trader": {
@@ -12704,6 +12714,11 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
         bridge.append_log(log_path, record)
         return record
     for letter in letters:
+        # Offered quests go through the complete terms/rewards/accepter review.
+        if letter.get("quest_id") is not None and any(
+            row.get("id") == letter["quest_id"] and not row.get("ever_accepted")
+            for row in context.get("active_quests") or []):
+            continue
         letter_id = str(letter.get("id")) if letter.get("id") is not None else ""
         letter_text = str(letter.get("text") or "")
         options = list(dict.fromkeys(str(label) for label in letter.get("enabled_options") or [] if label))
@@ -12724,25 +12739,16 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
         labor = growth.trade_population_context(snapshot)
         immobile_arrival = any(token in letter_text.casefold() for token in (
             "paralytic abasia", "unable to walk", "cannot walk", "paralyzed", "paralysed"))
-        model_state = {
-            "letter": str(letter.get("label") or "")[:110],
-            "population": labor["population"],
+        letter_labor = {
             "able_workers": labor["able_workers"],
             "bedbound": labor["bedbound"],
             "incoming_labor": ("This person cannot work or defend until mobility recovers; "
                                "they will need feeding and medical care in the meantime."
                                if immobile_arrival else "Check the offer for injuries and work limits."),
-            "details": letter_text[:750],
-            "food": (snapshot.get("map") or {}).get("resources", {}).get("food", 0),
-            "ready_meals": (snapshot.get("map") or {}).get("resources", {}).get("meals", 0),
             "roofed_beds": sheltered_real_bed_count(snapshot.get("development") or {}) or 0,
-            "prisoners": len((snapshot.get("combat") or {}).get("prisoners") or []),
-            "threats": (snapshot.get("map") or {}).get("enemies", 0),
-            "risk": "A recruit adds skills and labor but also needs food, a sheltered bed, treatment and defense; declining can lose a rare chance to rebuild a small colony.",
             "best_skills": labor["best_skills"],
         }
-        selected, raw = ask_laya_choice(agent, model_state, "letter_response",
-            "Decide whether to accept a live joiner or quest offer after weighing colony needs, deadline and risk.", criteria)
+        selected, raw = quests.choose_letter(agent, letter, snapshot, letter_labor, criteria, map_state)
         if selected == "defer":
             map_state.setdefault("deferred_letters", {})[letter_id] = time.time() + 60
             result = {"applied": False, "reason": "Laya deferred this letter for 60 seconds"}
@@ -12765,7 +12771,8 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
                 map_state.setdefault("deferred_letters", {})[letter_id] = time.time() + 60
                 result = {"applied": False, "error": str(exc),
                           "reason": "Letter reply failed; other colony decisions may continue."}
-        record = {"timestamp": bridge.utc_now(), "mode": "choice-letter", "letter": model_state,
+        record = {"timestamp": bridge.utc_now(), "mode": "choice-letter",
+                  "letter": {"id": letter.get("id"), "label": letter.get("label"), "text": letter_text, "labor": letter_labor},
                   "candidates": criteria, "decision": {"choice": selected, "raw": raw}, "result": result}
         bridge.append_log(log_path, record)
         return record

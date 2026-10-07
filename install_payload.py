@@ -35,6 +35,7 @@ RUNTIME_FILES = (
     "colony_combat.py",
     "colony_director.py",
     "colony_events.py",
+    "colony_quests.py",
     "colony_growth.py",
     "colony_expeditions.py",
     "colony_professions.py",

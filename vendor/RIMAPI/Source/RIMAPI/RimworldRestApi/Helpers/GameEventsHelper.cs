@@ -12,17 +12,17 @@ namespace RIMAPI.Helpers
         {
             var dto = new QuestsDto();
 
-            List<Quest> allQuests = Find.QuestManager.QuestsListForReading;
+            List<Quest> allQuests = Find.QuestManager.QuestsListForReading.ToList();
 
             dto.HistoricalQuests.AddRange(
                 allQuests
-                    .Where(quest => quest.Historical)
+                    .Where(quest => quest.Historical && !quest.hidden && !quest.hiddenInUI)
                     .Select(GameEventAutomationHelper.ToQuestDto)
             );
 
             dto.ActiveQuests.AddRange(
                 allQuests
-                    .Where(quest => !quest.Historical)
+                    .Where(quest => !quest.Historical && !quest.hidden && !quest.hiddenInUI)
                     .Select(GameEventAutomationHelper.ToQuestDto)
             );
             return dto;
@@ -31,7 +31,7 @@ namespace RIMAPI.Helpers
         public static List<string> GetQuestRewardString(Quest quest)
         {
             return quest
-                .PartsListForReading.OfType<QuestPart_Choice>()
+                .PartsListForReading.ToArray().OfType<QuestPart_Choice>()
                 .SelectMany(choicePart => choicePart.choices)
                 .SelectMany(choice => choice.rewards)
                 .Select(reward => reward?.ToString() ?? "Unknown")

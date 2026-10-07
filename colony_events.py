@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 import colony_growth as growth
+import colony_quests as quest_review
 
 
 EVENT_FAMILIES: dict[str, dict[str, Any]] = {
@@ -206,7 +207,10 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
             )
     if family == "quest" and event.get("ever_accepted"):
         options.pop("accept_quest", None)
-    if family == "quest" and str(event.get("quest_def") or "").startswith("BuildMonument"):
+    if family in {"quest", "kidnap_rescue"} and quest_review.offer_blocker(event):
+        options.pop("accept_quest", None)
+        options.pop("accept_rescue_quest", None)
+    if family == "quest" and str(event.get("quest_def") or "").startswith(quest_review.UNSUPPORTED):
         # Accepting commits the colony to a timed monument blueprint, but the
         # current API/director has no way to place that quest-specific plan.
         options.pop("accept_quest", None)
@@ -215,6 +219,9 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
 
 
 def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    if event.get("source") == "quest" or event.get("quest_def"):
+        return {"quest_offer": event, "decision_facts": quest_review.colony_facts(snapshot),
+                "rule": quest_review.QUEST_RULE}
     if event.get("family") == "trade":
         # The raw incident and trader rows include every stock item twice. Laya's
         # short decision context then loses the colony's needs and the prices.

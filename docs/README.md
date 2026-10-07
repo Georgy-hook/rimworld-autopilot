@@ -1,7 +1,8 @@
-# Documentation index — 0.0.7 candidate
+# Documentation index — after 0.0.7
 
 The working branch is `fix/0.0.7-cold-start`, targeting `developing` in PR #4.
-This source candidate is unreleased. A dated test result describes its tested
+Tag `v0.0.7` records the 6 October release; this working branch contains later
+corrections. A dated test result describes its tested
 revision and scenario; it does not establish the current build's runtime result.
 
 ## Current contracts
@@ -18,6 +19,8 @@ revision and scenario; it does not establish the current build's runtime result.
 - [Inspiration opportunities and exact workers](audits/professional-inspirations-native-contract-2026-10-05.md)
 - [Explicit finishing jobs and observed completion](audits/finish-downed-native-contract-2026-10-05.md)
 - [Trade, raid and rescue expeditions](modules/expeditions.md)
+- [Complete quest terms, rewards and fresh acceptance](modules/quests.md)
+- [All installed quests and prompt audit, 2026-10-07](audits/quest-prompts-native-contract-2026-10-07.md)
 - [Construction recovery and ship identity](audits/architecture-recovery-contract-audit-2026-10-02.md)
 - [Comprehensive inventory](COMPREHENSIVE_AUDIT_0.0.7.md): distinguishes current
   executors, observations and gaps; consult newer dated audits when they close a finding.
@@ -50,8 +53,8 @@ revision and scenario; it does not establish the current build's runtime result.
   before relying on a test count or a closure statement.
 - `playtests/` and [colony journal](../PLAYTEST_REPORT.md): observed game results,
   including losses and technical replays.
-- [Release notes](../RELEASE_NOTES.md): 0.0.7 is explicitly unreleased;
-  0.0.6 and earlier describe their own builds.
+- [Release notes](../RELEASE_NOTES.md): unpublished working changes are separate
+  from the tagged 0.0.7 build and earlier versions.
 - [0.0.6 readiness](RELEASE_READINESS_0.0.6.md) and other versioned reports stay
   as historical evidence. Their open issues may be superseded by later audits;
   they are not the current development checklist.

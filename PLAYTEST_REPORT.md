@@ -652,3 +652,129 @@ hypothermia had cleared from their actual health records and frostbite was also
 absent. The human bedroom was 19.78°C against outdoors -25.91°C. Two actually
 rested and one ate. Observer returned to 3×. Stock declined to 27 initial meals;
 this confirms early thermal recovery, not sustainable nutrition or survival.
+
+First hourly review after 18:12 UTC: this same campaign is now Complete Union
+of Leler (Permadeath). At tick 659160 food was zero, two founders were downed
+with extreme malnutrition, and the empty campfire left the roofed bedroom at
+-19.64°C despite 162 wood. Later two founders died from Malnutrition, native
+ticks 666631/669060, observer 18:16:23/18:17:05 UTC. Continuous autonomy after
+the startup pause was about 64m34s/65m16s. Native letters and exact_culprit
+confirm both causes. A surviving founder plus the man in black remain alive;
+GameOver/victory false at 18:19 UTC. No terminal colony outcome is claimed.
+
+Open observed defects: ordinary assign_real_bed repeatedly calls medical
+bed-rest and gets medical_rest_not_indicated; repeated refuel requests get
+unsafe_fuel_route; zero food does not reliably keep effective food work ahead
+of accepted ending requests and deferrals. Late hold_survival is an active
+waiting loop with worsening patients, not a frozen Python process. Earlier
+brief meat/meal production occurred, so the issue is sustained provisioning.
+Current save XML 660000 and matching campaign ID verified on disk. Hourly
+observation continues without runtime edits or game intervention. Further
+evidence is appended to the startup playtest document linked above.
+
+Closing 18:24:34 UTC, tick 694676: two alive. The surviving founder actually
+received food (0.949, malnutrition 0.536), but remained downed with extreme
+hypothermia 0.719. Stock food still zero, observer 1×, GameOver/victory false.
+
+Second hourly review 19:16:07 UTC, tick 1176699: last founder and man in black
+remain alive and mobile; a temporary nonworking hospitality guest is present.
+No new colonist death confirmed. Thermal recovery/fueled campfire and cleared
+construction backlog are real, but human reachable nutrition is zero and
+malnutrition severe. Immature rice does not yet feed them. Bounded decisions
+showed flowers/dye selected during starvation and repeated native-menu
+monolith investigation, completion unverified. Production logistics returned
+HTTP 200 with an empty JSON body twice, despite top-level module availability.
+Save XML 1140000 and campaign verified; emergency 1×, observation active.
+
+The last founder subsequently died from Malnutrition, native tick1205026,
+observer19:24:35UTC, exact cause also in the native letter. Total autonomy
+excluding the startup pause about2h14m06s. All founders lost; this is not
+the terminal campaign outcome. At19:26UTC the man in black, guest and new
+arrival remained alive; nativeGameOver/victoryfalse. Observation continues.
+
+## Third hourly review after 20:12 UTC — 2026-10-06
+
+At 20:16:48 UTC, tick 1385905, all three replacement/guest pawns were
+starving. The man in black died from Malnutrition at native tick 1391721,
+observer 20:18:25 UTC; native letter and exact_culprit agree. At 20:18:47 UTC,
+tick 1393053, two remain alive: the temporary nonworking guest and a colony
+member, now downed with malnutrition 0.855. The guest was Ingest with food
+still zero; intake is not yet confirmed. GameOver/victory false.
+
+Food did arrive briefly during this interval: sampled stock peaked at 11
+and food levels rose. Sustainable supply still failed. Thirty of 31 rice
+plants were harvestable at the main snapshot; early rice harvest requests
+were accepted twice but delivered nutrition was unverified. A fresh caribou
+corpse had a nearby third butcher spot and an active bill. Nine sampled
+monolith requests reassigned the same unfinished investigation, four to the
+working arrival and five to the guest. Hunger and malnutrition are present
+in decision evidence, so missing all hunger context is not established.
+The rice zone was configured for dandelions and zone count grew from six to
+11. One bed blueprint failed because it would block the campfire interaction
+cell, failure_count eight. Nested production logistics remains unavailable.
+
+The new member belongs to PlayerColony in the save, with no host faction or
+quest tags; permanent membership is supported. His prosthetic arm and child
+MissingBodyPart entries predate this review and are not new surgical damage.
+Campfire fuel 1.118/20, wood zero, roofed bedroom 28.35 C. Save XML 1380000,
+mtime 20:15:05 UTC, same campaign and stable read verified. All processes live,
+observer 1x for critical starvation, no forced pause. No runtime fixes,
+orders, restart, rollback or memory reset. Observation remains active.
+
+The new colony member died at 2026-10-06T20:23:54.841148+00:00, native 1411247, cause Malnutrition, corroborated by native letter and observer exact_culprit.
+Follow-up 2026-10-06T20:25:06.253440+00:00, tick 1415177: 1 alive; GameOver/victory False/False. At 20:23:49 UTC the temporary guest actually had food 0.427 and malnutrition fell to 0.612; she had returned to InvestigateMonolith. The new member was then downed at malnutrition 0.998. No game or runtime intervention.
+
+## Native terminal outcome of the care-ownership colony — 2026-10-06
+
+GameOver verified on the same campaign at native tick 1565355; director
+completed at 2026-10-06T20:38:21.644705+00:00, observer and monitor stopped normally.
+Read-only confirmation at 21:09/21:10 UTC: zero colonists, zero caravans,
+victory false, same campaign ID, game paused at 1565358. Total autonomy
+excluding the startup technical pause was about 3h28m (26.1 game days).
+All founders were already lost after about 2h14m. Native outcome is
+"everyone dead or gone"; this does not establish that every guest died.
+A late pawn died by gunfire, but the last guest's precise fate still needs
+individual evidence. No runtime code, game orders, replay, restart, rollback
+or memory reset was performed. Hourly automation is being paused.
+
+Final evidence refinement: both last pawns' bodies are present on the map.
+The temporary guest's corpse ID 27478 confirms death; observer first reported
+it at 20:38:07 UTC with Unknown cause, no exact native tick. Blood loss had
+risen to 0.917 while malnutrition was falling; blood loss is a plausible
+cause, not native-confirmed. The late arrival was the Intro_Deserter reward,
+not another man in black. She died by gunfire at native 1564956, corpse 27497.
+
+New confirmed context defect: the actual accept-quest model input at
+20:37:07 had empty decision_facts and only the event JSON prefix through
+the pawn name. Empire hostility, immediate attacking trooper and colony
+clinical state did not survive. _detailed_state clips the broad event context
+to budget/6; agent.predict receives exactly that clipped visible_state.
+Only 116 of 312 state tokens were used. Installed and source SHA256 match
+for laya_decisions.py and colony_events.py. The API supplied the full quest
+description; population flag was nevertheless false for its Reward_Pawn.
+The selected imperial ending also conflicted with the quest's Empire hostility.
+
+Five direct-tend plans were rejected while the same actor was actively
+rescuing that patient. Distance declined, so this was not a frozen actor.
+The mismatch between offered plans and care job protection remains open;
+a successful alternative treatment is not established. A late rice harvest
+request accepted designations despite worker=None and no eligible PlantCutting
+worker. These are observations only. Runtime and game state were not changed.
+The scheduled observation is PAUSED; RimWorld remains on the native final pause.
+
+## Offline quest corrections after the final care-ownership loss — 2026-10-07
+
+No colony was started or resumed and no game commands were issued. The recorded
+deserter acceptance exposed loss of public consequences before inference; it is
+not treated as the only cause of the preceding starvation losses. Complete
+terms review, exact native rewards/accepters, stale-offer/roster guards and
+cross-module interaction retry memory are now corrected in source.
+
+All 120 installed named quest scripts passed complete-field/tokenizer transport
+checks; automatic/internal scripts are included in that count. The Python suite
+passed 1223 tests, native guards and index-mutation selection passed, and the
+native bridge compiled. Actual cached Laya deferred the recorded deserter crisis
+and accepted a prepared trade fixture without any game/API command. This is
+offline evidence, not a successful colony or a guarantee of completing all quests.
+See the [quest audit](docs/audits/quest-prompts-native-contract-2026-10-07.md)
+for exact scope, script inventory and remaining live/monument gaps.
