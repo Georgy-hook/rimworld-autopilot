@@ -29,22 +29,29 @@ namespace RIMAPI.Helpers
         public static QuestDto Describe(Quest quest)
         {
             QuestDto dto = GameEventAutomationHelper.BasicQuestDto(quest);
-            var report = QuestUtility.CanAcceptQuest(quest);
-            dto.CanAccept = quest.State == QuestState.NotYetAccepted && report.Accepted
-                && (quest.acceptanceExpireTick < 0 || quest.TicksUntilExpiry > 0);
-            dto.AcceptanceReason = report.Reason;
+            bool offered = !quest.Historical && quest.State == QuestState.NotYetAccepted;
+            dto.CanAccept = false;
+            dto.AcceptanceReason = "quest_not_offered";
+            if (offered)
+            {
+                var report = QuestUtility.CanAcceptQuest(quest);
+                dto.CanAccept = report.Accepted && (quest.acceptanceExpireTick < 0 || quest.TicksUntilExpiry > 0);
+                dto.AcceptanceReason = report.Reason;
+            }
             dto.RewardGroups = Rewards(quest);
             dto.Reward = dto.RewardGroups.SelectMany(g => g.Choices).SelectMany(c => c.Rewards).ToList();
             dto.PopulationRewardPossible = dto.RewardGroups.Any(g => g.Choices.Any(c => c.PopulationRewardPossible));
             dto.IncreasesPopulation = dto.IncreasesPopulation || dto.PopulationRewardPossible;
-            dto.EligibleAccepters = PawnsFinder.AllMaps_FreeColonistsSpawned
-                .Where(p => quest.RequiresAccepter && quest.State == QuestState.NotYetAccepted)
+            dto.EligibleAccepters = !offered || !quest.RequiresAccepter ? new List<QuestAccepterDto>() : PawnsFinder.AllMaps_FreeColonistsSpawned
                 .Where(p => !p.Dead && QuestUtility.CanPawnAcceptQuest(p, quest))
                 .Select(p => new QuestAccepterDto { PawnId = p.thingIDNumber,
                     Name = p.LabelShortCap, Downed = p.Downed, InMentalState = p.InMentalState,
                     CurrentJob = p.CurJob?.def.defName, Social = p.skills?.GetSkill(SkillDefOf.Social)?.Level ?? 0 })
                 .OrderBy(p => p.PawnId).ToList();
-            dto.Requirements = quest.PartsListForReading.ToArray().OfType<QuestPart_RequirementsToAccept>()
+            // Accepted/historical quests remain public commitments, but their
+            // expired acceptance parts may refer to destroyed targets. Do not
+            // rerun irrelevant acceptance callbacks on every context read.
+            dto.Requirements = !offered ? new List<string>() : quest.PartsListForReading.ToArray().OfType<QuestPart_RequirementsToAccept>()
                 .Where(p => p.ShowInRequirementBox).Select(p => {
                     var acceptance = p.CanAccept();
                     return $"{p.GetType().Name}: {(acceptance.Accepted ? "met" : "not met")}; {p.DescriptionPart}; {acceptance.Reason}";

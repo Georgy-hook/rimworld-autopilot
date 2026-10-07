@@ -24,6 +24,9 @@ packages together before a future playtest.
 deadline. It is null when absent or already accepted; `has_offer_expiry` states
 whether it exists. `accepted_hours_ago` reports elapsed time for commitments;
 work duration still comes from the public terms.
+Native eligibility callbacks and accepter scans run only for pending offers;
+accepted/historical quests do not rerun acceptance requirements against targets
+that may already have disappeared.
 
 Public reward groups preserve alternatives. The legacy flattened `reward` field
 remains for compatibility and is not repeated in Laya's input when groups exist.

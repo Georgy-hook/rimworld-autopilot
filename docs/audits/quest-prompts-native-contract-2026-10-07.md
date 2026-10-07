@@ -30,6 +30,7 @@ not established as the sole cause of the colony's loss. See the
 | --- | --- |
 | Input | Common `colony_quests` review with complete public terms, actual-tokenizer pages and colony/ending facts on every page. |
 | Inventory | Native catalogue of every loaded script and generic offer handling; no ordinary name whitelist. |
+| Context reads | Acceptance callbacks/accepter scans run only for pending offers; archived or accepted commitments do not reevaluate obsolete acceptance targets. |
 | Consequences | Immediate/delayed threats, diplomacy/current relation, travel, labor, food/care, duration, ideology, ending and uncertainty. |
 | Rewards/people | Public reward groups, exact reward/accepter IDs and possible population distinguished from guaranteed labor. |
 | Time | Offer expiry and elapsed accepted time separated; work deadlines remain public terms. |
