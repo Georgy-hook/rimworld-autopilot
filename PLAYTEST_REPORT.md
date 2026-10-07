@@ -936,3 +936,30 @@ unverified. Development continues as0.0.8; published0.0.7 advanced to stablemain
 anddeveloping without force. Obsolete merged branch names removed; historical
 clean checkouts preserved detached. Branch rename closed oldPR4, so a replacement
 candidate PR carries its continuation.
+
+## Candidate 0.0.8: one new random landing — 2026-10-07
+
+After offline repairs, source29df0ef and package2a3572d were pushed to
+feature/0.0.8, draftPR5 into developing. Both native installs hash-match
+DLL1.10.0+29df0ef; runtime files and rebuilt0.0.8GUI verified, backups retained.
+Stablemain/developing remain publishedv0.0.7, not this working candidate.
+Random tile10598, one generation, Cassandra/Medium/permadeath, no previous
+save/memory reuse. Autonomy began11:11:50UTC, baseline22; normal3x.
+First hourly observation no earlier12:13UTC/15:13MSK. Automationlaya ACTIVE.
+
+Startup11:14:53UTC/65760: three founders alive, no new injuries/downed/bleeding.
+One has an initial prosthetic leg and missing replaced components, not a new
+operation. Two cannot fight fires, one cannot cook, one cannot perform medicine;
+workforce limitations must remain visible. Food51meals/45.9nutrition, medicine34,
+outside14.10C/growthseasontrue. Native orders unlocked supplies and built
+22walls/door/3beds/torch; room23 remains outdoors(openroof58777), so neither
+this physical inventory nor the screenshot proves completed shelter.
+Fields, sustainable production, sales and permanent growth unverified.
+
+One visible game, CUDA director4CPU, observer and read-onlymonitor verified;
+venv parent/child pairs are one logical worker. Stderr0. Actual ticks grew after
+save; XML60000/mtime11:14:35UTC/campaign verified. Logistics returned realJSON
+12then17options; this does not close every future serialization boundary.
+Screenshot, native positions, comparison card and SVG retained privately.
+Solitary pre-generation NRE still lacks a stack. No manual pawn orders,
+diagnostic gameplay replay, rollback or second landing were used.
