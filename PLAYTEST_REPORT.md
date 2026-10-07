@@ -778,3 +778,30 @@ and accepted a prepared trade fixture without any game/API command. This is
 offline evidence, not a successful colony or a guarantee of completing all quests.
 See the [quest audit](docs/audits/quest-prompts-native-contract-2026-10-07.md)
 for exact scope, script inventory and remaining live/monument gaps.
+
+
+## Quest-review candidate: one new random colony — 2026-10-07
+
+User authorized a new launch. Installed Python/package 3e7aa57, native source 75a0aea
+and DLL 1.10.0+75a0aea after 1223 tests, 310 routes and 120 quest-context checks.
+One random generation: Southwestern Hadussia Manifest League (Permadeath),
+tile 16155, world seed laya-quest-review-20261007, map seed 16622162,
+campaign 3323562a948840808815db9d068482ea; Cassandra/Medium.
+Baseline 22; autonomy 07:21:26.913835 UTC, normal 3x, CUDA with 4 CPU threads.
+No previous save/memory reused, no reroll/rollback or direct pawn orders.
+
+At 07:25:51 UTC tick 93175 all three founders 985/988/991 were alive,
+without downed/bleeding/conditions; 43 initial meals remained.
+Actual 23 walls/door/3 beds, room 60 fully roofed at 23.04C;
+the animal spot was outdoors. HarvestDesignated observed earlier, sustainable
+food and actual quest/reward completion remain unproved.
+Imperial ending selected alongside anomaly direction/raider diplomacy;
+their consistency needs actual observation. Disk save 88618 and later 88742
+verified the same campaign. One director/observer/read-only monitor, stderr 0.
+One pre-new-game NRE Ref 8B5D0CDC without original stack remains unresolved;
+Player.log did not grow after 07:20:18 UTC. Hourly heartbeat active,
+first full check 08:23 UTC. This is an ongoing run, not a survival success.
+
+Closing minute sample 07:28:25 UTC, tick 144397: all three alive without
+downed/conditions, food levels 0.924/0.864/0.996, 36 initial meals and a
+fully roofed bedroom at 23.31C. No hourly outcome is available yet.
