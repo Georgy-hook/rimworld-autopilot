@@ -844,3 +844,58 @@ Same-campaign renamed disk save 1260000 / mtime 08:37:46 UTC checked stable;
 no save POST issued. Single services healthy, stderr 0, Player.log unchanged.
 GameOver/victory false; hourly monitoring ACTIVE, next 09:23 UTC.
 No runtime/game edits, pawn orders, replay, restart, rollback or memory reset.
+
+## Second quest-review hour and expanded verification — 2026-10-07
+
+Same Roinor campaign, installed runtime unchanged at package 3e7aa57/native 75a0aea.
+Primary 09:22:21 UTC / 2000507, closing 09:42:06 / 2316515:
+2h20m40s continuous autonomy, 38.61 game days from baseline 22.
+Founders lost from the map: Sugar 988 died at 1400386, observer 08:49:27 UTC,
+exact Scratch after a red-fox predation letter (1h28m); Sandoval 985 died at
+2004266, observer 09:23:27 UTC, exact Bruise / beaten to death after Berserk
+(2h02m). Killer unverified. Noah 991 was kidnapped at 2109028 by Blight Party,
+between 09:28:22 and 09:29:25 minute slices; not recorded as dead.
+Hanson 78079 is the emergency man in black, not planned recruitment.
+GameOver/victory remain false.
+
+New animal loss: colony rhinoceros 39292 executed by cutting at 2040602 after
+Noah's Slaughterer 2040038 / Malnourished. Earlier bonded Labrador blood-loss
+death remains a separate, already recorded event. Rhino's last observed
+Obedience/Release were unlearned, unwanted, no master/follow_drafted; sampled
+tameness steps 4 to 1. Wild prey are excluded from pet losses.
+
+Sixteen self_tend_985 attempts 09:19:58–09:22:16 rejected
+care_actor_or_patient_changed; actor remained drafted/Wait_Combat while the
+only observed hostile was downed. No completed care. Her subsequent beating
+death is not attributed solely to this delay. Thirteen at-risk crop harvests
+in primary100: nine wood-only, two herbs/wood, one herbs, one berries.
+Twenty-three elective augmentation choices in closing100 were deferred;
+no surgery or stocked bionic/prosthetic part. The same patient became hungry/downed.
+
+Two growing zones finally appeared, both roses, 45/46 cells, edible yield 0;
+fertility 1.0, year-round temperate forest. Five beds in three roofed rooms
+17.5–19.6C, but primary barracks cleanliness -13.4/hospital -4.33 and corpse
+contamination. Stove/cooler off, generator empty/output zero at closing;
+earlier networks differed. Microelectronics 75 to 77/3000; trade ledger empty,
+no comms/beacon, no planned permanent population gain or completed ending milestone.
+
+User requested verification of pictures/layout, losses/raids and colony plans.
+Added docs/COLONY_VERIFICATION.md and a saved-evidence-only card/layout utility
+tools/colony_verification.py, five targeted tests passed. Actual cards were
+generated for this run and the prior cold colony; no game/runtime behavior changed.
+Base PNG verified between 2300371–2300384 at 09:39:08 UTC. Only camera/UI capture;
+no jobs, speed, pause, save or memory commands. Native screenshot required
+snake_case fields; HideUI did not visibly clear the interface. Five archived
+raid announcements: two older threats disappeared across repeated minute
+slices with all founders alive, one encounter unobserved, one downed attacker
+in the later defense, latest raid kidnapped Noah. Complete attacker fates / a
+count of clean repelled raids remain unverified.
+
+Closing Hanson downed/hunger0, infection0.905/immunity1.0, raw34/1.7nutrition.
+Later 09:59:41 UTC / 2608819: still alive, mobile; infection, malnutrition and
+poisoning gone, hunger rose 0.065 to 0.258, Ingest then BeatFire. Recovery/food
+are observed, stable supply is not: raw1/0.05nutrition, meals0. Campaign ongoing.
+Disk 2280000 / mtime09:36:59 UTC verified; services healthy, stderr0,
+Player.log still old3331bytes. Reports and comparison retained in private outputs.
+No full decision history read; each tail at most8MB/100records. Hourly ACTIVE,
+next10:23 UTC, expanded assessment now in the automation prompt.

@@ -28,6 +28,7 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Evidence and history
 
+- [Colony screenshots, layout, losses, raids, economy and comparison](COLONY_VERIFICATION.md)
 - [0.0.7 release preparation and remaining gates](RELEASE_READINESS_0.0.7.md)
 - [Clinical context and truthful waiting, 2026-10-06](audits/clinical-context-wait-2026-10-06.md)
 - [Production deferral and kitchen boundary, 2026-10-06](audits/food-deferral-kitchen-2026-10-06.md)
