@@ -805,3 +805,42 @@ first full check 08:23 UTC. This is an ongoing run, not a survival success.
 Closing minute sample 07:28:25 UTC, tick 144397: all three alive without
 downed/conditions, food levels 0.924/0.864/0.996, 36 initial meals and a
 fully roofed bedroom at 23.31C. No hourly outcome is available yet.
+
+## First quest-review hour — 2026-10-07
+
+Same campaign 3323562a948840808815db9d068482ea, now named Roinor (Permadeath).
+Primary evidence 08:28:03 UTC / 1074902: all three founders alive after
+1h06m37s autonomous time, about 17.91 game days. Stock food/meals/raw 0;
+Sandoval and Noah had early Malnutrition. Across 65 minute samples there
+were no growing zones/crops, despite an active growing season. Raw food and
+meal replenishment did occur earlier; do not report complete absence of cooking.
+
+Bounded latest 100 decisions, 08:19:56–08:28:03 UTC: 66 hold_survival records,
+all single_feasible_action with only that candidate. Nine at-risk crop harvests
+were accepted: seven expected only WoodLog, one WoodLog/MedicineHerbal,
+one WoodLog/RawBerries. The model criterion said dying crops without these
+actual products; source permits arbitrary dying harvestable plants/trees.
+This is a confirmed meaning mismatch; indefinite looping is not established.
+
+Bonded Labrador Lilith 5045 died from native-confirmed Blood loss at 860978,
+between minute samples 08:13:16–08:14:18 UTC, about 52 minutes after autonomy.
+Her last four samples had 9 tendable wounds, quality 0 / ticks_left -1 and
+BloodLoss 0.324/0.520/0.706/0.902. Successful tending was not confirmed.
+An unrelated Beggars child's corpse is present; precise death cause/time unknown.
+
+Generator 1000W powered one 30W lamp; Cooler 45765 was off in a different network.
+26 fires/two home fires and a pyromaniac spree existed on the primary slice;
+observer's emergency 1x was justified, ticks moved and force_pause was false.
+Later closing 08:35:59 UTC / 1221140: all three still alive after 1h14m32s,
+no downed/bleeding/Malnutrition, food 17 (meal 1 / raw 16) / 1.7 nutrition,
+Sugar DoBill at Campfire 43337, Noah HaulToCell; Sandoval recovering FoodPoisoning.
+Fires 0 then; extinction cannot be attributed uniquely to pawns versus rain.
+
+Real research bench, Microelectronics 75/3000; no new permanent residents/sales.
+Intro_Wimp and Hospitality_Refugee offers expired unaccepted; Beggars failed.
+No actual new quest acceptance/reward verified. Production/logistics returned
+valid data / 19 options on this slice; earlier empty-body fault remains open.
+Same-campaign renamed disk save 1260000 / mtime 08:37:46 UTC checked stable;
+no save POST issued. Single services healthy, stderr 0, Player.log unchanged.
+GameOver/victory false; hourly monitoring ACTIVE, next 09:23 UTC.
+No runtime/game edits, pawn orders, replay, restart, rollback or memory reset.
