@@ -2765,12 +2765,8 @@ def estimated_food_runway_days(resources: dict[str, Any], people_count: int) -> 
     RimWorld reports total stored nutrition. A humanlike's typical 1.6/day
     demand is only an estimate; work, traits and food access can change it.
     """
-    if people_count <= 0:
-        return None
-    nutrition = bridge.first_number(resources.get("nutrition"))
-    if resources.get("nutrition") is None:
-        nutrition = 0.9 * int(resources.get("food") or resources.get("meals") or 0)
-    return round(max(0.0, nutrition) / (1.6 * people_count), 1)
+    days = capabilities.stored_food_days(resources, people_count)
+    return round(days, 1) if days is not None else None
 
 
 def firefighter_priority_options(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2801,8 +2797,20 @@ def preserve_immediate_care(actions: list[str], focused: list[str]) -> list[str]
     return list(dict.fromkeys(focused + [a for a in actions if a in IMMEDIATE_CARE_ACTIONS]))
 
 
-def focus_active_fire_choices(actions: list[str], home_fire: bool = False) -> list[str]:
+def focus_active_fire_choices(actions: list[str], home_fire: bool = False,
+                              snapshot: dict[str, Any] | None = None) -> list[str]:
     """Respond to a verified nearby fire before routine colony work."""
+    if home_fire and snapshot is not None:
+        capable = [p for p in snapshot.get("colonists") or []
+                   if not p.get("downed") and not p.get("is_dead") and not p.get("in_mental_state")
+                   and not p.get("is_drafted") and "Firefighter" in (p.get("work_priorities") or {})
+                   and not (p["work_priorities"]["Firefighter"] or {}).get("disabled")
+                   and str(p.get("id")) not in active_care_pawn_ids(snapshot)]
+        snapshot.setdefault("development", {})["available_firefighters"] = len(capable)
+        if not capable:
+            # Orders already validate exposed errands. An incapable or busy
+            # crew cannot extinguish fire by endlessly expanding home/holding.
+            return [a for a in actions if a not in {"prioritize_firefighting", "expand_home_area"}]
     if "prioritize_firefighting" in actions:
         return preserve_immediate_care(actions, ["prioritize_firefighting"])
     if "expand_home_area" in actions:
@@ -3008,6 +3016,19 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     # gathering work. Reserve that filter for a near-term shortage. A nearly
     # ripe field gives a little more time unless cooking fuel is missing.
     urgency_window = 1.5 if near_ready_crop else 2.5
+    need = capabilities.food_planning_facts(snapshot)
+    plans = (snapshot.get("development") or {}).get("capability_plans") or {}
+    crop_leads = [float(o["calendar_days_to_harvest_estimate"])
+                  for action in ("configure_crop", "create_growing_zone")
+                  for site in (plans.get(action) or {}).values()
+                  for o in (site.get("crop_options") or {}).values()
+                  if o.get("human_edible_product") is True
+                  and float(o.get("calendar_days_to_harvest_estimate") or 0) > 0]
+    # Starting a first field at a two-day reserve is already too late for a
+    # five-day crop. Budget sowing/hauling as well as native growth time.
+    first_field_due = bool(need["crop_capacity_gap"] and crop_leads)
+    if first_field_due:
+        urgency_window = max(urgency_window, min(crop_leads) + 2.0)
     fuel_gap = needs_cooking_fuel_reserve(snapshot)
     # Nearly ripe crops do not solve an empty wood reserve for the campfire.
     # Preserve a wider, still model-chosen food/fuel window in that case.
@@ -3025,12 +3046,22 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         replenishment.discard("harvest_at_risk_crops")
         if not fuel_gap:
             actions = [a for a in actions if a != "harvest_at_risk_crops"]
-    if capabilities.food_planning_facts(snapshot)["renewable_food_gap"]:
-        replenishment.add("create_growing_zone")
+    if need["renewable_food_gap"]:
+        replenishment.update({"create_growing_zone", "configure_crop"})
     # Eating an existing meal does not replenish the pantry. Do not focus an
     # otherwise productive cycle around that action alone.
-    if not replenishment.intersection(actions):
+    # A mature harvest/hunt feeds today; crop setup feeds only after growth.
+    # Keep the future-food alternative for the first field, but do not let it
+    # take every decision while ready food can be obtained now.
+    ready_food = {"harvest_local_plants", "harvest_food_crops_early", "wildlife_hunt_plan",
+                  "designate_safe_hunting", "sustenance_food_batch", "production_feed_batch"}
+    if not replenishment.intersection(actions) and not any(
+            p.get("hunger") is not None and float(p["hunger"]) < .12
+            or any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) > 0
+                   for h in p.get("health_conditions") or []) for p in people):
         return actions
+    if runway <= 1.5 and ready_food.intersection(actions):
+        actions = [a for a in actions if a not in {"create_growing_zone", "configure_crop"}]
     related = {
         *replenishment, "unforbid_supplies", "eat_available_meal",
         "feed_hungry_colonist", "prioritize_plant_cutting", "prioritize_hunting",
@@ -3081,7 +3112,8 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
             related.update({"prioritize_cooking", "configure_food_bills"})
     # Growing more plants will not feed anyone in this window. At under 1.5
     # days, even generic hauling is less direct than gathering or hunting.
-    related.discard("prioritize_growing")
+    if runway <= 1.5 or not first_field_due:
+        related.discard("prioritize_growing")
     if not food_present:
         related.difference_update({"prioritize_hauling", "create_nearby_food_cache"})
     if runway <= 1.5:
@@ -3092,6 +3124,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         def assigned(work: str) -> bool:
             return any(not pawn.get("downed") and not pawn.get("in_mental_state")
                        and int(((pawn.get("work_priorities") or {}).get(work) or {}).get("priority") or 0) == 1
+                       and not food_work_adjustments(snapshot, pawn, work)
                        for pawn in people)
 
         if assigned("Cooking"):
@@ -3114,7 +3147,10 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         snapshot.setdefault("development", {})["deferred_during_food_crisis"] = [
             action for action in actions if action not in related
         ]
-    return preserve_immediate_care(actions, focused or actions)
+    # Lack of an immediately executable source is not permission to build art,
+    # run a long ritual or switch research during starvation. Waiting remains
+    # explicit when work is pending or no able actor/source exists.
+    return preserve_immediate_care(actions, focused or ["hold_survival"])
 
 
 def focus_downed_animal_choices(snapshot: dict[str, Any], actions: list[str]) -> list[str]:
@@ -6020,7 +6056,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     actionable = defer_new_construction_when_backlogged(snapshot, actionable)
     if not home_fires:
         actionable = focus_unarmed_founder_choices(snapshot, actionable, food_emergency=food_emergency)
-    actionable = focus_active_fire_choices(actionable, bool(home_fires))
+    actionable = focus_active_fire_choices(actionable, bool(home_fires), snapshot)
     starter_record = map_state.get("known_starter_base") or pending_starter_plan(map_state, map_id)
     if not starter_record and "starter_base" in (map_state.get("issued") or {}):
         starter_origin = map_state.get("anchor") or {}
@@ -7989,6 +8025,13 @@ def dedicate_researcher(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
                 for work, priority, response in changes]}
 
 
+def food_work_adjustments(snapshot: dict[str, Any], pawn: dict[str, Any], work: str) -> dict[str, int]:
+    """Reserve the selected worker's food task above routine work, without care interruption."""
+    if str(pawn.get("id")) in active_care_pawn_ids(snapshot):
+        return {}
+    return capabilities.food_work_adjustments(snapshot, pawn, work)
+
+
 def priority_deficit_workers(snapshot: dict[str, Any], work: str, *,
                              preferred_ids: set[int] | None = None,
                              avoid_ids: set[int] | None = None) -> list[dict[str, Any]]:
@@ -8002,7 +8045,8 @@ def priority_deficit_workers(snapshot: dict[str, Any], work: str, *,
         if bridge.choose_worker(alternatives, work) is not None:
             eligible = alternatives
     best = bridge.choose_worker(eligible, work)
-    if best is None or int((((best.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1:
+    if best is None or (int((((best.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1
+                        and not food_work_adjustments(snapshot, best, work)):
         return []
     return [best]
 
@@ -8020,7 +8064,8 @@ def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str,
         return {"applied": False, "reason": "Selected pawn is reserved by an active care job"}
     selected = next((p for p in snapshot["colonists"]
                      if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)), None)
-    if selected is not None and int((((selected.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1:
+    if (selected is not None and int((((selected.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1
+            and not food_work_adjustments(snapshot, selected, work)):
         return {"applied": False, "fulfilled": True, "reason": "Work priority is already 1"}
     target = next(
         (p for p in eligible if pawn_id is not None and int(p.get("id", -1)) == int(pawn_id)),
@@ -8036,20 +8081,27 @@ def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str,
         return {"applied": False, "reason": f"No eligible colonist for {work}"}
     if bridge.active_recovery_diseases(target) and work not in {"Patient", "PatientBedRest"}:
         return {"applied": False, "reason": f"{target.get('name')} needs disease recovery"}
+    adjustments = food_work_adjustments(snapshot, target, work)
+    changes = {work: 1, **adjustments}
     response, error_text = None, None
+    responses = []
     try:
-        response = client.post("/api/v1/colonist/work-priority",
-                               body={"id": target["id"], "work": work, "priority": 1})
+        for name, priority in changes.items():
+            response = client.post("/api/v1/colonist/work-priority",
+                                   body={"id": target["id"], "work": name, "priority": priority})
+            responses.append({"work": name, "priority": priority, "response": response})
     except bridge.RimApiError as error:
         error_text = str(error)
     try:
         fresh = bridge.normalize_colonists(client.get("/api/v2/colonists/detailed"))
         observed = next((pawn for pawn in fresh if int(pawn.get("id") or 0) == int(target["id"])), {})
-        fulfilled = int((((observed.get("work_priorities") or {}).get(work)) or {}).get("priority") or 0) == 1
+        fulfilled = all(int(((observed.get("work_priorities") or {}).get(name) or {}).get("priority") or 0) == priority
+                        for name, priority in changes.items())
     except bridge.RimApiError as error:
         fulfilled, error_text = False, str(error)
     return {"applied": fulfilled, "pawn_id": target["id"], "colonist": target["name"],
             "work": work, "response": response,
+            "adjustments": responses, "completion": "assignment_observed; job_completion_unverified",
             "reason": error_text or (None if fulfilled else "Priority change was not observed")}
 
 
@@ -10673,12 +10725,12 @@ def _execute_event_response(
     if response == "emergency_harvest":
         plants = snapshot.get("development", {}).get("plants", [])
         ids = [
-            int(row["id"]) for row in plants
-            if row.get("id") is not None and (
-                row.get("can_harvest") or row.get("is_harvestable")
-                or float(row.get("growth") or row.get("growth_progress") or 0) >= 0.95
-            )
-        ][:120]
+            int(row["thing_id"]) for row in plants
+            if row.get("thing_id") is not None and row.get("harvestable_now") is True
+            and not row.get("blighted") and not row.get("is_designated_for_harvest")
+            and not bridge.combat_planner.errand_exposed(snapshot, row.get("position"))
+            and capabilities.harvest_products(snapshot, [row]).get("expected_human_nutrition", 0)
+        ][:12]
         if not ids:
             return {"applied": False, "reason": "No verified mature plant is available for emergency harvest."}
         return client.post("/api/v1/map/plants/harvest", body={"map_id": map_id, "plant_ids": ids})

@@ -103,17 +103,24 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
     defs = plant_definitions(snapshot)
     result = {}
     need = food_planning_facts(snapshot)
-    food_required = need["renewable_food_gap"] and need["stored_food_days"] is not None and need["stored_food_days"] < 5
+    food_required = need["protect_food_supply"]
+    # A viable planned field is a labour commitment, not delivered food.
+    # Once enough acreage is configured, finish sowing/gathering before adding
+    # more fields. Short reserves still protect that commitment until harvest.
+    if new and food_required and not need["crop_capacity_gap"]:
+        return result
     for site in (snapshot.get("development", {}).get("plant_catalog") or {}).get("growers") or []:
         if (site.get("kind") == "new_ground") != new:
             continue
         if new and combat.errand_exposed(snapshot, site.get("point_a")):
             continue
         current = next((o for o in site.get("options") or [] if o.get("def_name") == site.get("plant_def")), {})
-        if (food_required and not new and int(site.get("plant_count") or 0) > 0
+        if ((food_required or crop_nutrition_estimate(snapshot, exclude_site=site.get("id")) < need["human_demand_per_day"] * 1.3) and not new
                 and defs.get(site.get("plant_def"), {}).get("human_edible_product") is True
                 and current.get("safe_sowing_now")):
-            continue  # Replacing viable food plants cannot close a capacity deficit.
+            continue  # Includes the accepted but not yet sown food field.
+        if food_required and not need["crop_capacity_gap"] and current.get("safe_sowing_now"):
+            continue
         options = {}
         for option in site.get("options") or []:
             definition = defs.get(option.get("def_name")) or {}
@@ -123,44 +130,107 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                 options[option["def_name"]] = {**definition, **option}
         if options:
             edible = {k: p for k, p in options.items() if p.get("human_edible_product") is True}
-            if food_required and edible:
+            if food_required:
                 options = edible
             # Missing food-product evidence does not authorize reclassifying
             # wood, animal feed or decorations as a human food source.
-            result[site["id"]] = {**site, "crop_options": options}
+            if options:
+                result[site["id"]] = {**site, "crop_options": options}
     return result
 
 
-def crop_nutrition_estimate(snapshot: dict[str, Any]) -> float:
+def crop_nutrition_estimate(snapshot: dict[str, Any], *, exclude_site: str | None = None) -> float:
     """Potential daily field output, before disease, weather, lost labor or waste."""
     definitions = plant_definitions(snapshot)
     total = 0.0
     for site in (snapshot.get("development", {}).get("plant_catalog") or {}).get("growers") or []:
-        if site.get("kind") == "new_ground":
+        if site.get("kind") == "new_ground" or site.get("id") == exclude_site:
             continue
         definition = definitions.get(site.get("plant_def")) or {}
         option = next((o for o in site.get("options") or [] if o.get("def_name") == site.get("plant_def")), {})
         days = float(option.get("calendar_days_to_harvest_estimate") or 0)
-        if definition.get("human_edible_product") and days > 0 and option.get("safe_sowing_now"):
+        if definition.get("human_edible_product") and days > 0 and option.get("safe_sowing_now") and site.get("allow_sow") is not False:
             cells = max(0, int(option.get("legal_cells") or 0) - int(site.get("blighted_count") or 0))
             total += cells * float(definition.get("harvest_yield") or 0) * float(definition.get("product_nutrition") or 0) / days
     return total
 
 
+def stored_food_days(resources: dict[str, Any], people_count: int) -> float | None:
+    """Use native nutrition; missing observations are unknown, not an empty store."""
+    if people_count <= 0:
+        return None
+    nutrition = resources.get("nutrition")
+    if nutrition is None and any(k in resources for k in ("food", "meals", "raw_food")):
+        meals = max(0, float(resources.get("meals") or 0))
+        raw = max(0, float(resources.get("raw_food") or 0))
+        # Legacy counts lack exact nutrition; raw stacks are not meals.
+        if not any(k in resources for k in ("meals", "raw_food")):
+            # Old clients exposed only a food count. Preserve their rough
+            # estimate; current native clients provide nutrition and raw counts.
+            nutrition = .9 * max(0, float(resources.get("food") or 0))
+        else:
+            raw = raw or max(0, float(resources.get("food") or 0) - meals)
+            nutrition = .9 * meals + .05 * raw
+    return max(0, float(nutrition)) / (1.6 * people_count) if nutrition is not None else None
+
+
 def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Potential fields are an estimate, never stored or delivered nutrition."""
-    people = [p for p in snapshot.get("colonists") or [] if not p.get("dead")]
-    resources = (snapshot.get("map") or {}).get("resources") or {}
+    people = [p for p in snapshot.get("colonists") or [] if not p.get("dead") and not p.get("is_dead")]
     demand = 1.6 * len(people)
-    nutrition = resources.get("nutrition")
-    if nutrition is None and any(k in resources for k in ("food", "meals")):
-        nutrition = .9 * float(resources.get("food") or resources.get("meals") or 0)
+    stored = stored_food_days((snapshot.get("map") or {}).get("resources") or {}, len(people))
     potential = crop_nutrition_estimate(snapshot)
-    return {"stored_food_days": round(max(0, float(nutrition)) / demand, 1) if nutrition is not None and demand else None,
+    urgent = any(float(p.get("hunger", 1) if p.get("hunger") is not None else 1) < .12
+                 or any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) > 0
+                        for h in p.get("health_conditions") or []) for p in people)
+    capacity_gap = potential < demand * 1.3
+    protect = bool(demand and capacity_gap) or urgent or stored is not None and stored < 5
+    return {"stored_food_days": round(stored, 2) if stored is not None else None,
             "human_demand_per_day": round(demand, 1),
             "potential_crop_nutrition_per_day": round(potential, 1),
-            "renewable_food_gap": potential < demand * 1.3,
+            "crop_capacity_gap": capacity_gap,
+            "protect_food_supply": protect,
+            "renewable_food_gap": capacity_gap or protect,
+            "immediate_food_gap": urgent or stored is not None and stored < 2.5,
             "crop_food_is_not_ready": True}
+
+
+def food_work_adjustments(snapshot, pawn, work):
+    """Reserve a chosen food worker above routine ties, preserving their job."""
+    need = food_planning_facts(snapshot)
+    if work not in {"Cooking", "PlantCutting", "Hunting", "Growing"} or not need[
+            "protect_food_supply" if work == "Growing" else "immediate_food_gap"]:
+        return {}
+    jobs = {"Cooking": {"DoBill"}, "PlantCutting": {"Harvest", "HarvestDesignated", "CutPlant", "CutPlantDesignated"},
+            "Hunting": {"Hunt", "AttackStatic", "AttackMelee"}, "Growing": {"Sow"}}
+    if pawn.get("current_job") in CARE_JOBS | jobs[work]:
+        return {}
+    routine = {"Growing", "Handling", "Construction", "Mining", "Smithing", "Tailoring", "Crafting", "Art", "Research", "DarkStudy",
+               "Cooking", "PlantCutting", "Hunting"} - {work}
+    return {name: 2 for name, setting in (pawn.get("work_priorities") or {}).items()
+            if name in routine and not (setting or {}).get("disabled")
+            and int((setting or {}).get("priority") or 0) == 1}
+
+
+def _crop_commitment_ready(snapshot, memory, action, site):
+    """Same-site and whole-farm dwell; release for an actual new food/climate need."""
+    history = memory["capability_history"]
+    need = food_planning_facts(snapshot)
+    for key in (_scope(action, site["id"]), "crop_configuration"):
+        record = history.get(key)
+        if not record:
+            continue
+        target = next((s for s in (snapshot["development"].get("plant_catalog") or {}).get("growers") or []
+                       if s.get("id") == record.get("site_id")), None)
+        current = next((o for o in (target or {}).get("options") or []
+                        if o.get("def_name") == record.get("crop")), {})
+        newly_unsafe = bool(target and current and not current.get("safe_sowing_now"))
+        newly_food = need["protect_food_supply"] and not record.get("food_required") and not record.get("human_edible")
+        if newly_unsafe or newly_food:
+            history.pop(key, None)
+        else:
+            return False
+    return True
 
 
 def harvest_products(snapshot: dict[str, Any], plants: list[dict[str, Any]]) -> dict[str, Any]:
@@ -412,6 +482,8 @@ def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     actions = []
     plans = {}
     new_sites, old_sites = crop_sites(snapshot, True), crop_sites(snapshot, False)
+    new_sites = {k: s for k, s in new_sites.items() if _crop_commitment_ready(snapshot, map_state, "create_growing_zone", s)}
+    old_sites = {k: s for k, s in old_sites.items() if _crop_commitment_ready(snapshot, map_state, "configure_crop", s)}
     if new_sites:
         plans["create_growing_zone"] = new_sites
         actions.append("create_growing_zone")
@@ -582,7 +654,12 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
         return selected
 
     def person_note(p: dict[str, Any]) -> str:
-        return f"{p.get('name')}; skills {p.get('skills')}; health {p.get('health')}; job {p.get('current_job')}; priorities {p.get('work_priorities')}; traits {p.get('traits')}"
+        skill = ("Plants" if action in {"create_growing_zone", "configure_crop", "clear_plant_blight", "harvest_at_risk_crops"}
+                 else "Animals" if action.startswith("assign_animal") else "Medicine")
+        value = (p.get("skills") or {}).get(skill) or {}
+        competing = [name for name, setting in (p.get("work_priorities") or {}).items()
+                     if int((setting or {}).get("priority") or 0) == 1]
+        return f"{p.get('name')}; {skill} {value.get('level')}; health {p.get('health')}; hunger {p.get('hunger')}; job {p.get('current_job')}; priority1 {','.join(competing)}"
 
     if action in {"create_growing_zone", "configure_crop"}:
         key = pick("crop_site", "Choose a grower. Changing an occupied field may destroy crops before harvest.", {
@@ -722,6 +799,9 @@ def _execute_primary(client: Any, snapshot: dict[str, Any], map_state: dict[str,
             if accepted(response) and site.get("zone_id") is not None and not site.get("allow_sow"):
                 order("/api/v1/map/zone/growing/sowing", {"map_id": map_id, "zone_id": site["zone_id"], "allow_sow": True})
         if accepted(response):
+            pawn = next(p for p in snapshot["colonists"] if p["id"] == worker)
+            for work, level in food_work_adjustments(snapshot, pawn, "Growing").items():
+                order("/api/v1/colonist/work-priority", {"id": worker, "work": work, "priority": level})
             order("/api/v1/colonist/work-priority", {"id": worker, "work": "Growing", "priority": 1})
     elif action == "clear_plant_blight":
         worker = int(selected.get("blight_worker") or 0)
@@ -898,6 +978,17 @@ def execute(client: Any, snapshot: dict[str, Any], map_state: dict[str, Any], ac
                 _remember(snapshot, map_state, subject, dwell, not result.get("applied"))
                 if action == "harvest_at_risk_crops" and result.get("applied"):
                     map_state["capability_history"][subject].update({**retry.failure_record(int(snapshot["game"].get("tick") or 0), 120), "harvest_guard": _harvest_guard(snapshot, plant)})
+        elif action in {"create_growing_zone", "configure_crop"}:
+            scope = _scope(action, key) if result.get("applied") else action + ":failed:" + key
+            _remember(snapshot, map_state, scope, 30000, not result.get("applied"))
+            record = {**retry.failure_record(int(snapshot["game"].get("tick") or 0), 120),
+                      "site_id": key, "crop": selected.get("crop_type"),
+                      "food_required": food_planning_facts(snapshot)["protect_food_supply"],
+                      "human_edible": plant_definitions(snapshot).get(selected.get("crop_type"), {}).get("human_edible_product") is True}
+            map_state["capability_history"][scope].update(record)
+            if result.get("applied"):
+                _remember(snapshot, map_state, "crop_configuration", 30000)
+                map_state["capability_history"]["crop_configuration"].update(record)
         else:
             _remember(snapshot, map_state, _scope(action, key) if result.get("applied") else action + ":failed:" + key,
                       15000 if result.get("applied") else 250, not result.get("applied"))

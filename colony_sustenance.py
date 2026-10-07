@@ -1,6 +1,7 @@
 """Food production, preservation, diets and animal welfare through loaded vanilla policies."""
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
+from colony_capabilities import food_planning_facts
 
 _KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
@@ -127,6 +128,38 @@ def _failure(map_state, snapshot, action, key, reason, **details):
     return {"applied": False, "reason": reason, **details}
 
 
+def _food_crisis_plan_ready(snapshot, context, plan):
+    """Policy availability alone does not make it useful during starvation.
+
+    Keep actual food production and urgent animal care. Cleaning an empty
+    kitchen, rearranging empty shelves and a healthy animal's medicine ceiling
+    cannot bridge the shortage. Reconsider them when the observed stock, bill
+    readiness or patient changes; this is not a persisted category lock.
+    """
+    if not food_planning_facts(snapshot)["immediate_food_gap"]:
+        return True
+    kind = plan.get("kind")
+    animal = next((a for a in context.get("animals") or []
+                   if a.get("id") == plan.get("target_id")), {})
+    if kind == "care":
+        return bool(animal.get("health") or animal.get("downed"))
+    if kind == "area":
+        return bool(animal.get("health") or animal.get("downed")
+                    or animal.get("food") is not None and float(animal["food"]) < .3)
+    if kind in {"storage", "stockpile", "stockfood", "cooler", "diet", "customdiet"}:
+        # Missing stock observations are unknown; known empty human stock is
+        # not repaired by increasing a shelf priority or admitting raw hops.
+        nutrition = human_nutrition(context)
+        return nutrition is None or nutrition > 0 or kind == "cooler" and any(
+            p.get("eligible") is True for p in context.get("perishables") or [])
+    if kind == "kitchenhome" or kind == "job" and str(plan.get("value") or "").startswith("CleanFilth:"):
+        return any(t.get("usable") is True and any(
+            b.get("requested") is True and b.get("block_reason") in {
+                "ready_for_ordinary_work", "ordinary_job_in_progress"}
+            for b in t.get("bills") or []) for t in context.get("tables") or [])
+    return True
+
+
 def prepare(snapshot, map_state):
     context = snapshot.get("development", {}).get("sustenance", {})
     tick = int(snapshot.get("game", {}).get("tick") or 0)
@@ -142,6 +175,7 @@ def prepare(snapshot, map_state):
         plans = {}
         for key, plan in options(context, action).items():
             if key in failures: continue
+            if not _food_crisis_plan_ready(snapshot, context, plan): continue
             scope = _scope(plan)
             old = history.get(scope)
             if old and (old["guard"] != _guard(context, plan) or "defer_guard" in old and old["defer_guard"] != _defer_guard(context, plan)):
@@ -295,6 +329,8 @@ def execute(client, snapshot, map_state, action, selected):
     current = options(current_context, action).get(key)
     if not current or any(current.get(k) != original.get(k) for k in ("kind", "target_id", "value")):
         return _failure(map_state, snapshot, action, key, "policy_no_longer_available")
+    if not _food_crisis_plan_ready(snapshot, current_context, current):
+        return _failure(map_state, snapshot, action, key, "food_crisis_prerequisite_changed")
     try:
         result = client.post("/api/v1/sustenance/policy", body={"map_id": snapshot["map"]["id"], "key": key})
     except Exception as exc:

@@ -29,6 +29,14 @@ Failures/unknown POST results use 250 game ticks **and** a minimum 30 seconds of
 
 ## Native safety and purity
 
+Food/crop exception, 7 October: stored nutrition and future acreage are separate
+facts. Short reserves protect viable edible fields, including unsown commitments.
+Crop configuration uses shared farm/site dwell of at least120 real seconds and
+30000 ticks. A meaningful food/climate change reopens it; other actors or sites
+do not. A selected grower's routine priority-one ties are lowered while clinical
+priorities and jobs are preserved. See the
+[food commitment audit](../audits/lenrobum-food-commitment-2026-10-07.md).
+
 Plant GET preview passes null grower only for new-ground sites: the new-ground sow-tag branch does not call CanSowOnGrower; null is safe for the power type check. It no longer constructs a Zone_Growing, whose installed native base constructor consumes a unique zone ID. Existing ground/basin paths retain real growers.
 
 Blight walks actual map plants once with a requested-ID HashSet. Eligibility precedes the 200-change bound, so stale/unreachable/already handled input IDs cannot starve later eligible plants. It counts new cut designations or actual sowing pauses, preserves a currently running blight-cut job, and does not mutate healthy plants.

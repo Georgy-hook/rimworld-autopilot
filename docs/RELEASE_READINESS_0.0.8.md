@@ -25,8 +25,10 @@ base screenshot and functional layout in every hourly comparison.
 The isolated startup NRE and unsupported monument executor remain open.
 Successful API calls and a healthy director do not close these live gates.
 
-The authorized new single random landing started 7 October at11:11:50UTC on
-tile10598. Its startup inventory is recorded in PLAYTEST_REPORT.md; food reserves
-are initial supplies, and roofed shelter was not yet confirmed at the first
-startup assessment. Hourly observations include the real base screenshot and
-the comparison card. This is an ongoing playtest, not release approval.
+The single random landing started 7 October at11:11:50UTC on tile10598 and
+ended with native GameOver2431617 after about5h36m. All five human deaths were
+Malnutrition. Hourly observations and the terminal report include real base
+screenshots, layout comparisons and cause evidence. The
+[food commitment corrections](audits/lenrobum-food-commitment-2026-10-07.md)
+passed1245 tests and cached-model starvation replay; the next authorized random
+colony must establish sustained food production and actual survival.

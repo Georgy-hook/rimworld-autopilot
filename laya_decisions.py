@@ -11,6 +11,14 @@ import json
 from typing import Any
 
 
+def _token_count(tokenizer: Any, text: str, limit: int) -> int:
+    """Only distinguish fits/overflow; keep raw history measurements bounded."""
+    try:
+        return len(tokenizer(text, add_special_tokens=False, truncation=True, max_length=limit + 1)["input_ids"])
+    except TypeError:
+        return len(tokenizer(text, add_special_tokens=False)["input_ids"])
+
+
 class NoFeasibleChoice(ValueError):
     """An affordance expired; this is not a failed model inference."""
 
@@ -48,7 +56,7 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     def size(value: Any) -> int:
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
         if text not in counts:
-            counts[text] = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            counts[text] = _token_count(tokenizer, text, budget)
         return counts[text]
 
     def clip(value: Any, limit: int) -> str:
@@ -124,7 +132,7 @@ def _bounded_question(agent: Any, instructions: str, options: dict[str, str]) ->
         lo, hi = 0, len(value)
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            if len(tokenizer(prefix + value[:mid], add_special_tokens=False)["input_ids"]) <= budget:
+            if _token_count(tokenizer, prefix + value[:mid], budget) <= budget:
                 lo = mid
             else:
                 hi = mid - 1
@@ -210,8 +218,8 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
     tokenizer = getattr(agent, "tok", None)
     config = getattr(agent, "cfg", {}) or {}
     state_budget = int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8
-    oversized = tokenizer is not None and len(tokenizer(
-        json.dumps(state, ensure_ascii=False, default=str), add_special_tokens=False)["input_ids"]) > state_budget
+    oversized = tokenizer is not None and _token_count(tokenizer,
+        json.dumps(state, ensure_ascii=False, default=str), state_budget) > state_budget
     # Legacy event/doctrine/commerce callers can supply unbounded state too.
     # Never rely on build_sequence silently truncating it after we log it as seen.
     detailed = detailed or (oversized and not consequences)

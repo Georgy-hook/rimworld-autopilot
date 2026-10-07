@@ -475,7 +475,7 @@ class DirectorTests(unittest.TestCase):
         self.assertEqual(details["cool_room_options"]["7"]["patients"][0]["name"], "Huck")
         context = director.model_decision_context(snapshot)
         self.assertEqual(context["heat"]["patients"][0]["severity"], 0.76)
-        self.assertIn("Heat danger", context["risks"][0])
+        self.assertTrue(any("Heat danger" in risk for risk in context["risks"]))
         client = mock.Mock()
         client.post.return_value = {"placed": 1}
         with mock.patch.object(director, "prioritize", return_value={"success": True}):
@@ -5608,10 +5608,12 @@ class DirectorTests(unittest.TestCase):
         snapshot["development"]["farm"]["crop_types"][0]["harvestable_plants"] = 0
         snapshot["development"]["farm"]["crop_types"][0]["growth_progress_average"] = 25
         snapshot["map"]["resources"]["nutrition"] = 4.8  # One day.
+        for pawn in snapshot['colonists']:
+            pawn['hunger'] = .1
         self.assertEqual(director.focus_imminent_food_choices(snapshot, actions), actions[:2])
         self.assertEqual(director.focus_imminent_food_choices(
             snapshot, ["eat_available_meal", "build_freezer"]),
-            ["eat_available_meal", "build_freezer"])
+            ["eat_available_meal"])
 
     def test_food_choice_compares_mature_bushes_with_losing_immature_rice(self):
         snapshot = {"map": {"resources": {"food": 4, "meals": 4,

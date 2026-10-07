@@ -50,6 +50,7 @@ def snapshot():
 
 def crop(name="Plant_Rice", *, safe=True, skill=0):
     return {"def_name": name, "label": name, "category": "food", "sowable": True, "minimum_skill": skill,
+            "human_edible_product": True, "product_nutrition": .05,
             "safe_sowing_now": safe, "legal_cells": 9, "calendar_days_to_harvest_estimate": 6,
             "outdoor_warm_days_estimate": 12, "harvested_thing": "Rice", "harvest_yield": 6}
 

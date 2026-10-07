@@ -1,6 +1,6 @@
 # Colony playtest log
 
-Current candidate: **0.0.7**. Historical tests below retain their own revision and version context.
+Current candidate: **0.0.8**. Historical tests below retain their own revision and version context.
 
 This log tracks real runs and explicitly identified technical replays. Death records distinguish native causes, final-save conditions and uncertain observer captions. Wall-clock runtime excludes intentional development pauses when noted.
 
@@ -963,3 +963,338 @@ save; XML60000/mtime11:14:35UTC/campaign verified. Logistics returned realJSON
 Screenshot, native positions, comparison card and SVG retained privately.
 Solitary pre-generation NRE still lacks a stack. No manual pawn orders,
 diagnostic gameplay replay, rollback or second landing were used.
+
+## Candidate 0.0.8: first hourly observation — 2026-10-07
+
+Same tile10598/campaign and installed package2a3572d/native29df0ef, renamed
+Lenrobum. Primary12:16:05UTC/990966:1h04m15s continuous autonomy,16.52game
+days. Closing12:20:39/1002224:1h08m48s; all three founders alive, GameOver/
+victoryfalse. No restart, rollback, technical pause or manual memory reset.
+Food/meals/raw/reachable nutrition0; founderA Malnutrition0.806/downed outside,
+founderB0.447/mobile, founderC0.803/downed in bed. Real founderB Rescue targetA,
+bed53349 observed; no pickup/food yet. health1.0 does not negate starvation.
+
+First field appeared at513281/~8.55game days after landing. Primary13zones:
+two potato, six hops, five cotton;87actual potato plants~12.7%/9.21days to
+harvest, no harvestable crops. Closing14zones. Earlier raw food and replenished
+meals did occur, including meals1to11; do not report complete lack of cooking.
+Since11:57:18 minute stocks remained0;26of62food0 samples include the initially
+forbidden baseline. Campfire fueled18.41/20, active meal bill; nearby butcher
+spot/active Forever bill. Production/logistics validJSON/23options; no current
+ingredients ready. More production setup alone has not sustained nutrition.
+
+Bounded64decisions12:04:43–12:15:53(last8MB, not whole history):23configure_crop,
+including exact potato-to-hops changes on zones7,3,10,12 over5–6minutes. Two new
+plots selected psychoid/hops. This is accepted reconfiguration, not measured
+destruction of every plant or a claim of indefinite looping. Actual prompt has
+food0/hunger0/runway0 but potential8.3nutrition/day versus demand4.8,
+renewable_food_gapfalse. Source only preserves food plots/enforces edible choices
+while potential capacity is inadequate: future crops unlock nonfood changes
+despite empty inventory and harvest days away. Confirmed guard weakness; not
+the sole established cause of starvation. Criterion/context truncation also
+observed; total absence of food context disproved.
+
+Bonded initial monkey died at708683, between11:46:52–11:47:54UTC(~36minutes),
+native letter beaten to death. Same-campaign XML healthStateDead and finalBruise
+combatLogText identify second-raid attacker. Flu had been tended quality0.230;
+last immunity0.602>illness0.513. Do not attribute this death to absent flu care.
+Current tamed squirrel healthy; no new completed training. Three raid arrivals
+324000/706000/820000; first two observed attackers later corpses, third Flee/
+downed. Founders survived, pet lost; complete repelled-raid count unverified.
+
+Physical shelter useful: original three beds room47roofed; by closing new room50
+also roofed/three beds,23.4–23.6C. Animal spot outside.54wooden walls/2doors,
+stonecutter/table/chair,3shelves, unpowered standing lamp without generator/
+conduits. Art bench frame and45concrete floor frames started during starvation;
+researchbench absent/currentnone, no completed sales. Screenshot/native
+coordinates/card/SVG inspected. Room cleanliness-2.6, dead human near new house;
+no exact sanitation/path causality inferred.
+
+Skylantern ritual began12:13:45 during starvation, occupied two workers about
+three game hours. Real beautiful result70%,+6mood, visitors and offered joiner;
+offer not accepted/three residents at closing. Taming wild human and active
+rescue quest have not produced another worker. Orbital income attempt rejected
+for missing research bench; doctrine imperial ascent/anomaly/raiding still lacks
+completed compatible milestones. Positive ritual result and labor cost retained
+separately. Comparison with previous first hour: fields earlier but unstable
+food unchanged; previous dog blood-loss death is not this monkey's combat loss.
+
+Single game/CUDA4CPUdirector/observer/read-onlymonitor healthy, fresh heartbeats,
+stderr0. Emergency1x from starvation, actual ticks grow, no force_pause windows.
+Disk Lenrobum XML960000/mtime12:04:17UTC/campaign stable; not latest tick save.
+No savePOST issued. Old startupNRE has no new repeats, zone-on-marble warnings
+added. Hourly ACTIVE, next13:13UTC. Private report/evidence includes named
+outcomes and PNG12:18:56UTC; camera-only capture, no runtime/game corrections.
+Final read-only12:28:18UTC/1021112:1h16m28s, all three alive/nativeendingfalse.
+FounderA now actually in bed53349 after Rescue; founderC bed38017. All satiety0,
+stockfood0; MalnutritionA0.937/C0.938/B0.612. Delivery to bed confirmed, feeding
+not confirmed. Mobile B FinishFrame54005; ritual joiner offer remains unaccepted.
+Single services fresh/emergency1x. No new human death at this final check.
+
+## Candidate 0.0.8: second hourly observation — 2026-10-07
+
+Same Lenrobum/tile10598/campaign, no restart/rollback/pause or memory reset.
+Primary13:14:06UTC/1315565:2h02m16s continuous autonomy,21.93game days.
+FounderC died of Malnutrition1029878, observer12:31:53UTC:1h20m03s from
+landing. FounderA Malnutrition1030230,12:32:13UTC:1h20m24s. Exact native
+culprit, Death letters and XML Dead agree; wall times are observer detection.
+Nine later Unknown/ticknull captions repeat founderA's one death, not nine
+additional deaths. Observer deduplication remains an open reporting defect.
+
+FounderB survives. Ritual-offered joiner actually arrived at1052177; real
+cooking/harvest/construction jobs observed. XML faction14/kindColonist,
+hostFactionnull and hidden WandererJoins3 endedSuccess confirm joining.
+Quest3.pawn tag remains; do not infer temporary guest status from the tag.
+Existing go-juice dependency/scar are not new infection or implantation.
+Stock/satiety0 again. Short food pulses and feeding occurred:2meals/5raw
+at12:43UTC, later10raw;38of44minute stocks since prior closing0. Sustainable
+nutrition still fails, not a claim that no cooking or feeding ever happened.
+
+Primary26plots:12hops/9cotton,1each potato/corn/tinctoria/nutrifungus/fibercorn.
+Seven of68actual potato plants natively harvestable/alreadydesignated; most
+future crop estimates are days away.11configure_crop in14primary bounded
+decisions;30in40closing decisions. Future capacity guard weakness remains.
+New event emergency_harvest rejected13:11:47 for no verified mature plant.
+Saved native21092plant DTOs all use thing_id/harvestable_now and no id;
+event executor10673 reads id/can_harvest/is_harvestable. Confirmed contract
+mismatch, independently of the ordinary harvest path. No live replay/fix;
+neither the mismatch nor one failed action alone establishes death causation.
+
+Six roofed human beds persist; animal spot outdoors. Art bench completed but
+bills0; no completed sales or researchbench/currentresearch. Unpowered lamps,
+no generator/conduits. Native Heatwave1308000; similar heatwave offer remains
+unaccepted, do not blame accepted quest. At closing13:21:21UTC/1334195 all
+two residents alive/GameOverfalse/victoryfalse: founderB Malnutrition0.755,
+joiner0.328, satiety0/bothFinishFrame. Outside40.7C/bedrooms37.9and36.7C,
+no Heatstroke yet. Fueled PassiveCooler built; adequate cooling unverified.
+Third steel house/three additional beds planned:40projects while food0.
+Native Starving tantrum for founderB and unburied-colonist tantrum for joiner.
+
+No new colony-pet death found; earlier monkey raid death unchanged. A bison
+self-tamed1220000, not a completed Laya tame. No new raid letters this hour;
+old full repelled count unverified. FounderB now rifle/joinerautopistol.
+Imperial/anomaly/raider doctrine unchanged, no completed ending milestone.
+Silver stock not profit. True PNG13:16:00/ticks1320331–1320334 inspected;
+card/SVG compare crops/base/animals/raids/growth/economy with prior hour.
+
+One visible game/CUDA4CPUdirector/observer/read-onlymonitor fresh/stderr0,
+ticks advance/no force_pause. Native starvation1x, no manual speed orders.
+XML1320000/mtime13:15:52UTC/campaign stable; no savePOST. Player.log3801bytes
+unchanged, old startup NRE not reclassified. Only bounded8MB/max100decisions,
+camera-only capture; no runtime edits or gameplay commands. Automation ACTIVE,
+next14:13UTC/17:13MSK. Named report and evidence retained privately.
+
+## Candidate 0.0.8: third hourly observation — 2026-10-07
+
+Same Lenrobum/tile10598/campaign/package2a3572d/native29df0ef. Primary
+14:14:08UTC/1577071:3h02m18s uninterrupted autonomy,26.28game days.
+Last founderB died Malnutrition1362449, observer13:32:16.777028UTC:
+2h20m26s from landing. Exact culprit, native Death letter and XML Dead/
+Malnutrition1 agree. All original founders lost; complete campaign defeat
+still false. Earlier founderA/C deaths unchanged, not new observations.
+
+Only joined worker remains. Primary hunger0/Malnutrition0.321/Repair; closing
+14:21:27UTC/1594299 hunger0.612/Malnutrition0.375/Repair, alive/mobile/no
+bleeding/nativeGameOverfalse/victoryfalse. FoodPoisoning0.913 new, source
+unverified; existing go-juice deficiency1.807, not immune disease. Real food
+intake occurred:49of50minute stocks0, one3meals/4raw pulse. Native HideInRoom
+1448718 final straw Ate human meat; meat source/command/poisoning cause unknown.
+
+Primary39of52potatoes harvestable/expected353product, closing29of34/266;
+potential yield not delivered food, missing plants not solely blamed on fire.
+31growing zones now19tinctoria/9cotton/2nutrifungus/1potato. Prior plants
+remain despite new settings. No sampled HarvestDesignated for remaining worker
+in50minutes; shorter work between samples not excluded. Plants0 but capability
+enabled/GrowingandPlantCuttingpriority1; no fabricated skill prohibition.
+
+Bounded100decisions14:05:51–14:14:03UTC:96hold_survival,4expand_home_area;
+69candidate lists onlyhold, so not96independent model refusals. Actual context
+food0/runway0/hunger0. Native home fire and Firefighter.disabledtrue coincide
+with source focus_active_fire_choices2803: homefire retainscare/wait, dropping
+harvest without checking a firefighter exists. Confirmed suppression rule,
+likely contribution to observed waiting; other guards/cooldowns not excluded,
+no live pipeline replay or sole-cause proof. Previous emergency_harvest contract
+mismatch remains open; ordinary harvesting is a separate path.
+
+Fire127/36home primary,306/111home closing. Roofed bedrooms108.76C/426.06C,
+third22.99C; outside21.81C. Centered real PNG14:22:32UTC/ticks1597200–1597203
+shows two houses burning and the remaining worker in third. Eight real beds/
+three roofed rooms for one resident,103walls/6doors; steel shell does not prove
+combustible contents safe. Both animal beds outside; squirrel/bison alive,
+no new verified pet loss. New raid1505000/currenthostiles0, full outcome and
+possible involvement of visiting combat supplier unverified; not counted as
+a confirmed Laya repelled raid. Fire cause not established by raid timing.
+
+Campfire fueled5.45/20, two passivecoolers9.24and10.72/50, butcher/bills present;
+no electrical network/researchbench/currentresearch, artbenchbills0/sales0.
+Silver857stock, not income. Doctrine ending has no completed new milestone.
+
+One visible responsive game/CUDA4CPUdirector/observer/read-onlymonitor fresh,
+actual tick growth/no force_pause. Normal target3x, native fire emergency1x;
+current worker no thermal condition, not safe-room proof. Director stderr201bytes
+new Transformers warning10485tokens>8192; director continues, crash/index error
+not established. Other stderr0, Player.log3801bytes unchanged. SaveXML1560000/
+mtime14:07:07UTC/campaignstable, no savePOST. Only8MB/max100decisiontail,
+camera-only captures, no runtime edits/orders/pause/restart/rollback/reset.
+Private report/card/SVG/deathXML/firefilterproof saved; automation ACTIVE,
+next15:13UTC/18:13MSK. Complete native defeat/victory not established.
+
+## Candidate 0.0.8: fourth hourly observation — 2026-10-07
+
+Same campaign/tile10598/package2a3572d/native29df0ef; primary15:13:29UTC,
+tick1808720:4h01m39s uninterrupted autonomy,30.14game days. Closing15:22:04UTC,
+1944354:4h10m14s,32.41game days. No new verified human death, native complete
+GameOver/victoryfalse. All previous founder hunger deaths remain recorded.
+
+A man in black arrived1706598, first observed14:48:06UTC. Native letter and
+XML StrangerInBlack/player faction confirm storyteller aid, not planned Laya
+recruitment or a quest reward. Initial permanent arm/leg scars are not new.
+Actual Rescue targeted joined worker/bed at14:48and14:49; worker in that bed
+14:50with satiety0.880, mobile again14:52. Delivery and nutrition verified,
+exact feeder/source/issuing model decision unverified. Closing joined worker
+no Malnutrition/FoodPoisoning, satiety0.134/DoBill; rescuer0.392/Sow. Both mobile,
+no bleeding. Existing go-juice deficiency worsened1.807->2.973, supply absent.
+
+Raw potatoes88/nutrition4.4/meals0 at primary and closing.44of50minute stock
+samples since previous closing0; short unsampled cooking is not excluded.
+New worker Harvest13of25sampled jobs, real crop acquisition. Primary campfire
+empty/WoodLog0 despite ingredients; closing actually fueled19.35/20/WoodLog9.
+DoBill target or completed cooking unverified; stock meals still0.
+
+Primary bounded100choices14:55:35–15:13:22UTC include84configure_crop:
+40cotton,39tinctoria,3potato,2corn. Same zones switch food->nonfood and cycle
+cotton/tinctoria; accepted settings not completed crops or proof of destroying
+each old plant. Primary36plots:16cotton/13tinctoria/5nutrifungus/2corn; closing
+38:18cotton/14tinctoria/5nutrifungus/1corn. No configured potato zone despite
+old potato plants. Future-capacity protection and emergency-harvest DTO mismatch
+remain open. No hold_survival in primary bounded tail after fire stopped;
+this is not a code fix of the fire-focus suppression rule.
+
+Sampled fire peak332; first0 at14:31:24UTC/FoggyRain. Exact extinguishing cause
+unknown, not attributed to joined worker who cannot firefight. RoofCollapse
+1619331 crushed torch73%. Beds8->3, walls103->80, doors6->4 after fire; no built
+passivecooler remains. One intact roofed bedroom17.31C primary/24.27C closing,
+three beds; animal spots outside. Additional bed/cooler remain projects. Real
+PNG15:15:39UTC/ticks1842319–1842337 inspected, shows fire damage. Separate
+API/photo/XML times retained. New physical simple research bench157,135 first
+sampled15:00:41; native Autodoors can_start_now/appropriate_benchtrue. Current
+researchnone/bothResearchpriority0/no newly completed project. Artbenchbills0,
+no confirmed sales or ending milestone, silver857stock; hops102->332 not food.
+
+Squirrel healthy; bison last alive14:26:10UTC/1607117, mental state/Goto near
+map edge, no enclosed pen. Subsequently absent from API and XML1860000;
+no death letter/corpse. Fate unknown, not recorded as killed. Current handlers
+Animals0 are below squirrel8/bison6 requirement. No new verified pet death or
+new raid announcement; old raid outcomes still partial, no fabricated repelled
+count. New worker is storyteller aid, not a confirmed completed quest.
+
+Same visible game/CUDA4CPUdirector/observer/read-onlymonitor, fresh running
+status/real ticks advancing/no force_pause, observer normal3x. Director stderr
+201bytes unchanged (old10485tokens>8192warning), others0. Player.log4106bytes:
+new Direct3D timing warnings, no new NRE. Logistics JSON14options/recipes3 is
+a positive reading, not proof prior empty200 fixed. Save1920000/mtime15:20:16UTC/
+campaign stable. Only bounded8MB/max100decisions per capture, no savePOST.
+Camera and reporting only: no runtime edits/orders/speed/pause/restart/rollback/
+memory reset/live replay. Private report/card/SVG/care/crop/bison evidence saved;
+automation ACTIVE, next16:13UTC/19:13MSK. Complete campaign outcome not verified.
+
+## Candidate 0.0.8: fifth hourly observation — 2026-10-07
+
+Same campaign/tile10598/package2a3572d/native29df0ef. Primary16:13:25UTC,
+2347655:5h01m35s uninterrupted autonomy,39.13game days. Closing16:18:57UTC,
+2360865:5h07m07s,39.35game days. Both remaining colonists alive/mobile/no
+bleeding, native complete GameOver/victoryfalse. Earlier founder losses unchanged.
+No new verified colony-member death; neutral refugee loss recorded separately.
+
+Food/raw/meals0 and both satiety0 again. Closing rescuer Malnutrition0.640,
+joined worker0.459; bothRepair.35of49minute stock samples0, max59food/3meals:
+short actual cooking/intake happened, not sustainable supply. Campfire0/20,
+torch0/20, WoodLog0; active meal/butcher bills persist. Cooler still blueprint
+needs50wood/available0. Broad equal work priorities did not secure nutrition.
+
+Bounded100choices15:54:28–16:13:19UTC include83configure_crop:42hops/35cotton/
+5potato/1fibercorn. Same zones35/21/20/3 potato->hops, repeatedcotton/hops.
+Actual contextfood0/hunger0 includesberry harvest and9safehunt options; not
+complete loss of hunger context. Primary50plots:25hops/15cotton/6nutrifungus/
+2fibercorn/1potato/1tinctoria; closing21hops/19cotton/other counts unchanged.
+Actual food plants:potato0,fungi5unharvestable,corn1unharvestable.669total
+plants includesgrass/commercial crops, not a food reserve. Growthseasontrue.
+Earlier future-capacity protection/emergency-harvest DTO issues remain open.
+
+New raid2181000. Rescuer actualAttackStatic targeted known pigskin79441 at
+2193048. XML corpse Dead and Gunshot combatLogText confirm rescuer revolver
+hits2190306/2190723/2193946. Rescuer lost right arm2192617 to that raider's
+autopistol, exact XML combatLogText; first sampled15:38:33UTC, previous
+15:37:31without loss. Hand/fingers are descendants of one arm loss, not separate
+new ten-part events. Full raid roster/terminal cause/loot/kidnapping unverified;
+not counted as fully verified repelled raid. Currenthostiles0 alone is insufficient.
+Closing rescuer manipulation0.32/moving0.57, overallhealth1 despite missingarm.
+
+Transport relative/refugee77707 arrived2094000, found Dead in same-campaign
+XML2340000/factionnull/SpaceRefugee/BloodLoss1. Never verified colony member.
+Death tick/exact culprit/full rescue-attempt history unknown. New second pod
+2288000 has unknown outcome, not assumed dead or rescued. Native Beggars now
+EndedSuccess but item transfer/reward not independently verified. Deserter and
+hospitality offers expired unaccepted. RoyalAscent newNotYetAccepted; logging
+site observedOngoing not completed expedition. Older refugee quest failed state
+was already present before this hour, not reclassified as a new failure.
+
+Joined worker go-juice deficiency2.973->4.362, no verified supply. New dependency
+tantrum/advanced-starvation hallucination/hunger tantrum letters. Ingest target
+79724 at15:52:13 corresponds known raider corpse; intake/result/policy issuer
+not fully established. Both food and dependency remain actionable risks.
+
+Four human beds in two roofed rooms21.11C/18.71C closing, walls80/doors3.
+Diningtable/chair/electriclamp missing since previous hour; exact cause of each
+removal unverified despite tantrum letters. No new fires. Real PNG16:15:49UTC/
+ticks2353662–2353665 inspected; protected human rooms/scattered plots visible,
+animal spots outdoors. Native Batteries selected15:22:46, progress2by15:23:49,
+still2/400 primary/closing; no sampled Research job or newly finished project.
+RescuerResearchpriority1/joiner0. Artbenchbills0/no verified new sales,
+silver857stock/hops83not food or income; no completed ending milestone.
+
+Squirrel alive/Tameness4->3of5, wantedtrue but handlersAnimals0 below8.
+Handlingpriority1 does not establish training. Bison still missing with no new
+death/escape proof; no new verified player-pet death. Old raid outcomes remain
+partial. Report/card/SVG/crop/battle/XML/quest-state evidence retained privately.
+
+Same visible responsive game/CUDA4CPUdirector/observer/read-onlymonitor fresh,
+actual ticks advance/no force_pause. Observer1x withcritical_starvationtrue/
+other_emergency is a slowdown, not a freeze. Stderr201bytes unchanged for
+director, otherstderr0; old model10485tokens>8192warning still unresolved.
+SaveXML2340000/mtime16:11:02UTC/campaignstable, no savePOST. Only bounded
+8MB/max100decisions per capture; file about238MB. Camera/reporting only, no
+runtime edits/orders/speed changes/pause/restart/rollback/reset/live replay.
+Automation ACTIVE, next17:13UTC/20:13MSK; complete campaign outcome unverified.
+
+## 2026-10-07 — candidate 0.0.8 terminal outcome (Lenrobum)
+
+One random map, Cassandra/Medium, Permadeath; autonomy 11:11:50–16:47:49 UTC,
+5h35m59s / 40.53 game days. Native GameOver tick2431617, matching campaign,
+zero colonists/caravans, victory=false. Director, observer and read-only monitor
+ended normally on native confirmation; no technical pause, restart, rollback
+or memory reset during this run. Hourly automation paused for user-authorized
+corrections and a new test colony after verification.
+
+All three founders and both later permanent inhabitants died of Malnutrition,
+confirmed by native letters and exact culprit. Founder loss ticks1029878,
+1030230,1362449; later losses2410253,2431218. The latest disk save2400000
+predates the final deaths; terminal API/letters/observer, not that XML, prove
+full defeat. The previous monkey combat death is unchanged; the living squirrel
+has declining tameness, the missing bison's fate remains unknown. Partial raid
+results do not establish a complete repelled-raid count.
+
+Food was acquired, cooked and consumed intermittently, but last28minute samples
+had stock/meals0. Future crop capacity incorrectly lifted food protection before
+harvest, while crop configuration repeatedly displaced food work. First field
+at8.55game days; final51zones predominantly cotton/dye. The emergency event
+harvest DTO mismatch and fire focus without a capable firefighter remain
+confirmed defects. Both late inhabitants became downed before terminal waiting;
+all42final hold rows had one candidate, not42 model refusals. No new completed
+research, verified sales or ending milestone; silver+108 was a gift. Roofed
+housing survived but empty fuel and missing food made it insufficient.
+
+Private report outputs/colony-008-final-20261007-2013.md; read-only evidence,
+terminal card, exact death chronology and inspected base PNG in this run folder.
+No source/game changes were made during hourly observation. Fixes and the next
+campaign must be verified and documented separately.

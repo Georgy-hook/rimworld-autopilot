@@ -49,6 +49,14 @@ Existing allowed unfrozen fishing zones can be set/rearmed to one native catch c
 
 ## Retry, subject history and loaded care coverage (2026-10-02)
 
+Food-crisis prerequisites, 7 October: empty human stock does not make shelf
+priority useful, a healthy animal does not need medicine policy attention ahead
+of starving humans, and cleanup needs an actually executable kitchen bill.
+Fresh patient/food/bill changes immediately reopen these options; execution
+rechecks the current native context. Actual food batches, fishing and urgent
+animal care remain choices. See the
+[food commitment audit](../audits/lenrobum-food-commitment-2026-10-07.md).
+
 A context requires an actual options array. Native unavailable reasons and malformed/transport failures remain explicit. Stale/rejected/read failures back off the exact action/option until both 250 ticks and 30 real seconds expire; failed/invalid POST responses expose an unknown outcome and require fresh observation. Other subjects remain eligible.
 
 Successful mutable policies dwell for 15000 ticks per subject/family. Finite work/bills and bootstrap changes use a short 250-tick dispatch interval, with native pending-bill/designation gates authoritative. Defer remembers only options shown in the actual model stages for 250 ticks. Expired/future records are pruned after JSON persistence or tick rollback; old category-wide locks are retired. Animal native health-stage/life-threat changes, downing, pregnancy and hunger bands reopen care/area decisions; new hunger reopens human diet choices. Cooler freeze/chill/heat/power changes, pen shortfall/enclosure changes and herd growth/hunger/pregnancy reopen their subject. Float drift within a stage/band does not clear history.

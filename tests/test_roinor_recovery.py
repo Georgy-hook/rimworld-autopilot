@@ -58,7 +58,7 @@ class RoinorRecovery(unittest.TestCase):
         self.assertIn('human demand 1.6', text)
         self.assertIn('flowers supply zero', text)
         choices = ['harvest_local_plants', 'create_growing_zone', 'connect_power_consumer', 'care_for_injured_animal', 'build_sculpture']
-        self.assertEqual(director.focus_imminent_food_choices(s, choices), choices[:-1])
+        self.assertEqual(director.focus_imminent_food_choices(s, choices), [choices[0], *choices[2:-1]])
 
     def test_dying_plant_batch_is_small_and_product_not_label_drives_food(self):
         s = snapshot()
@@ -87,6 +87,8 @@ class RoinorRecovery(unittest.TestCase):
         s['map']['resources'] = {'food': 0, 'nutrition': 0}
         self.assertEqual(set(caps.crop_sites(s, True)['new_indoor_ground']['crop_options']), {'Plant_Rice'})
         s['map']['resources'] = {'food': 30, 'nutrition': 27}
+        self.assertEqual(set(caps.crop_sites(s, True)['new_indoor_ground']['crop_options']), {'Plant_Rice'})
+        s['development']['plant_catalog']['growers'].append(growing_site(plant='Plant_Rice', options=[{**rice, 'legal_cells': 100}]))
         self.assertEqual(set(caps.crop_sites(s, True)['new_indoor_ground']['crop_options']), {'Plant_Rice', 'Plant_Rose'})
 
     def test_deferral_persists_fast_clock_and_rollbacks_invalidate_future(self):
