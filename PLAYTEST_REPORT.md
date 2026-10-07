@@ -1298,3 +1298,58 @@ Private report outputs/colony-008-final-20261007-2013.md; read-only evidence,
 terminal card, exact death chronology and inspected base PNG in this run folder.
 No source/game changes were made during hourly observation. Fixes and the next
 campaign must be verified and documented separately.
+
+## 2026-10-07 — candidate 0.0.8 food commitment fixes and Dayouinum start
+
+User-authorized corrections after Lenrobum's native defeat, then one random
+new colony. Source 7b1e810, package d2b476b, installed DLL 1.10.0+7b1e810;
+payload SHA256 verified. 1245 Python tests, 311-route contract audit and
+Release-1.6 build pass with zero warnings/errors. Local cached-model replays
+on the former campaign's food-crisis slices selected food work and retained
+the edible crop across persisted global dwell checks. Offline verification
+does not guarantee a live colony's survival. No 0.0.8 release or tag created.
+
+Corrections separate reserve/first-harvest timing from potential crop capacity,
+preserve edible planting, enforce cross-actor/plot crop dwell, fix emergency
+harvest native DTO and food exclusion by fire focus without a firefighter,
+raise a selected food worker above equal-priority routine tasks, and exclude
+empty-store/healthy-animal/unexecutable-kitchen distractions during shortage.
+Observer death captions deduplicate a pawn already announced; tokenizer fit
+probes are bounded. Audit docs/audits/lenrobum-food-commitment-2026-10-07.md.
+
+Dayouinum (Permadeath), random tile51033, world seed
+laya-food-commitment-008-20261007, map16622162, Cassandra/Medium,
+campaign1e4b7bc1228b42f282d6a7dbcca28884. One generation, baseline20,
+autonomy18:23:57UTC/21:23:57MSK. No restart, rollback, manual pawn orders or
+memory reset after autonomy began. Different campaign from all prior runs.
+Initial -32.27C/no growing season; all founders cannot Research/DarkStudy.
+Unforbidding supplies,13walls/door/campfire/3sleeping spots completed by Laya;
+room37 roofed and21.50C by18:29, then26.73C. That did not establish rescue.
+
+Founder286 died Hypothermia58685, observer18:37:07UTC,13m11s from start;
+founder289 Hypothermia59261,18:37:27UTC,13m31s. Both remained outside the warm
+house. Founder292 BloodLoss92945,18:43:16UTC,19m20s; fresh megaspider wounds,
+actual later bed placement and severe bleeding documented. All human exact
+culprit/native letters agree. Labrador30406 BloodLoss94331 native letter;
+wall-clock death time/killer not established. These new cold/care failures
+are recorded separately and are not claimed fixed by the earlier food patch.
+
+Native StrangerInBlack38032 joined81325: storyteller rescue, not a planned
+hire or verified quest reward. Closing18:47:07UTC/175840 only this inhabitant
+alive, health1/hunger0.808/LayDown/no bleeding/downed. Native GameOver and
+victory false, campaign continues after complete founder loss. Stock94food/
+47.2nutrition/27medicine, campfire0fuel, roofed bedroom-23.47C/outside-25.13C:
+stored food and a roof do not establish sustainable supply or adequate warmth.
+No confirmed completed raid, sales, research or ending step. No fields/power
+network/research bench/commercial output; all routes and rescue order history
+are not yet fully assessed. Real inspected PNG18:31 predates deaths/late cold.
+
+One visible game/CUDA4CPUdirector/observer/read-onlymonitor, real commands
+verified, statuses fresh, stderr0, force_pausefalse, ticks175840->176643.
+AutosaveXML120000/mtime18:44:45UTC/campaign stable, older than final API tick;
+technical startup saves16680/48432 separately recorded. Old pre-generation
+NRERef335BBC32 remains unexplained, no new repeat at final check. Private
+report outputs/colony-008-food-commitment-20261007.md and current run's
+review-20261007-184706 evidence/card/SVG/death records. First full hourly
+review no earlier than19:25UTC/22:25MSK; continue this same campaign without
+source/game changes during observation, stop only on native full ending.
