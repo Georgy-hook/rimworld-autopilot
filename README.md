@@ -8,6 +8,7 @@
 ![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%20to%203.12-3776AB?style=flat-square&logo=python&logoColor=white)
 ![C# / .NET](https://img.shields.io/badge/C%23%20%2F%20.NET-RIMAPI-512BD4?style=flat-square&logo=dotnet&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-local%20AI-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
+[![Listed on laya.tools](https://laya.tools/badge.svg)](https://laya.tools/p/georgy-hook-rimworld-autopilot)
 
 **Hand Laya the keys to your colony.** It reads the map, picks what matters next, and gives real in-game orders—from getting dinner on the table to sending a caravan or rallying everyone for a raid. Watch what it considered in the game, change its priorities in the desktop app, and see where the colony goes.
 
@@ -134,6 +135,8 @@ The installer puts only the app, colony controller, required mod files, and lice
 The build also creates `dist/RimWorld-Autopilot-Installer.exe`, an identical copy of the full versioned installer. Attach that fixed-name file to every stable release so the [permanent download link](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest/download/RimWorld-Autopilot-Installer.exe) keeps working. See the [release checklist](docs/RELEASING.md).
 
 The installer uses the compiled RIMAPI assembly in `vendor/RIMAPI/1.6/Assemblies`. For a manual install or preview run, see [Install.ps1](Install.ps1), [Start-Preview.ps1](Start-Preview.ps1), and [Start-Autonomous.ps1](Start-Autonomous.ps1). Changes by version are in [release notes](RELEASE_NOTES.md).
+
+
 
 ## Open-source thanks
 
