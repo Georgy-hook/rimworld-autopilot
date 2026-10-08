@@ -278,6 +278,15 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             continue
         if (row.get('kind'), row.get('target_id')) in active or (row.get('kind') == 'dispose_corpse' and row.get('target_id') in active_hauls):
             continue
+        if row.get('kind') == 'rest':
+            patient = next((p for p in context.get('patients') or []
+                            if p.get('pawn_id') == row.get('target_id')), {})
+            if (patient.get('downed') is True and patient.get('in_bed') is True
+                    and patient.get('current_job') == 'LayDown'):
+                # Priorities cannot change an incapacitated patient's current
+                # bed-rest job. Keep their feeding, treatment and rescue choices;
+                # reassess rest priority when they can choose ordinary work.
+                continue
         subject = action + ':' + _subject(row)
         deferred = (memory.get('deferred') or {}).get(subject, {})
         signature = _defer_state(subject_rows[subject], context)
@@ -294,6 +303,19 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
     return [a for a, rows in options.items() if rows]
 
 def assess(action: str, snapshot: dict) -> dict:
+    if action == 'resilience_rest':
+        context = snapshot.get('development', {}).get('resilience', {})
+        plans = (context.get('plans') or {}).get(action) or {}
+        targets = {row.get('target_id') for row in plans.values()}
+        patients = [p for p in context.get('patients') or [] if p.get('pawn_id') in targets]
+        already_resting = bool(patients) and all(p.get('in_bed') is True for p in patients)
+        return {'benefit': 'Bed-rest priority only; no feeding, tending or cure of malnutrition. '
+                + ('Available patients are already in bed; their current rest continues.' if already_resting
+                   else 'Permits an eligible patient to choose bed rest through ordinary work.'),
+                'cost': 'Changes only the chosen patient\'s priority; other workers remain available.',
+                'risk': 'Food and active treatment still need separate workers and resources.',
+                'inaction': 'Existing bed-rest jobs continue; a priority change is not patient recovery.',
+                'uncertainty': 'Actual arrival, nutrition and clinical progress require later observations.'}
     return {'benefit': DESCRIPTIONS[action], 'cost': 'Worker time, medicine or food; other work waits.',
             'risk': 'Conditions and reservations may change. A scheduled job does not prove recovery. Prevention does not treat existing infections.',
             'inaction': 'Autonomous work continues; illness, hunger or contamination may persist.',

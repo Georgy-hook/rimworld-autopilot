@@ -27,6 +27,48 @@ class NoFeasibleChoice(ValueError):
         super().__init__(f"No feasible options for {question_id}")
 
 
+def _planning_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
+    """The root plan is a complete factual unit, shared by every narrowing call.
+
+    General state used to be prefix-cut before choosing a domain, while the
+    final action comparison could drop development entirely. Allocate the
+    remaining space fairly to alternatives, never cut the observed plan.
+    """
+    facts = state["planning_context"]
+    tokenizer = getattr(agent, "tok", None)
+    config = getattr(agent, "cfg", {}) or {}
+    budget = int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8
+    effects = state.get("option_effects") or {}
+    descriptions = {key: effects.get(key) or value for key, value in options.items()}
+    visible = {"plan": facts, "alternatives": descriptions}
+    if tokenizer is None:
+        return visible
+
+    def size(value):
+        return _token_count(tokenizer, json.dumps(value, ensure_ascii=False, default=str), budget)
+
+    def clip(text, limit):
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _token_count(tokenizer, text[:mid], limit) <= limit:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo]
+
+    for limit in (48, 36, 24, 16, 10, 6, 2):
+        # Two costs cannot crowd one another out. The question head also
+        # carries each alternative's description and the comparison rule.
+        visible["alternatives"] = {key: (
+            "; ".join(f"{field}: {clip(str(text.get(field) or 'Unknown'), max(2, limit // 4))}"
+                      for field in ("benefit", "risk", "cost", "inaction"))
+            if isinstance(text, dict) else clip(text, limit)) for key, text in descriptions.items()}
+        if size(visible) <= budget:
+            return visible
+    raise ValueError("Complete root planning facts exceed the decision window")
+
+
 def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
     """Pack both upside and downside for each compared option, within budget.
 
@@ -75,7 +117,9 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     limit = max(4, (budget - 100) // max(1, len(options) * len(fields)))
     care_risks = facts.get("care_risks") if isinstance(facts, dict) else None
     quest_colony = facts.get("quest_colony") if isinstance(facts, dict) else None
-    protected_units = {key: value for key, value in (("care_risks", care_risks), ("quest_colony", quest_colony))
+    development = facts.get("development") if isinstance(facts, dict) else None
+    protected_units = {key: value for key, value in (("care_risks", care_risks), ("quest_colony", quest_colony),
+                                                  ("development", development))
                        if isinstance(value, dict) and value}
     joint_facts = "care_risks" in protected_units and "quest_colony" in protected_units
     if joint_facts:
@@ -106,6 +150,11 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
                     row[field] = clip(row[field], limit)
         elif protected_facts and "last_outcome" in visible:
             visible.pop("last_outcome")
+        elif "development" in visible["facts"]:
+            # Clinical and quest obligations take precedence in a crowded
+            # emergency. Ordinary root choices retain the complete small unit
+            # instead of losing all labor/recruitment/defense facts to care.
+            visible["facts"].pop("development")
         elif joint_facts and not compact_thermal and isinstance(care_risks.get("thermal"), dict):
             # Retain every condition/value/stage/danger flag in readable text.
             # This is a lossless change of representation, not prefix clipping.
@@ -223,14 +272,16 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
     # Legacy event/doctrine/commerce callers can supply unbounded state too.
     # Never rely on build_sequence silently truncating it after we log it as seen.
     detailed = detailed or (oversized and not consequences)
-    group_size = 2 if detailed or consequences else 6
+    planning = bool(state.get("planning_context"))
+    group_size = 2 if detailed or consequences or (planning and tokenizer is not None) else 6
 
     def predict(stage_id: str, chunk: dict[str, str]) -> dict[str, Any]:
         question = _bounded_question(agent, instructions, chunk)
         # The decision head has a small option-description budget. Medical,
         # crop and equipment comparisons reserve space for both alternatives
         # before the broader colony context can be truncated.
-        visible = (_consequence_state(agent, state, chunk) if consequences else
+        visible = (_planning_state(agent, state, chunk) if planning else
+                   _consequence_state(agent, state, chunk) if consequences else
                    _detailed_state(agent, state, chunk) if detailed else state)
         result = agent.predict(visible, {stage_id: question})
         result["question"] = {"id": stage_id, **question}

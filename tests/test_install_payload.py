@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import ast
 from pathlib import Path
 
 from install_payload import MOD_FILES, MOD_FOLDERS, RUNTIME_FILES, copy_install_payload
@@ -11,6 +12,20 @@ class InstallPayloadTests(unittest.TestCase):
     def test_live_capabilities_are_part_of_installed_runtime(self):
         self.assertIn("colony_capabilities.py", RUNTIME_FILES)
         self.assertIn("colony_medical_recovery.py", RUNTIME_FILES)
+
+    def test_installed_modules_include_their_local_import_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        installed = set(RUNTIME_FILES)
+        for name in RUNTIME_FILES:
+            if not name.endswith('.py'):
+                continue
+            tree = ast.parse((root / name).read_text(encoding='utf-8-sig'))
+            for node in ast.walk(tree):
+                modules = ([a.name.split('.')[0] for a in node.names] if isinstance(node, ast.Import)
+                           else [node.module.split('.')[0]] if isinstance(node, ast.ImportFrom) and node.module else [])
+                for module in modules:
+                    if (root / (module + '.py')).is_file():
+                        self.assertIn(module + '.py', installed, f'{name} imports unpackaged {module}')
 
     def test_only_runtime_files_are_installed_without_overwriting_user_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

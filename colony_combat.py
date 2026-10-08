@@ -57,6 +57,41 @@ def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             if not row.get("is_dead") and not row.get("is_downed") and row.get("active_threat", True)]
 
 
+def safe_work_actor_ids(snapshot: dict[str, Any], *, allow_idle_drafted: bool = False) -> set[int]:
+    """A conservative observed work window, never a declaration of raid victory.
+
+    Missing distance, an assault/kidnap/predator order or an active allied attack
+    cannot authorize stand-down. Native route/target guards still govern work.
+    Patients can remain with their own caregivers while unrelated workers act.
+    """
+    hostiles = live_hostiles(snapshot)
+    allies = [p for p in (snapshot.get("combat") or {}).get("colonists") or [] if not p.get("is_dead")]
+    if not hostiles or not allies:
+        return set()
+    for enemy in hostiles:
+        if is_kidnapper(enemy):
+            return set()
+        if not enemy.get("is_building") and not hostile_is_preparing(enemy):
+            return set()
+    radius = max(35, max((float(e.get("weapon_range") or 0) + 12 for e in hostiles), default=35))
+    if any(opponent_distance(p, 0) <= radius for p in allies):
+        return set()
+    protected = protected_emergency_care_ids(snapshot)
+    actors = set()
+    for pawn in allies:
+        if pawn.get("is_downed") or pawn.get("is_in_mental_state") or pawn.get("id") in protected:
+            continue
+        job = str(pawn.get("current_job") or "").casefold()
+        if job in {"attackstatic", "attackmelee", "castverb", "predatorhunt"}:
+            return set()
+        if pawn.get("is_drafted"):
+            if not allow_idle_drafted or job not in {"wait_combat", "wait", "wait_maintainposture"}:
+                return set()
+        if pawn.get("id") is not None:
+            actors.add(int(pawn["id"]))
+    return actors
+
+
 def care_at_bedside(row: dict[str, Any], snapshot: dict[str, Any]) -> bool | None:
     """A queued medical job may still be walking across the map."""
     if isinstance(row.get('care_at_bedside'), bool):

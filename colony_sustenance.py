@@ -345,6 +345,13 @@ def execute(client, snapshot, map_state, action, selected):
 
 def assess(action, snapshot):
     benefit = DESCRIPTIONS.get(action, "unsupported")
+    if action == "sustenance_animal_welfare":
+        plans = options(snapshot.get("development", {}).get("sustenance", {}), action)
+        kinds = {p.get("kind") for p in plans.values()}
+        if kinds == {"care"}:
+            benefit = "Medicine ceiling only; no feeding job or delivered feed. Tending policy cannot cure starvation."
+        else:
+            benefit = "Animal medicine, allowed area or pen policy; no direct feeding job. Feed and safe access must exist; policy acceptance does not stop starvation."
     if action == "sustenance_food_batch":
         plans = options(snapshot.get("development", {}).get("sustenance", {}), action)
         if plans and all(p.get("kind") in {"job", "kitchenhome"} for p in plans.values()):

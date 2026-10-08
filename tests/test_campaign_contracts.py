@@ -178,8 +178,8 @@ class CampaignContracts(unittest.TestCase):
                               "ending_progress": {"long": "x" * 20000}},
                       "doctrine_economy_family", "Choose supporting income", {"manufacturing": "Промышленность", "animals": "Животные"})
         for state, questions in agent.calls:
-            self.assertIn("archonexus", state["facts"])
-            self.assertTrue(all(card["risk"] and card["cost"] for card in state["effects"].values()))
+            self.assertEqual(state["plan"]["endgame"], "archonexus")
+            self.assertTrue(all("risk:" in card and "cost:" in card for card in state["alternatives"].values()))
             self.assertTrue(all(not any('\u0400' <= c <= '\u04ff' for c in text)
                                 for q in questions.values() for text in q["criteria"].values()))
 

@@ -51,6 +51,78 @@ class ColonyVerificationTests(unittest.TestCase):
         self.assertEqual({"Bed": 1}, card["settlement"]["new_since_baseline"])
         self.assertIn("Observed coordinates", layout_svg(card))
 
+    def test_development_records_unassigned_roles_and_unfinished_outcomes(self):
+        pawn = {"id": 1, "name": "Worker", "age": 24, "gender": "Female", "relations": [],
+                "skills": {"Intellectual": {"level": 0}}, "current_job": "Repair",
+                "work_priorities": {"Research": {"priority": 0, "disabled": False},
+                                    "Warden": {"priority": 0, "disabled": True}}}
+        snapshot = {"colonists": [pawn], "combat": {"colonists": [
+            {"id": 1, "can_fight": True, "has_ranged_weapon": False, "armor_sharp": 0}]},
+            "development": {"buildings": [{"id": 2, "def": "SleepingSpot", "for_prisoners": True,
+                                           "roofed": True, "current_temperature": 21}],
+                            "current_research": {"name": "Battery", "progress": 2},
+                            "work_tables": [{"id": 3, "thing_def": "TableSculpting", "bills_count": 0}]}}
+        status = self.card(snapshot)["development_status"]
+        self.assertIn("Research", status["workforce"]["unassigned_roles"])
+        self.assertIn("Warden", status["workforce"]["missing_roles"])
+        self.assertEqual(0, status["armament"][0]["armor_sharp"])
+        self.assertEqual(2, status["prison"]["beds"][0]["id"])
+        self.assertIsNone(status["prison"]["patients"])
+        self.assertIn("Unknown", status["family"]["eligibility"])
+        self.assertEqual(0, status["workshops"][0]["bills_count"])
+
+    def test_absent_population_and_combat_are_not_reported_as_zero_deficits(self):
+        status = self.card()["development_status"]
+        self.assertIsNone(status["workforce"])
+        self.assertIsNone(status["work_assignments"])
+        self.assertIsNone(status["armament"])
+        self.assertIsNone(status["prison"]["beds"])
+        self.assertIsNone(status["family"]["people"])
+
+    def test_rock_wall_and_partial_roof_coverage_do_not_establish_mountain_safety(self):
+        rooms = [{"id": 1, "cells_count": 1, "cells": [{"x": 10, "z": 10}]},
+                 {"id": 2, "cells_count": 1, "cells": [{"x": 20, "z": 20}]}]
+        status = self.card({"development": {"rooms": rooms, "buildings": [],
+            "resilience": {"available": True, "environment": {
+                "rooms": [{"id": 1, "mountain_cells": 0}], "hives": []}}}})["underground_status"]
+        self.assertEqual(0, status["rooms"][0]["mountain_cells"])
+        self.assertIsNone(status["rooms"][1]["mountain_cells"])
+        self.assertEqual([1], status["native_roof_room_ids"])
+        self.assertEqual(0, status["hive_count"])
+        self.assertFalse(status["rooms"][0]["escape_routes_verified"])
+
+    def test_two_building_doors_are_not_two_exits_from_one_bedroom(self):
+        rooms = [{"id": 80, "cells_count": 2,
+                  "cells": [{"x": 124, "z": 145}, {"x": 125, "z": 145}]},
+                 {"id": 81, "cells_count": 1, "cells": [{"x": 137, "z": 152}]}]
+        doors = [{"id": 36054, "def": "Door", "position": {"x": 125, "z": 144}},
+                 {"id": 41473, "def": "Door", "position": {"x": 137, "z": 151}}]
+        status = self.card({"development": {"rooms": rooms, "buildings": doors}})["underground_status"]
+        self.assertEqual([36054], [d["id"] for d in status["rooms"][0]["adjacent_doors"]])
+        self.assertEqual([41473], [d["id"] for d in status["rooms"][1]["adjacent_doors"]])
+        self.assertIsNone(status["rooms"][0]["mountain_cells"])
+
+    def test_incomplete_cells_and_large_door_remain_unverified(self):
+        rooms = [{"id": 1, "cells_count": 12, "cells": [{"x": 10, "z": 10}]},
+                 {"id": 2, "cells_count": 1, "cells": [{"x": 20, "z": 20}]}]
+        door = {"id": 3, "type": "Building_Door", "position": {"x": 20, "z": 19},
+                "size": {"x": 3, "z": 1}}
+        status = self.card({"development": {"rooms": rooms, "buildings": [door]}})["underground_status"]
+        self.assertIsNone(status["rooms"][0]["adjacent_doors"])
+        self.assertIn("partial", status["rooms"][1]["door_coverage"])
+        self.assertFalse(status["rooms"][1]["escape_routes_verified"])
+        # A modded Building_Door without a footprint is not a vanilla 1x1 door.
+        door.pop("size")
+        status = self.card({"development": {"rooms": rooms, "buildings": [door]}})["underground_status"]
+        self.assertIn("partial", status["rooms"][1]["door_coverage"])
+
+    def test_unavailable_native_module_does_not_certify_absence_of_hives(self):
+        status = self.card({"development": {"resilience": {
+            "available": False, "environment": {"hives": [], "rooms": []}}}})["underground_status"]
+        self.assertIsNone(status["hive_count"])
+        self.assertIsNone(status["native_roof_room_ids"])
+        self.assertIsNone(status["rooms"])
+
 
 if __name__ == "__main__":
     unittest.main()

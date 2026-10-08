@@ -528,7 +528,7 @@ class DirectorTests(unittest.TestCase):
         self.assertIn("build_fallback_defense", result)
         self.assertNotIn("build_prison", result)
 
-    def test_roofed_ground_spots_do_not_unlock_expansion_before_real_beds(self):
+    def test_roofed_ground_spots_unlock_development_before_furniture_upgrades(self):
         snapshot = {"map": {"enemies": 0}, "colonists": [{"id": 1}],
                     "development": {"buildings": [{"id": 7, "def": "SleepingSpot"}],
                                     "rooms": [{"contained_beds_ids": [7],
@@ -537,14 +537,14 @@ class DirectorTests(unittest.TestCase):
         result = director.defer_discretionary_work_until_shelter(
             snapshot, {"issued": {}}, ["build_basic_beds", "build_freezer"]
         )
-        self.assertEqual(result, ["build_basic_beds"])
+        self.assertEqual(result, ["build_basic_beds", "build_freezer"])
 
-    def test_outdoor_real_bed_does_not_unlock_expansion(self):
+    def test_outdoor_real_bed_does_not_replace_unroofed_shelter(self):
         snapshot = {"map": {"enemies": 0}, "colonists": [{"id": 1}],
                     "development": {"buildings": [{"id": 7, "def": "SleepingSpot"},
                                                   {"id": 8, "def": "Bed"}],
                                     "rooms": [{"contained_beds_ids": [7],
-                                               "open_roof_count": 0,
+                                               "open_roof_count": 1,
                                                "touches_map_edge": False}]}}
         result = director.defer_discretionary_work_until_shelter(
             snapshot, {"issued": {}}, ["build_basic_beds", "build_freezer"]
@@ -1405,7 +1405,7 @@ class DirectorTests(unittest.TestCase):
 
     def test_laya_can_resume_colony_decisions_during_raid_staging(self):
         snapshot = {"combat": {
-            "colonists": [{"id": 1, "is_drafted": False}],
+            "colonists": [{"id": 1, "is_drafted": False, "distance_to_nearest_opponent": 80}],
             "hostiles": [{"id": 9, "current_job": "Wait_Wander", "is_dead": False, "is_downed": False,
                           "distance_to_nearest_opponent": 80}],
         }, "map": {"enemies": 1, "resources": {}}, "development": {}, "colonists": [], "animals": []}
@@ -4345,8 +4345,8 @@ class DirectorTests(unittest.TestCase):
         self.assertTrue(direction_questions)
         self.assertTrue(all(colony_strategy.DIRECTIONS[key]["domain"] == "prosperity"
                             for question in direction_questions for key in question))
-        self.assertEqual(agent.states[-1]["facts"]["direction"], "industrial_manufacturing")
-        self.assertEqual(agent.states[-1]["facts"]["endgame"], "ship_escape")
+        self.assertEqual(agent.states[-1]["plan"]["direction"], "industrial_manufacturing")
+        self.assertEqual(agent.states[-1]["plan"]["endgame"], "ship_escape")
 
     def test_existing_doctrine_can_be_explicitly_kept_without_reselecting_every_axis(self):
         current = {"schema_version": 2, "primary_direction": "research_starflight",

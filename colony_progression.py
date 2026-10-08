@@ -30,6 +30,43 @@ ENDING_ROUTES = {
 PENDING_WINDOWS = ("Dialog_ChooseThingsForNewColony", "Dialog_ConfigureIdeo", "Screen_ArchonexusSettlementCinematics")
 
 
+def canonical_route(route):
+    return {"imperial_ascension": "royal_ascent", "mechhive": "odyssey_mechhive"}.get(route, route)
+
+
+def option_route(row):
+    """Native QuestScriptDef / site identity, independent of localized labels."""
+    if row.get("kind") == "odyssey":
+        return "odyssey_mechhive"
+    route = canonical_route(row.get("route"))
+    if route in ENDING_ROUTES:
+        return route
+    name = str(route or row.get("site") or "")
+    if "RoyalAscent" in name:
+        return "royal_ascent"
+    if "Archonexus" in name:
+        return "archonexus"
+    if "Void" in name:
+        return "anomaly_void"
+    if any(word in name for word in ("Gravship", "Mechhive", "Cerebrex")):
+        return "odyssey_mechhive"
+    if "ShipEscape" in name:
+        return "ship_journey"
+    return None
+
+
+def route_matches(chosen, row):
+    chosen = canonical_route(chosen)
+    # Resolve a native transaction already in progress, including cancel.
+    # A new route requires an explicit doctrine change, not an unrelated menu.
+    if row.get("kind") in {"selection", "continuation", "world-targeting"}:
+        return True
+    if not chosen:
+        return True
+    candidate = option_route(row)
+    return candidate == chosen or {candidate, chosen} <= {"ship_escape", "ship_journey"}
+
+
 def peek_pending(client):
     try:
         return client.get("/api/v1/colony/endings/pending") is True
@@ -220,16 +257,15 @@ def prepare(snapshot, map_state):
     context["_game_tick"] = int((snapshot.get("game") or {}).get("tick") or 0)
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
-    chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
-    chosen_route = {"imperial_ascension": "royal_ascent", "mechhive": "odyssey_mechhive"}.get(chosen_route, chosen_route)
+    chosen_route = canonical_route(doctrine.get("endgame") or doctrine.get("ending_route")
+                                   or map_state.get("ending_commitment"))
     context["chosen_ending_route"] = chosen_route
     context["chosen_route_support"] = (context.get("support_research") or {}).get(chosen_route) or {}
     support_frontier = set(context["chosen_route_support"].get("frontier") or [])
     for name, row in context["options"].items():
         row["ending_support"] = name in support_frontier
-    pursuing_ship = (doctrine.get("primary_direction") == "research_starflight"
-                     or doctrine.get("endgame") == "ship_escape"
-                     or doctrine.get("technology") == "starflight")
+    pursuing_ship = chosen_route == "ship_escape" or (not chosen_route and (
+        doctrine.get("primary_direction") == "research_starflight" or doctrine.get("technology") == "starflight"))
     # Only add a decision when the route exposes an actionable prerequisite.
     # Ordinary research selection already belongs to the director.
     actions = ["progression_research"] if (pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values())) or any(r.get("ending_support") for r in context["options"].values()) else []
@@ -310,7 +346,8 @@ def ending_options(context):
     memory = context.get('_transition_memory') or {}
     pending = context.get('_interaction_pending') or {}
     tick = int(context.get('_game_tick') or 0)
-    return {key: row for key, row in rows.items() if not (
+    pending_transaction = pending_action(context) is not None
+    return {key: row for key, row in rows.items() if (pending_transaction or route_matches(context.get('chosen_ending_route'), row)) and not (
         row.get('kind') == 'job' and retry_recent(pending.get(_interaction_key(row)), tick, 30000))
         and not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
 
@@ -450,8 +487,7 @@ def choose(agent, state, action, snapshot):
                 return row.get("category") or row.get("operation")
             if row.get("kind") == "continuation":
                 return row.get("operation")
-            route = str(row.get("route") or row.get("site") or "")
-            return "ship_journey" if row.get("kind") == "journey" and route == "ship_journey" else "imperial_ascension" if "RoyalAscent" in route else "archonexus" if "Archonexus" in route or route == "archonexus" else "anomaly_void" if "Void" in route else "odyssey_mechhive" if "Gravship" in route or "Mechhive" in route else "ship_escape"
+            return option_route(row) or "unknown_native_route"
         target_rows = {group(row): row for row in candidates.values()}
         target_choices = {key: (key + ": " + str(row.get("label") or row.get("site") or "native route")) for key, row in target_rows.items()}
         pending = pending_action(context) == action
@@ -526,6 +562,9 @@ def _execute(client, snapshot, map_state, action, selected):
         _record_cooldown(snapshot, map_state, action, deferred=True)
         return {"applied": False, "reason": "deliberately deferred; reconsider after 15000 ticks", "deferred": True}
     fresh = collect(client, {"map": snapshot.get("map") or {}})  # Execution bypasses earlier-cycle research cache.
+    doctrine = map_state.get("doctrine") or (snapshot.get("development") or {}).get("doctrine") or {}
+    fresh["chosen_ending_route"] = canonical_route(doctrine.get("endgame") or doctrine.get("ending_route")
+                                                   or map_state.get("ending_commitment"))
     if fresh.get("victory_verified") is True:
         return {"applied": False, "reason": "native victory already verified", "victory_verified": True}
     if action == "progression_ending":
@@ -636,6 +675,11 @@ def execute(client, snapshot, map_state, action, selected):
         colony_sessions.transition_record(memory, key, readiness, {'applied': False, 'reason': 'network_outcome_unknown'})
         raise
     colony_sessions.transition_record(memory, key, readiness, result)
+    if result.get('applied'):
+        route = option_route(selected) if action == 'progression_ending' else 'ship_escape' if action in {
+            'progression_ship', 'progression_boardship'} else None
+        if route:
+            map_state['ending_commitment'] = route
     return result
 
 
@@ -650,8 +694,12 @@ def _options(context):
 
 
 def boarding_options(context):
+    if context.get('chosen_ending_route') and canonical_route(context['chosen_ending_route']) not in {'ship_escape', 'ship_journey'}:
+        return {}
     return _filter_transitions(context, 'progression_boardship', _rawboarding_options(context))
 
 
 def ship_options(context):
+    if context.get('chosen_ending_route') and canonical_route(context['chosen_ending_route']) not in {'ship_escape', 'ship_journey'}:
+        return {}
     return _filter_transitions(context, 'progression_ship', _rawship_options(context))

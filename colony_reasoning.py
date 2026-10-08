@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 import colony_modules
+import colony_growth
 
 
 FIELDS = ("benefit", "risk", "cost", "inaction", "uncertainty")
@@ -228,6 +229,7 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
                                         if isinstance(fire, dict))}
     facts = {
         "care_risks": care_risks,
+        "development": colony_growth.development_briefing(snapshot),
         "threats": (snapshot.get("map") or {}).get("enemies", 0),
         "downed": sum(bool(p.get("downed")) for p in people),
         "people": len(people),

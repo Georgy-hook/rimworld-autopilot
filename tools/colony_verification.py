@@ -10,6 +10,12 @@ from collections import Counter
 from html import escape
 import json
 from pathlib import Path
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import colony_growth
 
 
 def read_json(path: Path | None, fallback):
@@ -26,6 +32,117 @@ def observed_counts(rows):
 
 def project(row, fields):
     return {field: row.get(field) for field in fields}
+
+
+def underground_status(snapshot):
+    """Join observed roofs and room doors without declaring safe routes.
+
+    Native resilience covers patient/bed/kitchen rooms, not every map cell.
+    A door adjacent to a room is an observation; escape and choke positions
+    still need native path, reservation, hazard and firing checks.
+    """
+    dev = snapshot.get("development") or {}
+    resilience = dev.get("resilience") or {}
+    environment = resilience.get("environment") if resilience.get("available") is True else None
+    native_rooms = (environment or {}).get("rooms")
+    roof_by_room = {r.get("id"): r.get("mountain_cells") for r in native_rooms or []}
+    hives = (environment or {}).get("hives")
+    rooms, buildings = dev.get("rooms"), dev.get("buildings")
+    doors = ([b for b in buildings if b.get("type") == "Building_Door"
+              or definition(b) in {"Door", "Autodoor"}]
+             if isinstance(buildings, list) else None)
+    observed = None
+    if isinstance(rooms, list):
+        observed = []
+        for room in rooms:
+            if room.get("touches_map_edge") or room.get("is_doorway"):
+                continue
+            raw_cells = room.get("cells")
+            cells = {(c["x"], c["z"]) for c in raw_cells or []
+                     if isinstance(c, dict) and c.get("x") is not None and c.get("z") is not None}
+            # Missing/truncated room cells cannot establish door coverage.
+            complete_cells = (isinstance(raw_cells, list) and bool(cells)
+                              and room.get("cells_count") == len(cells))
+            adjacent = None
+            door_coverage = "unverified"
+            if complete_cells and doors is not None:
+                adjacent = []
+                door_coverage = "cardinal adjacency of observed single-cell doors"
+                for door in doors:
+                    p = door.get("position") or {}
+                    size = door.get("size")
+                    footprint = ((size.get("x"), size.get("z")) if isinstance(size, dict)
+                                 else (1, 1) if definition(door) in {"Door", "Autodoor"} else None)
+                    if p.get("x") is None or p.get("z") is None or footprint != (1, 1):
+                        # No invented footprint for newer or modded large doors.
+                        door_coverage = "partial: unknown or multi-cell door geometry"
+                        continue
+                    x, z = p["x"], p["z"]
+                    if any(c in cells for c in ((x-1, z), (x+1, z), (x, z-1), (x, z+1))):
+                        adjacent.append(project(door, ("id", "def", "position", "stuff_def_name")))
+            observed.append({
+                **project(room, ("id", "role_def_name", "contained_beds_ids", "temperature",
+                                  "open_roof_count", "cleanliness", "dark_cells_percent")),
+                "mountain_cells": roof_by_room.get(room.get("id")),
+                "adjacent_doors": adjacent, "door_coverage": door_coverage,
+                "escape_routes_verified": False,
+            })
+    return {
+        "rooms": observed,
+        "native_roof_room_ids": [r.get("id") for r in native_rooms] if isinstance(native_rooms, list) else None,
+        "hives": hives if isinstance(hives, list) else None,
+        "hive_count": len(hives) if isinstance(hives, list) else None,
+        "climate_devices": (environment or {}).get("climate_devices"),
+        "roof_coverage": "Only native patient/bed/kitchen rooms; no whole-map infestation probability",
+        "limits": ["Natural rock walls do not establish a thick mountain roof",
+                   "Adjacent doors are not independent safe exits or an actual melee choke",
+                   "Cold, darkness and lighting observations are not an infestation-proof score",
+                   "A hive count does not establish insect aggression, reproduction or safe jelly collection",
+                   "A burn compartment requires evacuation, thermal isolation, fuel and recovery evidence"],
+    }
+
+
+def development_status(snapshot):
+    """Record the chain's observable prerequisites without scoring success.
+
+    A research bench is not research, a prison bed is not a recruit and a
+    relationship is not fertility. Keep the raw observations for follow-up.
+    """
+    dev = snapshot.get("development") or {}
+    people = snapshot.get("colonists")
+    buildings = dev.get("buildings")
+    combat = snapshot.get("combat") or {}
+    return {
+        "workforce": colony_growth.workforce_context(snapshot) if isinstance(people, list) else None,
+        "work_assignments": [project(p, ("id", "name", "skills", "work_priorities", "current_job",
+                                          "downed", "in_mental_state", "capacities"))
+                             for p in people] if isinstance(people, list) else None,
+        "armament": [project(p, ("id", "name", "can_fight", "is_downed", "is_in_mental_state",
+                                 "weapon_def", "weapon_range", "has_ranged_weapon", "armor_sharp"))
+                     for p in combat.get("colonists", [])] if isinstance(combat.get("colonists"), list) else None,
+        "prison": {
+            "beds": [project(b, ("id", "def", "position", "room_id", "roofed", "current_temperature", "medical"))
+                     for b in buildings if b.get("for_prisoners") is True]
+                    if isinstance(buildings, list) else None,
+            "patients": combat.get("prisoners"),
+            "recruitment_outcomes": "Requires capture, treatment, wardening and actual membership evidence",
+        },
+        "family": {
+            "people": [project(p, ("id", "name", "age", "gender", "relations", "health_conditions"))
+                       for p in people] if isinstance(people, list) else None,
+            "double_beds": [project(b, ("id", "def", "room_id", "roofed", "current_temperature",
+                                        "for_prisoners", "medical"))
+                            for b in buildings if definition(b) in {"DoubleBed", "RoyalBed", "DoubleSleepingSpot"}]
+                           if isinstance(buildings, list) else None,
+            "eligibility": "Unknown without native fertility and partnership eligibility",
+            "births": "Requires explicit birth evidence; a relationship or bed is not a birth",
+        },
+        "workshops": dev.get("work_tables"),
+        "research": dev.get("current_research"),
+        "limits": ["Assignment is not productive labor; sampled jobs are observations, not worker hours",
+                   "No cover count establishes line of sight, a safe route or a repelled raid",
+                   "A configured production bill is not output, and output is not a sale"],
+    }
 
 
 def evidence_card(snapshot, evidence, metadata, timeline, decisions, events, review, baseline):
@@ -103,6 +220,8 @@ def evidence_card(snapshot, evidence, metadata, timeline, decisions, events, rev
                        "rejection_reasons": dict(rejections), "sampled_jobs_by_pawn": jobs,
                        "window_start": timeline[0].get("time_utc") if timeline else None,
                        "window_end": timeline[-1].get("time_utc") if timeline else None},
+        "development_status": development_status(snapshot),
+        "underground_status": underground_status(snapshot),
         "recent_native_death_letters": deaths,
         "assessment": review.get("assessment", {}), "screenshot": review.get("screenshot"),
         "limits": ["No counterfactual guarantee of survival", "Unknown is not zero or pass",

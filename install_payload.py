@@ -18,6 +18,7 @@ RUNTIME_FILES = (
     "colony_reasoning.py",
     "colony_retry.py",
     "colony_outcomes.py",
+    "colony_plan.py",
     "colony_production.py",
     "colony_society.py",
     "colony_progression.py",

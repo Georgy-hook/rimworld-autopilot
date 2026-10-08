@@ -5,7 +5,99 @@ from __future__ import annotations
 from typing import Any
 
 
-CRITICAL_SKILLS = ("Construction", "Plants", "Cooking", "Medicine", "Social", "Shooting")
+CRITICAL_SKILLS = ("Construction", "Plants", "Cooking", "Medicine", "Social", "Shooting", "Intellectual", "Crafting")
+ROLE_SKILLS = {"Construction": "Construction", "Growing": "Plants", "Cooking": "Cooking",
+               "Doctor": "Medicine", "Research": "Intellectual", "Warden": "Social",
+               "Firefighter": None}
+
+
+def live_quests(development: dict[str, Any]) -> list[dict[str, Any]]:
+    """The native endpoint groups current quests and history in an object."""
+    quests = development.get("quests")
+    rows = quests.get("active_quests", []) if isinstance(quests, dict) else quests or []
+    return [row for row in rows if isinstance(row, dict)
+            and str(row.get("state") or "") in {"", "NotYetAccepted", "Ongoing"}]
+
+
+def workforce_context(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Separate unavailable work from novice skill or an unassigned priority.
+
+    Missing observations are unknown. A level-zero novice who can work is not
+    equivalent to a pawn incapable of research, firefighting or wardening.
+    """
+    living = [p for p in snapshot.get("colonists") or [] if not p.get("dead") and not p.get("is_dead")]
+    mobile_ids = {str(p.get("id")) for p in available_workers(snapshot)}
+    capable, available, unassigned = {}, {}, []
+    for role, skill in ROLE_SKILLS.items():
+        def can_do(pawn):
+            work = (pawn.get("work_priorities") or {}).get(role)
+            ability = (pawn.get("skills") or {}).get(skill) if skill else None
+            if (isinstance(work, dict) and work.get("disabled") is True
+                    or isinstance(ability, dict) and ability.get("disabled") is True):
+                return False
+            if isinstance(work, dict) or isinstance(ability, dict):
+                return True
+            return None
+        observations = [(p, can_do(p)) for p in living]
+        unknown = any(value is None for _, value in observations)
+        capable[role] = None if unknown else sum(value is True for _, value in observations)
+        available[role] = None if unknown else sum(value is True and str(p.get("id")) in mobile_ids
+                                                 for p, value in observations)
+        providers = [p for p, value in observations if value is True]
+        if providers and not unknown and all(
+                ((p.get("work_priorities") or {}).get(role) or {}).get("priority") == 0
+                for p in providers):
+            unassigned.append(role)
+    return {"capable": capable, "available": available,
+            "missing_roles": [role for role, count in capable.items() if count == 0 and living],
+            "unassigned_roles": unassigned}
+
+
+def development_briefing(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Small measured development gaps for root comparisons, not a build order."""
+    people = snapshot.get("colonists") or []
+    if not people:
+        return {}
+    dev = snapshot.get("development") or {}
+    workforce = workforce_context(snapshot)
+    result = {"mobile_workers": len(available_workers(snapshot))}
+    if workforce["missing_roles"]:
+        result["missing_roles"] = workforce["missing_roles"]
+    if workforce["unassigned_roles"]:
+        result["unassigned_roles"] = workforce["unassigned_roles"]
+    unavailable = [role for role, count in workforce["available"].items()
+                   if count == 0 and (workforce["capable"].get(role) or 0) > 0]
+    if unavailable:
+        result["unavailable_roles"] = unavailable
+    combat_people = (snapshot.get("combat") or {}).get("colonists")
+    actors = [p for p in combat_people or []
+              if not p.get("is_dead") and p.get("can_fight") is True]
+    living_ids = {str(p.get("id")) for p in people if not p.get("dead") and not p.get("is_dead")}
+    observed_ids = {str(p.get("id")) for p in combat_people or []}
+    if (isinstance(combat_people, list) and living_ids <= observed_ids
+            and all(isinstance(p.get("can_fight"), bool) for p in combat_people)
+            and all(isinstance(p.get("has_ranged_weapon"), bool) for p in actors)):
+        result["ranged_fighters"] = f"{sum(p.get('has_ranged_weapon') is True for p in actors)}/{len(actors)}"
+    counts = dev.get("building_counts")
+    if isinstance(counts, dict):
+        result["cover"] = sum(int(counts.get(name) or 0) for name in ("Barricade", "Sandbags"))
+        research = dev.get("current_research") or {}
+        if not any(int(counts.get(name) or 0) for name in ("SimpleResearchBench", "HiTechResearchBench")):
+            result["research"] = "no_bench"
+        elif "Research" in workforce["missing_roles"]:
+            result["research"] = "no_capable_worker"
+        elif "Research" in workforce["unassigned_roles"]:
+            result["research"] = "no_assigned_worker"
+        else:
+            result["research"] = research.get("name", "unknown")
+    if dev.get("quests") is not None:
+        result["recruit_offers"] = sum(q.get("increases_population") is True and q.get("can_accept") is True
+                                       for q in live_quests(dev))
+    tables = dev.get("work_tables")
+    if isinstance(tables, list):
+        result["empty_workshops"] = sum(t.get("bills_count") == 0 and t.get("thing_def") not in {
+            "Campfire", "FueledStove", "ElectricStove", "ButcherSpot", "TableButcher"} for t in tables)
+    return result
 
 
 def available_workers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -58,7 +150,7 @@ def population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
                                              for row in development.get("trade_destinations") or []
                                              if isinstance(row, dict)),
         "visiting_trade_contacts": len(development.get("trade_opportunities") or []),
-        "active_quests": len(development.get("quests") or []),
+        "active_quests": len(live_quests(development)),
     }
     return {
         "population": len(people),
@@ -69,6 +161,7 @@ def population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
         "total_food": resources.get("food"),
         "silver": (development.get("item_counts") or {}).get("Silver", 0),
         "best_skills": best_skills,
+        "workforce": workforce_context(snapshot),
         "live_signals": signals,
         "routes": routes,
         "tradeoff": "A small crew is fragile, but adding a person raises food, shelter, defense and medical needs. A trader may leave before another chance appears.",
@@ -80,7 +173,7 @@ def trade_population_context(snapshot: dict[str, Any]) -> dict[str, Any]:
     full = population_context(snapshot)
     return {key: full[key] for key in (
         "population", "able_workers", "bedbound", "unavailable_workers", "ready_meals", "total_food",
-        "silver", "best_skills", "live_signals", "tradeoff")}
+        "silver", "best_skills", "workforce", "live_signals", "tradeoff")}
 
 
 def brief_humanlike_offer_description(offer: dict[str, Any]) -> str:
