@@ -1813,3 +1813,18 @@ laya remains PAUSED. Future live nutrition, treatment, armed defense, research,
 productive recruitment/trade and a completed selected ending remain unverified.
 Monument executor and infestation_burn are not supported; mountain survey
 geometry does not certify complete safe routes, thick roof or evacuation.
+
+
+## 2026-10-09 — systemic-plan candidate starts East Edbonla
+
+User requested one new colony after the systemic audit. Source/Python payload 3bf5ea8; native/DLL fc133c9 unchanged. All 60 payload/game-DLL records verified, including colony_plan.py. The prior checks passed 1287 tests and audited 311 routes. No release or tag was made.
+
+Campaign b2aafaaef8a546bfa1e6ee73c490caca, tile 82712, seed laya-systemic-plan-008-20261009, map seed 16622162, Cassandra/Medium/Permadeath, TemperateForest. One generation. Baseline tick 23; autonomy began 2026-10-09T07:16:30.737366+00:00. Starting temperature 5.72 C, growing season true. Initially forbidden supplies explain baseline food zero. Founders Lover 393, Takumi 396 and Neiman 399; original scars and role limits recorded separately.
+
+At 2026-10-09T07:22:40.155801+00:00, tick 127717: all three alive, not downed, bleeding zero. Physical 23 walls, one door, three covered beds and TorchLamp; room 30 at 16.22 C, animal sleeping spot outdoors. Research bench exists, Lover has Research job, GeothermalPower 16/3200: work began, no completed new research. Food 42 original meals, 37.8 nutrition; no growing zones or food plants yet, sustained supply remains unverified. Monkey Knuckles 2577 alive; initial training not credited as new. No verified sales, recruits, raid victories, new deaths or ending.
+
+Early risks preserved: two PollutionPump frames need Construction 3 while observed levels are 1/0/1; no power network. Five sampled material replacement choices for the starter shell, four applied: one Silver and three Steel. At tick 62439 Lover/Takumi lack a ranged weapon, Neiman has ToxGrenades; successful conventional defense unverified. Actual root narrowing contains 307 complete plan instances in 36 bounded records; context visibility is not proof of useful choices.
+
+One visible game PID 59996, director 164096 on CUDA with four CPU threads, observer 78700 and monitor 103152. Normal 3x, fresh statuses, stderr empty, force-pause false, actual ticks growing. Save XML tick 120000, mtime 2026-10-09T07:22:03.547961+00:00, same campaign and stable file; no extra save POST after technical startup saves 23/224. After autonomy no pawn orders, reset, rollback, restart or manual speed. Two PNGs viewed; card and coordinate SVG saved. First full hourly check no earlier than 2026-10-09T08:18:00+00:00. Automation laya is ACTIVE at minute 18 each hour, quiet without meaningful changes.
+
+Private details: outputs/colony-008-systemic-plan-20261009.md. Evidence: work/longrun-008-systemic-plan-20261009/closing-startup-* and final-startup-live-check.json. Earlier Western defeat belongs to a separate campaign.
