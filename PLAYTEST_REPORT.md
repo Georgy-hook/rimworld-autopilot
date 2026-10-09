@@ -1906,3 +1906,56 @@ Private repair report: outputs/laya-construction-api-repair-20261009.md;
 proofs construction-repair-* in this run folder, including actual save XML,
 installed hashes, live API checks and construction-repair-after-visible.png.
 The observed population losses are retained; this repair is not a colony victory.
+
+
+### 2026-10-09 — new random colony after native instant-building correction
+
+At the user's request, started one new Cassandra/Medium Permadeath map,250x250:
+Northeast Banlium (Permadeath), tile55180 TemperateForest, world seed
+laya-instant-construction-008-20261009, map seed16622162,
+campaign 930653a716c14809841cfbc935c98ea0. No reroll/load/rollback. Prior Onium
+was user superseded, not declared defeated; its repaired save and memory hashes
+are retained unchanged. Python payload3bf5ea8/nativee8a195d/DLL1.10.0+e8a195d,
+package59efc53;60 installed-file hashes verified. Prior gates1287 Python tests,
+33 native boundaries,311 routes, Release1.6 zero warnings/errors remain offline.
+
+Paused baseline22; autonomy 2026-10-09T09:12:07.798139+00:00. First full hourly check no earlier than
+2026-10-09T10:15:00+00:00 (13:15 Moscow), then hourly. No technical pause after autonomy start.
+Founders Silver657/Vang660/Ryan663 alive; initial permanent scars and dog Inga5545
+old Gunshot/learned guard are baseline conditions. Snapshot59096
+at2026-10-09T09:14:52.473412+00:00, later live60020: no downed/bleeding,
+early mild hypothermia resolved.49 original survival meals/44.1 nutrition,
+medicine30; sustainable production not established, season false/no fields.
+
+Actual13 wood walls/one door/3SleepingSpot/Campfire. Room65 roof complete,
+29.487C vs outside-12.860C; native read-only catalog533defs includes13 zero-work
+instant defs; projects empty at query and starter spots are actual Buildings.
+No manual placement replay or autonomous caravan marker yet. One door and
+wooden envelope are observed, escape routes/firebreak remain unverified.
+Research/prison/commercial production/working power network/recruit/sale/repelled
+raid/new ending completion are not established. Economic purpose income_drugs
+was saved; no finished income chain or profit claimed.
+
+Visible PNG09:13:55UTC, ticks33711-33845, viewed; hide_ui left interface.
+Comparable card/layout saved privately. RimWorld179192/director163268 CUDA4 CPU
+configured/observer182276/monitor156904; three services running/fresh, stderr0,
+force_pause false, actual ticks grow, nativeGameOver/victory false. Baseline disk
+save22 and startup disk save1915/mtime09:12:14.587998UTC/campaign stable verified,
+later live3844; save predates closing snapshot. Window restored after minimization.
+No manual pawn jobs/speed, memory resets or extra save POST during closing review.
+Private report outputs/colony-008-instant-construction-20261009.md;
+evidence work/longrun-008-instant-construction-20261009/closing-startup-*.
+
+Handoff read-only check 2026-10-09T09:23:48.688446+00:00: snapshot234644, actual live236115→236509, same campaign/no native ending. Services running/ready/stderr0/no force-pause. Actual laya ACTIVE hourly at minute15 confirmed; first full check10:15UTC. Disk autosave XML180000/mtime2026-10-09T09:20:49.210378+00:00/campaign stable; no extra save POST. Fresh clinical/resource/building details remain in private final-startup-live-check.json.
+
+Later startup layout at234644 differs from closing59096:38 walls/2 doors,
+2SleepingSpot/oneBed, physical generator/electric kitchen/pen/research bench.
+Generator36579 fuel17.671/75 and1000W/net241563018; heater/lamp/stove are
+power_on=false without power_net_id, so useful powered kitchen is not verified.
+Research bench37173 usesSilver and stands outdoors157,118; current research none.
+Inga alive/follow_drafted true/Release0 of2; no combat result claimed. Later
+viewed handoff PNG09:25:16UTC/ticks263974-264044 shows expansion/no-power icons
+and UI Sad wander:Vang/Mad hare; native cause/current threat/outcome needs follow-up.
+Final card/layout use234644 snapshot; decision/event tail explicitly earlier.
+Current Player.log3492bytes has0 NullReferenceException matches; earlier startup
+NRE from another run is not a new error and no global fix is claimed.
