@@ -7,6 +7,7 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Current contracts
 
+- [Instant construction markers and legacy-frame migration](API_INSTANT_CONSTRUCTION.md)
 - [Repository architecture and ownership](../ARCHITECTURE.md)
 - [Modular decisions, API boundaries, memory and model budgets](MODULE_ARCHITECTURE_0.0.7.md)
 - [Laya model interface, training and evaluation limits](LAYA_ARCHITECTURE.md)

@@ -1,5 +1,12 @@
 # Unreleased corrections after 0.0.7
 
+- Fixed zero-work markers becoming construction frames: blueprint placement now
+  follows the loaded vanilla WorkToBuild rule, including caravan and DLC spots.
+  Validated placement repairs matching legacy plans, retains completed-marker
+  identity, exports instant/work metadata and finite progress, and rejects worker
+  assignments to invalid instant projects. Ordinary paid construction remains
+  subject to normal materials, skill and work. See the
+  [API contract](docs/API_INSTANT_CONSTRUCTION.md) for verification limits.
 - Added a common quest/letter review that preserves full public terms within
   actual Laya token limits, with colony and chosen ending on every page.
 - Added grouped public rewards, exact reward/accepter selection and native

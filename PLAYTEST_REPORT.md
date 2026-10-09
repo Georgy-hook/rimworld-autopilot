@@ -1830,3 +1830,46 @@ One visible game PID 59996, director 164096 on CUDA with four CPU threads, obser
 Private details: outputs/colony-008-systemic-plan-20261009.md. Evidence: work/longrun-008-systemic-plan-20261009/closing-startup-* and final-startup-live-check.json. Earlier Western defeat belongs to a separate campaign.
 
 Late technical window check 07:36:01 UTC, tick 364587: same three founders and Knuckles alive, none downed or bleeding. Neiman has new knife-labelled Crack/Cut wounds with observed tend quality; exact treatment actor and full raid outcome unknown. Old Bite scar is separate. A Raid: Poison Gang letter and planted rows are visible; no raid victory or harvest credited from the screenshot. Minimized game window restored via sky, rendering verified, no gameplay input. Details in the private startup report and post-window-restore-live-check.json; hourly monitor remains ACTIVE, first full check at 08:18 UTC.
+
+## 2026-10-09 — focused observation of Construction botched
+
+User requested observation of the construction loop. Same campaign b2aafaaef8a546bfa1e6ee73c490caca, now Onium Planetary Concord (Permadeath). No runtime code, pawn order, speed, memory, replay, restart, rollback or save POST was changed.
+
+At 07:53:48 UTC/tick 704483, CaravanPackingSpot frame 102894 at (152,107) has native percent_complete=NaN; the adjacent (151,107) is blueprint 102895. By 07:56:51 these locations have blueprints 104840/104900, with no completed marker. Installed native fc133c9 treats only SleepingSpot, AnimalSleepingSpot and ButcherSpot as instant markers. Vanilla CaravanPackingSpot has WorkToBuild=0 and no material cost, but falls into ordinary PlaceBlueprintForBuild. The actual game JobDriver_ConstructFinishFrame divides workThisTick by WorkToBuild inside 1-Pow(ConstructSuccessChance,...): positive work with success chance below one always fails at zero work-to-build. Frame percent is 0/0; FailConstruction replaces the blueprint and emits the botched caption. No training occurs in this toil when the resource container is empty. Exact effective pawn stats, total failure count, worker time and material loss are not measured; the marker itself costs no materials. The native marker handling defect remains open.
+
+Separate blocked projects: PollutionPump 39144/39992/41080 at (152/151/153,108) remain 0%, minimum Construction 3 versus observed 1/0/2, with no working electricity network. These are not completed pollution removal or a proven source of the botched caption.
+
+Two focused read-only sampling intervals 07:56:51–07:59:50 and 08:01:01–08:03:01 UTC produced 227 samples, ticks 756006–835317. FinishFrame appears in none; all five project IDs remain stable during these intervals. Harvest, hauling, care, rest and combat are real sampled work; shorter activity between samples is not excluded. Absence of retries during this period does not repair the invalid blueprints. Raw food varies 30–80 items, sampled meals zero; real intake/food production occurred, sustained supply remains unverified.
+
+New animal loss: Knuckles 2577, native Death letter 793585 says torn to death; save 840000 confirms Dead and injuries naming a lynx. Exact wall-clock death second and final killing blow unknown. New human loss: Takumi 396 is downed during the raid at 798000; native combat at 08:01:36/tick 815275 shows Fazred 105822 with Kidnap, carrying_player_pawn=true and carrying_pawn_id=396 at (234,137). Absence from the normal map colonist list alone was not death evidence. Stable autosave 840000/mtime 08:03:16.470663 UTC/same campaign then confirms worldPawns/pawnsDead and healthState Dead/BloodLoss 1. Knife wounds name Fazred; a Gunshot combatLogText says Neiman's revolver missed Fazred and hit Takumi's left shoulder. Exact lethal tick and relative contribution of wounds versus friendly fire remain unknown. No separate Takumi Death letter appears in the sampled events/context, and kidnapped_pawns is empty; direct carry and save evidence take precedence over these omissions. Neither loss is attributed solely to construction without evidence.
+
+At 08:03:28 UTC/tick 843341, Lover and Neiman are alive/mobile/bleeding zero, food 51 raw/2.55 nutrition, native GameOver and victory false. Full raid victory is not credited. Same game and three services are running, stderr empty in captures, force-pause false and ticks growing. Real PNG 07:57:18 UTC viewed. No live correction performed. Existing hourly observation continues with explicit construction-loop, food, defense and loss checks; first full hour remains 08:18 UTC.
+
+Private report: outputs/laya-construction-botch-observation-20261009.md. Evidence: work/longrun-008-systemic-plan-20261009/construction-watch-*, construction-botch-source-evidence.json and review-20261009-075348/080134-*; raw decision reads bounded to last 8 MB and at most 100 records.
+
+Late focused check 08:13:05 UTC/tick 1002693: CaravanPackingSpot blueprints at the same two cells are now 114670/115000; earlier 104900/104840 replaced, no completed marker. The defect persists; exact actor and total attempts between checks remain unmeasured. Pumps retain original IDs/0%. Native Takumi kidnapped letter at 816124 now confirms completed abduction; later save 840000 confirms death outside the map, not an alive captive. New Rhea 113204 is downed/LayDown/hunger 0.190/bleeding zero; membership permanence and joining mechanism unverified. Lover and Neiman alive/mobile/bleeding zero. Food 186 items: 4 meals/182 raw, 12.7 nutrition; provenance and sustained production not established. Native GameOver/victory false. Live evidence construction-watch-final-live.json; visible game restored/rendering verified through sky without gameplay input. Hourly laya ACTIVE with focused construction checks and these already-reported losses.
+
+## 2026-10-09 — authorized construction API repair, technical stop
+
+The user explicitly requested stopping the game and repairing the API and current
+colony. Automation laya is PAUSED; only this run's director, observer and monitor
+launcher/worker pairs were stopped. Game pause was verified at 1136890 with the
+same campaign b2aafaaef8a546bfa1e6ee73c490caca and no subsequent tick growth.
+Disk save XML 1136890/campaign/changed mtime/stable read is verified; save, Laya
+memory, manifests, Player.log and both old DLL copies are backed up privately.
+This is a technical pause, not autonomous survival or a fresh colony.
+
+Source correction replaces the three-name instant-marker allowlist with the
+loaded vanilla WorkToBuild=0 predicate. Placement validates before canceling a
+matching legacy plan, retains normal construction and native placement hooks,
+exports instant/work metadata and finite progress, and refuses construction
+jobs on invalid instant projects. All 1287 Python tests and 33 actual native
+helper boundary cases pass; preliminary Release-1.6 build has zero warnings and
+errors; route audit remains 311 with no missing/duplicate routes. These offline
+checks do not yet establish the installed DLL or live migration result.
+
+Private pre-repair proof: construction-repair-pause.json and
+construction-repair-before.json in work/longrun-008-systemic-plan-20261009.
+Exact pending caravan blueprints at the checkpoint are 129041/129631, cells
+(151,107)/(152,107). Ordinary pump frames 39144/39992/41080 are retained;
+their separate skill/power limits are not fixed by instant marker handling.

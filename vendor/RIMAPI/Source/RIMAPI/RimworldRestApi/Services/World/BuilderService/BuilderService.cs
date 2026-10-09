@@ -33,6 +33,8 @@ namespace RIMAPI.Services
                         var frame = t as Frame;
                         var constructible = t as IConstructible;
                         var needed = constructible?.TotalMaterialCost();
+                        var stuff = constructible?.EntityToBuildStuff() ?? t.Stuff;
+                        float workRequired = target?.GetStatValueAbstract(StatDefOf.WorkToBuild, stuff) ?? 0f;
                         return new ConstructionProjectDto
                         {
                             ThingId = t.thingIDNumber,
@@ -41,7 +43,9 @@ namespace RIMAPI.Services
                             Label = target?.label ?? t.LabelCap,
                             Kind = t is Frame ? "frame" : "blueprint",
                             StuffDefName = constructible?.EntityToBuildStuff()?.defName ?? t.Stuff?.defName,
-                            PercentComplete = frame?.PercentComplete ?? 0f,
+                            PercentComplete = InstantConstructionHelper.Progress(frame?.workDone ?? 0f, workRequired),
+                            WorkToBuild = float.IsNaN(workRequired) || float.IsInfinity(workRequired) ? 0f : workRequired,
+                            IsInstantBuilding = InstantConstructionHelper.IsInstantBuilding(target as ThingDef, stuff),
                             MinimumConstructionSkill = (target as ThingDef)?.constructionSkillPrerequisite ?? 0,
                             MaterialsNeeded = needed?.Select(cost => new ConstructionMaterialDto
                             {
@@ -73,6 +77,10 @@ namespace RIMAPI.Services
                 var project = map.listerThings.AllThings.FirstOrDefault(t =>
                     t.thingIDNumber == request.ProjectThingId && (t is Blueprint || t is Frame));
                 if (project == null) return ConstructionNotApplied("Construction project no longer exists.");
+                var targetDef = project.def.entityDefToBuild as ThingDef;
+                var projectStuff = (project as IConstructible)?.EntityToBuildStuff() ?? project.Stuff;
+                if (InstantConstructionHelper.IsInstantBuilding(targetDef, projectStuff))
+                    return ConstructionNotApplied("Invalid instant-building project: place the marker through builder/blueprint; no construction work is required.");
                 var pawn = map.mapPawns.FreeColonists.FirstOrDefault(p => p.thingIDNumber == request.PawnId);
                 if (pawn == null || pawn.Dead || pawn.Downed || pawn.InMentalState || pawn.Drafted)
                     return ConstructionNotApplied("Selected builder is unavailable.");
@@ -308,7 +316,6 @@ namespace RIMAPI.Services
             int nearZ = Mathf.Clamp(request.Near?.Z ?? map.Size.z / 2, 0, map.Size.z - 1);
             int radius = Mathf.Clamp(request.Radius, 1, 250);
             int limit = Mathf.Clamp(request.Limit, 1, 12);
-            bool instantSpot = def != null && IsInstantBuildingSpot(def);
             var rejectionCounts = new Dictionary<string, int>();
             var cells = new List<IntVec3>();
             for (int z = Mathf.Max(0, nearZ - radius); z <= Mathf.Min(map.Size.z - 1, nearZ + radius); z++)
@@ -321,24 +328,14 @@ namespace RIMAPI.Services
                     var rot = new Rot4(rotation);
                     try
                     {
-                        bool accepted;
-                        if (instantSpot)
+                        var report = terrain == null
+                            ? GenConstruct.CanPlaceBlueprintAt(def, cell, rot, map, false, null, null, stuff)
+                            : GenConstruct.CanPlaceBlueprintAt(terrain, cell, rot, map, false, null);
+                        bool accepted = report.Accepted;
+                        if (!accepted && !string.IsNullOrEmpty(report.Reason))
                         {
-                            var rect = GenAdj.OccupiedRect(cell, rot, def.Size);
-                            accepted = rect.All(pos => pos.InBounds(map) && !pos.GetThingList(map).Any(thing =>
-                                thing is Building || thing is Blueprint || thing is Frame));
-                        }
-                        else
-                        {
-                            var report = terrain == null
-                                ? GenConstruct.CanPlaceBlueprintAt(def, cell, rot, map, false, null)
-                                : GenConstruct.CanPlaceBlueprintAt(terrain, cell, rot, map, false, null);
-                            accepted = report.Accepted;
-                            if (!accepted && !string.IsNullOrEmpty(report.Reason))
-                            {
-                                rejectionCounts.TryGetValue(report.Reason, out int previous);
-                                rejectionCounts[report.Reason] = previous + 1;
-                            }
+                            rejectionCounts.TryGetValue(report.Reason, out int previous);
+                            rejectionCounts[report.Reason] = previous + 1;
                         }
                         if (!accepted) continue;
                         result.Sites.Add(new BuildingSiteOptionDto
@@ -361,12 +358,6 @@ namespace RIMAPI.Services
                 result.Reason = rejectionCounts.OrderByDescending(row => row.Value)
                     .Select(row => row.Key).FirstOrDefault() ?? "No valid site was found in the search radius.";
             return ApiResult<BuildingSiteOptionsDto>.Ok(result);
-        }
-
-        private static bool IsInstantBuildingSpot(ThingDef def)
-        {
-            return def.defName == "SleepingSpot" || def.defName == "AnimalSleepingSpot"
-                || def.defName == "ButcherSpot";
         }
 
         public ApiResult PlaceBlueprints(PasteAreaRequestDto request)
@@ -435,7 +426,7 @@ namespace RIMAPI.Services
                     CellRect occupied = GenAdj.OccupiedRect(pos, rotation, thingDef.Size);
                     if (occupied.Any(cell => !cell.InBounds(map)))
                     { warnings.Add($"{buildDto.DefName}: footprint extends outside map."); continue; }
-                    bool isInstantSpot = IsInstantBuildingSpot(thingDef);
+                    bool isInstantSpot = InstantConstructionHelper.IsInstantBuilding(thingDef, stuffDef);
                     Thing existingThing = occupied
                         .SelectMany(cell => cell.GetThingList(map))
                         .FirstOrDefault(t =>
@@ -443,12 +434,7 @@ namespace RIMAPI.Services
                         || ((t is Blueprint || t is Frame) && t.def.entityDefToBuild == thingDef)));
                     if (existingThing != null)
                     {
-                        if (isInstantSpot && (existingThing is Blueprint || existingThing is Frame))
-                        {
-                            // Migrate invalid spot blueprints created by older RIMAPI builds.
-                            existingThing.Destroy(DestroyMode.Cancel);
-                        }
-                        else
+                        if (!(isInstantSpot && (existingThing is Blueprint || existingThing is Frame)))
                         {
                             if (isInstantSpot && existingThing.Faction != Faction.OfPlayer)
                                 existingThing.SetFaction(Faction.OfPlayer);
@@ -464,27 +450,18 @@ namespace RIMAPI.Services
                         || thingDef.defName == "HiddenConduit"
                         || thingDef.defName == "WaterproofConduit";
                     bool conflictsWithPlan = !isConduit && occupied.Any(cell => cell.InBounds(map) && cell.GetThingList(map).Any(t =>
-                        t is Building || ((t is Blueprint || t is Frame)
-                            && t.def.entityDefToBuild is ThingDef)));
+                        t != existingThing && (t is Building || ((t is Blueprint || t is Frame)
+                            && t.def.entityDefToBuild is ThingDef))));
                     if (conflictsWithPlan)
                     { warnings.Add($"{buildDto.DefName}: footprint overlaps another building or plan."); continue; }
 
-                    // These are architect "spots", not construction projects in vanilla.
-                    // Spawning only these zero-cost markers avoids invalid frames and
-                    // the misleading "Construction botched" message.
-                    if (isInstantSpot)
-                    {
-                        Thing spot = ThingMaker.MakeThing(thingDef);
-                        spot.SetFaction(Faction.OfPlayer);
-                        GenSpawn.Spawn(spot, pos, map, rotation);
-                        count++;
-                        continue;
-                    }
-
-                    // Create Blueprint
-                    var placement = GenConstruct.CanPlaceBlueprintAt(thingDef, pos, rotation, map, false, null);
+                    // Validate terrain, footprint and PlaceWorkers before canceling a
+                    // legacy instant frame. The rejected request must retain its plan.
+                    var placement = GenConstruct.CanPlaceBlueprintAt(thingDef, pos, rotation, map,
+                        false, existingThing, null, stuffDef);
                     if (!placement.Accepted)
                     { warnings.Add($"{buildDto.DefName}: {placement.Reason}"); continue; }
+
                     Precept_ThingStyle styleSource = null;
                     if (ModsConfig.IdeologyActive && Faction.OfPlayer?.ideos?.PrimaryIdeo != null)
                     {
@@ -492,6 +469,26 @@ namespace RIMAPI.Services
                             .OfType<Precept_ThingStyle>()
                             .FirstOrDefault(precept => precept.ThingDef == thingDef);
                     }
+
+                    // Use vanilla's zero-work rule for every loaded marker, including
+                    // inherited double sleeping spots, caravan and DLC ritual spots.
+                    if (isInstantSpot)
+                    {
+                        Thing spot = ThingMaker.MakeThing(thingDef, stuffDef);
+                        spot.SetFaction(Faction.OfPlayer);
+                        if (existingThing is Blueprint || existingThing is Frame)
+                            existingThing.Destroy(DestroyMode.Cancel);
+                        var placed = GenSpawn.Spawn(spot, pos, map, rotation);
+                        if (styleSource != null && placed is Building styledBuilding)
+                            styledBuilding.StyleSourcePrecept = styleSource;
+                        if (thingDef.PlaceWorkers != null)
+                            foreach (var worker in thingDef.PlaceWorkers)
+                                worker.PostPlace(map, thingDef, pos, rotation);
+                        count++;
+                        continue;
+                    }
+
+                    // Create Blueprint
                     GenConstruct.PlaceBlueprintForBuild(
                         thingDef,
                         pos,

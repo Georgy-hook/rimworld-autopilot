@@ -51,6 +51,10 @@ namespace RIMAPI.Models
         public string Kind { get; set; }
         public string StuffDefName { get; set; }
         public float PercentComplete { get; set; }
+        public float WorkToBuild { get; set; }
+        // A legacy blueprint/frame with this flag is invalid: place the marker
+        // through builder/blueprint instead of assigning construction work.
+        public bool IsInstantBuilding { get; set; }
         public int MinimumConstructionSkill { get; set; }
         public List<ConstructionMaterialDto> MaterialsNeeded { get; set; }
         public PositionDto Position { get; set; }
