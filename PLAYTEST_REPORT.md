@@ -1873,3 +1873,36 @@ construction-repair-before.json in work/longrun-008-systemic-plan-20261009.
 Exact pending caravan blueprints at the checkpoint are 129041/129631, cells
 (151,107)/(152,107). Ordinary pump frames 39144/39992/41080 are retained;
 their separate skill/power limits are not fixed by instant marker handling.
+
+Live repair completed with DLL 1.10.0+e8a195d, source e8a195da5509393f88da0e674823a5287646e932,
+SHA256 4e13c8b3840b244344a23b76d831b3524f2d402478ac2d65e87b7698495f6681.
+Both installed DLL copies match. Same-save technical close/load was required;
+vanilla pause-on-load performs one initialization tick, 1136890 to 1136891.
+The temporary pause-on-load preference was restored. No generation, rollback,
+memory reset, pawn health edits or autonomous continuation occurred.
+
+Paused live API confirms all 13 loaded zero-work marker definitions. Two exact
+caravan blueprints 129041/129631 were migrated to completed Building markers
+132830/132831 at (151,107)/(152,107). A repeated request retains both IDs;
+projects contains no CaravanPackingSpot/instant frame. Prioritizing the old
+instant project returned applied=false without a worker job. A blocked placement
+over a normal pump frame was rejected; all three original pump IDs, progress and
+delivered materials are preserved. These are not free completions of ordinary
+buildings. Laya memory SHA256 is unchanged.
+
+First post-repair save attempt failed with SafeSaver IOException/file in use
+during rename. Retrying after a window without reading the original save verified
+changed mtime, stable XML 1136891/same campaign and both real marker defs.
+Root cause of the lock is not fully established; early polling reads could have
+contributed. The stale error dialog was acknowledged and retained in an initial
+PNG; a second unobstructed PNG was viewed. Final save mtime 08:45:56.179291 UTC,
+SHA256 7e8f690c7bcce8649d2342b37bc05f17b836ccece5ea259fa2b7c46e0acfdb78.
+RimWorld was closed again at 08:50:02 UTC after verifying pause/tick/campaign/save
+hash. Actual process checks confirm game and all three managed services absent;
+automation laya stays PAUSED until the user requests continuation. The technical
+repair interval is excluded from 3841.280059 seconds of autonomy before the pause.
+
+Private repair report: outputs/laya-construction-api-repair-20261009.md;
+proofs construction-repair-* in this run folder, including actual save XML,
+installed hashes, live API checks and construction-repair-after-visible.png.
+The observed population losses are retained; this repair is not a colony victory.
