@@ -255,6 +255,8 @@ def review(agent: Any, offer: dict[str, Any], snapshot: dict[str, Any],
            strategy: dict[str, Any] | None = None) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     """Laya decides; a page saying defer cannot be overwritten by a later page."""
     strategy = strategy or {}
+    if offer.get('read_status', 'complete') != 'complete':
+        return 'defer', {'reason': 'quest_read_unavailable'}, None
     if not offer.get("description"):
         return "defer", {"reason": "quest_public_description_unavailable"}, None
     blocker = offer_blocker(offer)

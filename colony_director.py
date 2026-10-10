@@ -18,6 +18,8 @@ import colony_professions as professions
 import colony_inspirations as inspirations
 import colony_events as events
 import colony_quests as quests
+import colony_labor as labor
+import colony_storage as storage
 import colony_growth as growth
 import colony_expeditions as expeditions
 from colony_retry import failure_record, recent as retry_recent
@@ -1681,7 +1683,7 @@ def animal_carcass_cluster(snapshot: dict[str, Any],
                            ) -> tuple[list[dict[str, Any]], dict[str, int] | None]:
     """Find the densest usable carcass pile, ignoring a remote single kill."""
     carcasses = [row for row in corpse_rows(snapshot, "CorpsesAnimal")
-                 if not row.get("is_forbidden") and (row.get("position") or {}).get("x") is not None
+                 if storage.fresh_carcass(row) and not row.get("is_forbidden") and (row.get("position") or {}).get("x") is not None
                  and (row.get("position") or {}).get("z") is not None]
     if not carcasses:
         return [], None
@@ -2787,6 +2789,20 @@ def replaceable_indoor_sleeping_spot(dev: dict[str, Any], anchor: dict[str, int]
         x, z = int(point["x"]), int(point["z"])
         if (abs(x - int(anchor["x"])) > 12 or abs(z - int(anchor["z"])) > 12
                 or (x, z) in (excluded or set())):
+            continue
+        # A north-facing Bed occupies both cells. Removing the selected spot
+        # cannot remove a neighboring spot, wall or paid construction project.
+        footprint = {(x, z), (x, z + 1)}
+        same_room_cells = [
+            {(int(c["x"]), int(c["z"])) for c in room.get("cells") or []}
+            for room in dev.get("rooms") or [] if spot_id in (room.get("contained_beds_ids") or [])
+        ]
+        others = {**dev, "buildings": [b for b in dev.get("buildings") or [] if b.get("id") != spot_id]}
+        if (not any(footprint <= cells for cells in same_room_cells)
+                or footprint & architecture_occupied_cells(others, {})):
+            continue
+        if any(p.get("downed") and (p.get("position") or {}).get("x") == x
+               and (p.get("position") or {}).get("z") == z for p in colonists):
             continue
         return {"id": spot_id, "position": {"x": x, "z": z}}
     return None
@@ -3945,6 +3961,7 @@ def focus_unarmed_founder_choices(snapshot: dict[str, Any], actions: list[str], 
 
 def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map_state: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     dev = snapshot["development"]
+    labor.prepare(snapshot, map_state)
     map_id = int(snapshot["map"].get("id") or 0)
     # The production collector supplies these fields; keep incomplete replay
     # snapshots usable now that emergency branches no longer return early.
@@ -4287,7 +4304,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     if forbidden_corpses(snapshot) and not issued_recently(map_state, "unforbid_corpses", tick, retry_ticks=15000):
         one_time.append("unforbid_corpses")
     human_dump_exists = any("Laya Human Corpse Dump" in str(z.get("label") or "") for z in zones)
-    animal_dump_exists = any("Laya Animal Carcasses" in str(z.get("label") or "") for z in zones)
+    animal_dump_exists = any(str(z.get("label") or "") in {
+        "Laya Animal Carcasses", "Laya Fresh Animal Carcasses"} for z in zones)
     corpse_actions: list[str] = []
     if human_corpses and not human_dump_exists and "human_corpse_dump" not in issued:
         corpse_actions.append("create_human_corpse_dump")
@@ -8134,6 +8152,7 @@ def priority_deficit_workers(snapshot: dict[str, Any], work: str, *,
     protected = active_care_pawn_ids(snapshot, allow_thermal_yield=work == "Construction" and bool((snapshot.get("development") or {}).get("_thermal_yield_actor_id"))) if work not in {"Doctor", "Patient", "PatientBedRest"} else set()
     eligible = [pawn for pawn in snapshot.get("colonists") or []
                 if str(pawn.get("id")) not in protected and not pawn.get("in_mental_state")
+                and labor.can_assign(snapshot, pawn, work)
                 and (preferred_ids is None or int(pawn.get("id") or 0) in preferred_ids)]
     if avoid_ids:
         alternatives = [pawn for pawn in eligible if int(pawn.get("id") or 0) not in avoid_ids
@@ -8195,6 +8214,8 @@ def prioritize(client: bridge.RimApiClient, snapshot: dict[str, Any], work: str,
                         for name, priority in changes.items())
     except bridge.RimApiError as error:
         fulfilled, error_text = False, str(error)
+    if fulfilled:
+        labor.remember(snapshot, target["id"], work)
     return {"applied": fulfilled, "pawn_id": target["id"], "colonist": target["name"],
             "work": work, "response": response,
             "adjustments": responses, "completion": "assignment_observed; job_completion_unverified",
@@ -8997,16 +9018,18 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["human_corpse_dump"] = tick
         return {"applied": True, "distance_from_base": abs(dump_x - int(anchor["x"])) + abs(dump_z - int(anchor["z"])), "response": result}
     if choice == "create_animal_corpse_dump":
+        site = storage.carcass_site(snapshot, anchor)
+        if site is None:
+            return {"applied": False, "reason": "carcass_footprint_observation_unavailable"}
+        x, z = site
         result = client.post("/api/v1/map/zone/stockpile", body={
-            "map_id": map_id,
-            "point_a": position(anchor["x"] + 15, anchor["z"] + 7),
-            "point_b": position(anchor["x"] + 19, anchor["z"] + 10),
-            "name": "Laya Animal Carcasses",
-            "priority": 5,
-            "allowed_item_categories": ["CorpsesAnimal"],
+            "map_id": map_id, "point_a": position(x, z), "point_b": position(x+3, z+2),
+            "name": "Laya Fresh Animal Carcasses", "priority": 4,
+            "allowed_item_categories": ["CorpsesAnimal"], "allow_fresh": True, "allow_rotten": False,
         })
-        issued["animal_corpse_dump"] = tick
-        return result
+        applied = isinstance(result, dict) and result.get("success") is True
+        if applied: issued["animal_corpse_dump"] = tick
+        return {"applied": applied, "response": result, "completion": "zone_only; hauling_and_food_unverified"}
     if choice == "build_butcher_spot":
         cluster, near_carcasses = animal_carcass_cluster(snapshot, anchor)
         if not cluster or near_carcasses is None:
@@ -9361,14 +9384,16 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             })
         try:
             result = post_blueprint(client, map_id, site, basic_beds_blueprint(1, stuff=material))
-        except bridge.RimApiError:
-            if replacement is not None:
-                post_blueprint(client, map_id, site,
-                               blueprint([building("SleepingSpot", 0, 0)], 1, 2))
-            raise
+        except bridge.RimApiError as exc:
+            # A lost reply may follow placement. Observe before restoring a
+            # spot or rejecting this site; never place a spot over a paid bed.
+            result = {"error": str(exc)[:240], "outcome_unknown": True}
         projects = client.get("/api/v1/builder/projects", map_id=map_id)
         rows = projects.get("projects", []) if isinstance(projects, dict) else []
         buildings = client.get("/api/v1/map/buildings", map_id=map_id)
+        if not isinstance(projects, dict) or not isinstance(projects.get("projects"), list) or not isinstance(buildings, list):
+            return {"applied": False, "reason": "bed_placement_observation_unavailable",
+                    "outcome_unknown": True, "site": site, "response": result}
         bed_at_site = any(
             str(row.get("def_name") or row.get("def") or "") == "Bed"
             and (row.get("position") or {}).get("x") == site["x"]
@@ -9377,6 +9402,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         )
         if not bed_at_site:
             failed_sites.append(site)
+            del failed_sites[:-8]
             if replacement is not None:
                 post_blueprint(client, map_id, site,
                                blueprint([building("SleepingSpot", 0, 0)], 1, 2))
@@ -9884,24 +9910,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                 "strategy": income_strategy,
                 "note": "Organ harvesting remains per-prisoner and is offered only with doctor skill 8+, medicine, and explicit Laya selection.",
             }
-        # Mine the compact local gold vein first. Long-range scanning is added to
-        # the research route after local precious ore is exhausted.
-        ores = snapshot["development"].get("ores", {}).get("ores", {})
-        vein = ores.get("mineable_gold") or ores.get("mineable_silver") or {}
-        cells = [int(value) for value in vein.get("cells", [])[:16]]
-        if cells:
-            width = int(snapshot["development"].get("ores", {}).get("map_width") or 250)
-            xs = [cell % width for cell in cells]
-            zs = [cell // width for cell in cells]
-            response = client.post("/api/v1/order/designate/area", body={
-                "map_id": map_id,
-                "type": "mine",
-                "point_a": position(min(xs), min(zs)),
-                "point_b": position(max(xs), max(zs)),
-            })
-        else:
-            response = select_research_if_available(client, "LongRangeMineralScanner")
-        return {"applied": True, "strategy": income_strategy, "response": response}
+        # Save the economic choice; extraction is a separate live vein/worker
+        # decision. Never replace a chosen product with a gold/silver rectangle.
+        import colony_mining
+        return {"applied": True, "strategy": income_strategy,
+                "phase": "choose_visible_vein_and_miner",
+                "mining_product": (map_state.get("doctrine") or {}).get("mining_product"),
+                "available_plans": len(colony_mining.plans(snapshot)),
+                "completion": "strategy_only; extraction_haul_sale_unverified"}
     if choice == "build_income_infrastructure":
         income_strategy = str(map_state.get("income_strategy") or "")
         if income_strategy == "drugs":

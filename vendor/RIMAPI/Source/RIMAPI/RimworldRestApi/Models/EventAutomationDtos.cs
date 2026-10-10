@@ -72,6 +72,9 @@ namespace RIMAPI.Models
 
     public class EventContextDto
     {
+        public string ReadStatus { get; set; } = "complete";
+        public string QuestReadStatus { get; set; } = "complete";
+        public Dictionary<string, string> ReadErrors { get; set; } = new Dictionary<string, string>();
         public int MapId { get; set; }
         public int GameTick { get; set; }
         public List<IncidentDto> RecentIncidents { get; set; } = new List<IncidentDto>();

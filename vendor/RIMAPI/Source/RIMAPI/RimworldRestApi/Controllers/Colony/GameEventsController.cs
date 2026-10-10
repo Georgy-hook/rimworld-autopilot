@@ -95,9 +95,14 @@ namespace RIMAPI.Controllers
         public async Task QuestOffer(HttpListenerContext context)
         {
             int id = RequestParser.GetIntParameter(context, "quest_id");
-            var quest = Find.QuestManager.QuestsListForReading.FirstOrDefault(q => q.id == id && !q.Historical && !q.hidden && !q.hiddenInUI);
-            await context.SendJsonResponse(quest == null ? ApiResult<QuestDto>.Fail("quest_no_longer_active") :
-                ApiResult<QuestDto>.Ok(GameEventAutomationHelper.ToQuestDto(quest)));
+            var quest = Find.QuestManager.QuestsListForReading.FirstOrDefault(q => q != null && q.id == id && !q.hidden && !q.hiddenInUI);
+            if (quest == null) { await context.SendJsonResponse(ApiResult<QuestDto>.Fail("quest_no_longer_active")); return; }
+            QuestDto offer=null;var errors=new System.Collections.Generic.Dictionary<string,string>();
+            if(!ObservationBoundary.Read("quest:"+id,()=>quest.Historical ? null : GameEventAutomationHelper.ToQuestDto(quest),row=>offer=row,errors,
+                error=>Log.ErrorOnce($"[RIMAPI] Public quest offer {id} failed: {error}",("RIMAPI.quest.offer."+id).GetHashCode())))
+                offer=new QuestDto{Id=id,ReadStatus="unavailable",ReadError=errors["quest:"+id],CanAccept=false,
+                    AcceptanceReason="quest_read_unavailable",Disclosure="Cannot read complete fresh terms; acceptance prohibited."};
+            await context.SendJsonResponse(offer == null ? ApiResult<QuestDto>.Fail("quest_no_longer_active") : ApiResult<QuestDto>.Ok(offer));
         }
 
         [Get("/api/v1/events/context")]

@@ -547,6 +547,7 @@ namespace RIMAPI.Helpers
                         new ZoneDto
                         {
                             Id = zone.ID,
+                            Cells = zone.Cells.Select(c => new PositionDto { X=c.x,Y=0,Z=c.z }).ToList(),
                             CellsCount = zone.CellCount,
                             Label = zone.label,
                             BaseLabel = zone.BaseLabel,
@@ -1002,7 +1003,7 @@ namespace RIMAPI.Helpers
             // This is faster than LINQ GroupBy for large datasets in Unity/RimWorld
             foreach (var thing in map.listerThings.AllThings)
             {
-                if (thing.def.mineable)
+                if (thing.def.mineable && thing.Spawned && !thing.Position.Fogged(map))
                 {
                     string defName = thing.def.defName;
 
@@ -1012,6 +1013,11 @@ namespace RIMAPI.Helpers
                         group = new OreGroupDto
                         {
                             MaxHp = thing.MaxHitPoints,
+                            ProductDef = thing.def.building?.mineableThing?.defName,
+                            YieldPerCell = thing.def.building?.EffectiveMineableYield ?? 0,
+                            ProductMarketValue = thing.def.building?.mineableThing?.GetStatValueAbstract(StatDefOf.MarketValue),
+                            YieldWasteable = thing.def.building?.mineableYieldWasteable ?? false,
+                            ThingIds = new List<int>(), DesignatedCells = new List<int>(),
                             Cells = new List<int>(),
                             Hp = new List<int>()
                         };
@@ -1024,6 +1030,8 @@ namespace RIMAPI.Helpers
                     int index = (thing.Position.z * width) + thing.Position.x;
 
                     group.Cells.Add(index);
+                    group.ThingIds.Add(thing.thingIDNumber);
+                    if(map.designationManager.DesignationAt(thing.Position,DesignationDefOf.Mine)!=null)group.DesignatedCells.Add(index);
                     group.Hp.Add(thing.HitPoints);
                 }
             }
@@ -1031,6 +1039,13 @@ namespace RIMAPI.Helpers
             return oreData;
         }
 
+        static bool FreshnessDefsAvailable(bool? fresh,bool? rotten) => (!fresh.HasValue || DefDatabase<SpecialThingFilterDef>.GetNamedSilentFail("AllowFresh")!=null)
+            && (!rotten.HasValue || DefDatabase<SpecialThingFilterDef>.GetNamedSilentFail("AllowRotten")!=null);
+        static void SetFreshness(ThingFilter filter,bool? fresh,bool? rotten)
+        {
+            if(fresh.HasValue)filter.SetAllow(DefDatabase<SpecialThingFilterDef>.GetNamed("AllowFresh"),fresh.Value);
+            if(rotten.HasValue)filter.SetAllow(DefDatabase<SpecialThingFilterDef>.GetNamed("AllowRotten"),rotten.Value);
+        }
         public static StockpileResponseDto CreateStockpile(CreateStockpileRequestDto request)
         {
             try
@@ -1099,6 +1114,17 @@ namespace RIMAPI.Helpers
                     };
                 }
 
+                // Validate the complete footprint before registering any cells.
+                bool animalCorpses = request.AllowedItemCategories?.Contains("CorpsesAnimal") == true;
+                var pens = map.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>())
+                    .Where(p=>p?.PenState?.Enclosed == true).ToArray();
+                if (rect.Any(c => c.Fogged(map) || !c.Standable(map) || c.GetZone(map)!=null
+                    || animalCorpses && (pens.Any(p=>p.PenState.ContainsConnectedRegion(c.GetRegion(map)))
+                        || map.listerBuildings.allBuildingsColonist.Any(b=>(b is Building_Bed || b is Building_WorkTable)
+                            && b.GetRoom()==c.GetRoom(map) && c.Roofed(map)))))
+                    return new StockpileResponseDto { Success=false,Message="Stockpile footprint conflicts with an existing zone, pen, living/work room or unavailable cell." };
+                if (!FreshnessDefsAvailable(request.AllowFresh,request.AllowRotten))
+                    return new StockpileResponseDto { Success=false,Message="Requested freshness filters unavailable." };
                 // Create new stockpile zone
                 Zone_Stockpile stockpile = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
 
@@ -1177,6 +1203,7 @@ namespace RIMAPI.Helpers
                     }
                 }
 
+                SetFreshness(stockpile.settings.filter,request.AllowFresh,request.AllowRotten);
                 // Set hit points filter
                 float minHpPercent = request.MinHitPointsPercent ?? 0.0f;
                 float maxHpPercent = request.MaxHitPointsPercent ?? 1.0f;
@@ -1330,6 +1357,8 @@ namespace RIMAPI.Helpers
                     return ApiResult<StockpileResponseDto>.Fail("Request cannot be null.");
                 }
 
+                if(!FreshnessDefsAvailable(request.AllowFresh,request.AllowRotten))
+                    return ApiResult<StockpileResponseDto>.Fail("Requested freshness filters unavailable.");
                 var (stockpile, stockpileMap) = FindStockpileById(request.ZoneId);
 
                 if (stockpile == null)
@@ -1337,7 +1366,8 @@ namespace RIMAPI.Helpers
                     return ApiResult<StockpileResponseDto>.Fail($"Stockpile with ID {request.ZoneId} not found.");
                 }
 
-                bool filterWasModified = false;
+                bool filterWasModified = request.AllowFresh.HasValue || request.AllowRotten.HasValue;
+                SetFreshness(stockpile.settings.filter,request.AllowFresh,request.AllowRotten);
 
                 if (!string.IsNullOrEmpty(request.Name))
                 {

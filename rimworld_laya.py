@@ -1134,6 +1134,26 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def worker_ready(colonist: dict[str, Any], work: str) -> bool:
+    """Aggregate health does not describe ability to do a particular job."""
+    if (colonist.get("dead") or colonist.get("is_dead") or colonist.get("downed")
+            or colonist.get("is_downed") or colonist.get("in_mental_state")
+            or colonist.get("is_drafted") or first_number(colonist.get("bleeding_rate")) > 0):
+        return False
+    setting = (colonist.get("work_priorities") or {}).get(work)
+    if not isinstance(setting, dict) or setting.get("disabled"):
+        return False
+    if active_recovery_diseases(colonist) and work not in {"Patient", "PatientBedRest"}:
+        return False
+    if work in {"Patient", "PatientBedRest"}:
+        return True
+    capacity = colonist.get("capacities") or {}
+    outside = work in {"Hunting", "Growing", "PlantCutting", "Mining", "Firefighter", "Handling"}
+    return (first_number(capacity.get("consciousness"), 1) >= .5
+            and first_number(capacity.get("moving"), 1) >= (.6 if outside else .4)
+            and first_number(capacity.get("manipulation"), 1) >= .4)
+
+
 def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] | None:
     skill_for_work = {
         "Cooking": "Cooking",
@@ -1144,15 +1164,14 @@ def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] 
         "Hunting": "Shooting",
         "Handling": "Animals",
         "Doctor": "Medicine",
+        "Mining": "Mining",
     }
     skill_name = skill_for_work.get(work)
     eligible = []
     for colonist in colonists:
         priorities = colonist.get("work_priorities") or {}
         priority = priorities.get(work)
-        if active_recovery_diseases(colonist) and work not in {"Patient", "PatientBedRest"}:
-            continue
-        if first_number(colonist.get("health")) < 0.75 or first_number(colonist.get("bleeding_rate")) > 0.0 or colonist.get("downed"):
+        if not worker_ready(colonist, work):
             continue
         # A missing row is not evidence that this pawn can perform the work.
         # RIMAPI now includes zero-priority rows for capable workers so Laya

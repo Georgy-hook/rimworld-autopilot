@@ -62,7 +62,10 @@ def offered_care_yield(snapshot, row):
         return None
     if str(worker.get("id")) == str(row.get("target_id")):
         return None
-    old = next((p for p in snapshot.get("colonists") or []
+    patients = list(snapshot.get("colonists") or [])
+    if thermal:
+        patients += list(snapshot.get("animals") or [])  # This collection contains owned animals; wildlife is separate.
+    old = next((p for p in patients
                 if str(p.get("id")) == str(binding["expected_care_patient_id"])), None)
     native_patients = snapshot.get("development", {}).get("resilience", {}).get("patients") or []
     old_native = next((p for p in native_patients if str(p.get("pawn_id")) == str(binding["expected_care_patient_id"])), {})
@@ -82,7 +85,7 @@ def offered_care_yield(snapshot, row):
     if not isinstance(rate, (int, float)) or isinstance(rate, bool):
         return None
     if thermal and (rate != 0 or float(worker.get('bleeding_rate') or 0) > 0 or not (old.get("downed") or old_native.get("downed"))
-                    or old_native.get("in_bed") is True
+                    or row.get("bed_id") == old_native.get("current_bed_id")
                     or not any(h.get("def_name") in {"Hypothermia", "Heatstroke"} and float(h.get("severity") or 0) >= .1 for h in conditions)
                     or not isinstance(row.get("bed_id"), int)
                     or not all(isinstance(row.get(k), (int, float)) for k in ("current_temperature", "destination_temperature"))

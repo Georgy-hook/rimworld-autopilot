@@ -118,7 +118,7 @@ class LegacyActionSequences(unittest.TestCase):
     def test_butcher_no_site_then_feasibility_change_and_lost_response(self):
         snap = baseline()
         snap["development"]["corpses"] = [{"thing_id": 99, "label": "deer",
-            "categories": ["CorpsesAnimal"], "position": {"x": 22, "z": 22}}]
+            "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"], "position": {"x": 22, "z": 22}}]
         world = World(snap)
         for _ in range(3):
             _, actions, _ = self.candidates(world)
@@ -163,7 +163,7 @@ class LegacyActionSequences(unittest.TestCase):
 
     def test_butcher_exact_site_drift_is_revalidated_before_mutation(self):
         snap = baseline()
-        snap["development"]["corpses"] = [{"thing_id": 99, "categories": ["CorpsesAnimal"],
+        snap["development"]["corpses"] = [{"thing_id": 99, "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"],
                                             "position": {"x": 22, "z": 22}}]
         world = World(snap)
         world.sites = [{"position": {"x": 23, "z": 22}, "rotation": 0}]
@@ -227,6 +227,7 @@ class LegacyActionSequences(unittest.TestCase):
         s = baseline()
         s['map']['resources'] = {'food': 0, 'meals': 0, 'nutrition': 0}
         s['colonists'][0]['work_priorities']['PlantCutting'] = {'priority': 2, 'disabled': False}
+        s['development']['plants'] = [{'thing_id':7,'harvestable_now':True}]
         doctor, patient = pawn(2), pawn(3)
         doctor.update(current_job='TendPatient', current_job_target_id=3)
         patient.update(downed=True, current_job='LayDown')

@@ -27,6 +27,8 @@ flowchart TD
 | `colony_modules` | Whitelisted domain ownership, collection status, proposal and execution routing | No model-generated Python or endpoints |
 | `colony_production` | Utilities, loaded table recipes and material logistics | Native components, whole-unit stock allocation, ordinary bills and workers |
 | `colony_sustenance` | Food, preservation, animal husbandry, diets and fishing | Native stock, recipes, pens, medicine/food policies and jobs |
+| `colony_mining` | Exact connected ore batches and mineral hauling | Visible loaded products, selected capable workers, whole-batch roof support, native jobs; output and sales observed separately |
+| `colony_labor`, `colony_storage` | Shared worker commitments and fresh carcass storage geometry | Live jobs and both clocks; actual pen/zone footprints and native rot stages |
 | `colony_resilience` | Patient care, disease, sanitation, temperature, roof and diagnosis | Visible symptoms, native workgivers, evidence-gated operations |
 | `colony_society` | Medicine, prisoner policies, childcare, growth, drugs, deathrest and surgery | Instantiated needs, earned options, beliefs and ordinary policies/jobs |
 | `colony_progression` | Prerequisite frontier and finite Core/DLC ending chains | Native quests, blockers, intermediate choices and persisted credits evidence |

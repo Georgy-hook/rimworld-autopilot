@@ -11,6 +11,15 @@ This candidate includes the quest review and colony verification work following
 the 0.0.7 tag and [the final colony corrections](audits/roinor-recovery-2026-10-07.md).
 `VERSION=0.0.8` labels the working candidate; no 0.0.8 tag/release is published.
 
+The latest [10 October postmortem repair gate](audits/postmortem-source-repairs-2026-10-10.md)
+supersedes the test totals below: 1304 Python tests, 313 routes, native actual-source
+boundaries and zero-warning Release-1.6. It adds shared labor commitments, exact
+mining/hauling, fresh carcass geometry, finite pen feed, animal thermal rescue,
+elective surgery safeguards, partial quest reads and bed replacement recovery.
+The completed playtest was preserved; none of these repairs were tested by
+injecting them into that game. Sustained survival and native completion remain
+required live gates before a release.
+
 Offline gates: 1235 tests, 311 routes, native Release-1.6 without warnings/errors,
 actual native predator boundaries and cached-model crop/startup replay.
 Install both native copies from the DLL whose embedded revision matches the

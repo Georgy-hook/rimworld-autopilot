@@ -38,6 +38,11 @@ namespace RIMAPI.Models
         public string InnerDefName { get; set; }
         public int InnerQuality { get; set; } = -1;
         public float Beauty { get; set; }
+        public string RotStage { get; set; }
+        public int? TicksUntilRot { get; set; }
+        public int? CorpseInnerPawnId { get; set; }
+        public int? CorpseDeathTick { get; set; }
+        public bool? CanButcher { get; set; }
 
         public static ThingDto ToDto(Thing thing)
         {
@@ -67,6 +72,16 @@ namespace RIMAPI.Models
 
             // Safely get Quality
             var qualityComp = thing.TryGetComp<CompQuality>();
+            var rot = thing.TryGetComp<CompRottable>();
+            dto.RotStage = rot?.Stage.ToString();
+            dto.TicksUntilRot = rot?.TicksUntilRotAtCurrentTemp;
+            if (thing is Corpse corpse)
+            {
+                dto.CorpseInnerPawnId = corpse.InnerPawn?.thingIDNumber;
+                dto.CorpseDeathTick = corpse.timeOfDeath;
+                dto.CanButcher = corpse.InnerPawn?.RaceProps.Animal == true && corpse.InnerPawn.RaceProps.IsFlesh
+                    && (rot?.Stage ?? RimWorld.RotStage.Fresh) == RimWorld.RotStage.Fresh;
+            }
             if (qualityComp != null)
             {
                 dto.Quality = (int)qualityComp.Quality;

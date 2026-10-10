@@ -123,6 +123,7 @@ def event_signature(row: dict[str, Any]) -> str:
 def matching_rescue_quests(event: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
     """Never mistake a stranger's rescue quest for a kidnapped colonist's."""
     quests = [row for row in context.get("active_quests") or [] if isinstance(row, dict)
+              and row.get("read_status", "complete") == "complete"
               and classify_event(row) == "kidnap_rescue"]
     if event.get("source") == "quest" and event.get("id") is not None:
         return [row for row in quests if str(row.get("id")) == str(event["id"])]
@@ -141,6 +142,8 @@ def pending_events(context: dict[str, Any], handled: set[str]) -> list[dict[str,
     for key, source in (("recent_incidents", "incident"), ("active_conditions", "condition"), ("active_quests", "quest")):
         for raw in context.get(key) or []:
             if not isinstance(raw, dict):
+                continue
+            if source == "quest" and raw.get("read_status", "complete") != "complete":
                 continue
             row = {"source": source, **raw}
             # Accepted ordinary quests are already in progress. Their world

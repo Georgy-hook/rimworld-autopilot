@@ -17,6 +17,7 @@ revision and scenario; it does not establish the current build's runtime result.
   [native abilities, interactions and targeting](modules/affordances.md), [combat](modules/combat.md)
 - [Crops, implants, equipment and training](modules/capabilities.md)
 - [Selected hunting groups and animal training](modules/wildlife.md)
+- [Exact mining veins, workers and mineral hauling](modules/mining.md)
 - [Inspiration opportunities and exact workers](audits/professional-inspirations-native-contract-2026-10-05.md)
 - [Explicit finishing jobs and observed completion](audits/finish-downed-native-contract-2026-10-05.md)
 - [Trade, raid and rescue expeditions](modules/expeditions.md)
@@ -28,6 +29,8 @@ revision and scenario; it does not establish the current build's runtime result.
 - [Contributing and offline checks](../CONTRIBUTING.md), [Windows release process](RELEASING.md)
 
 ## Evidence and history
+
+- [Postmortem source repairs: food labor, animals, corpses, mining and quest reads, 2026-10-10](audits/postmortem-source-repairs-2026-10-10.md)
 
 - [Dayouinum thermal rescue, truthful care evidence and shutdown](audits/dayouinum-thermal-care-2026-10-07.md)
 - [Food commitments and starvation selection after Lenrobum](audits/lenrobum-food-commitment-2026-10-07.md)

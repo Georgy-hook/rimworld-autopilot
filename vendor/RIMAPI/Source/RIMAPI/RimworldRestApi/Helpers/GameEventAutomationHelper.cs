@@ -47,7 +47,6 @@ namespace RIMAPI.Helpers
             {
                 Map map = MapHelper.GetMapByID(mapId);
                 if (map == null) return ApiResult<EventContextDto>.Fail($"Map {mapId} not found.");
-                QuestsDto quests = GameEventsHelper.GetQuestsDto(map);
                 var result = new EventContextDto
                 {
                     MapId = map.uniqueID,
@@ -66,7 +65,6 @@ namespace RIMAPI.Helpers
                         ElectricityDisabled = condition.ElectricityDisabled,
                         TemperatureOffset = condition.def?.temperatureOffset ?? 0f,
                     }).ToList(),
-                    ActiveQuests = quests.ActiveQuests,
                     Letters = Find.LetterStack.LettersListForReading
                         .Skip(Math.Max(0, Find.LetterStack.LettersListForReading.Count - 20))
                         .Select(letter => new EventLetterDto
@@ -93,8 +91,20 @@ namespace RIMAPI.Helpers
                             Holder = p.ParentHolder?.GetType().Name,
                         }).ToList(),
                 };
+                // Historical quest parts can outlive their pawn/site targets.
+                // Keep public letters and world observations independent.
+                if (!ObservationBoundary.Read("quests", () => GameEventsHelper.GetQuestsDto(map),
+                    quests => {
+                        result.ActiveQuests = quests.ActiveQuests;
+                        result.QuestReadStatus = quests.ReadStatus;
+                        foreach (var error in quests.ReadErrors) result.ReadErrors[error.Key] = error.Value;
+                    }, result.ReadErrors,
+                    error => Log.ErrorOnce($"[RIMAPI] Quest collection failed: {error}", "RIMAPI.quest.collection".GetHashCode())))
+                    result.QuestReadStatus = "unavailable";
                 ApiResult<List<LiveTraderDto>> trade = LiveTradeAutomationHelper.GetOpportunities(mapId);
                 if (trade.Success) result.TradeOpportunities = trade.Data;
+                else result.ReadErrors["trade"] = string.Join("; ", trade.Errors);
+                if (result.ReadErrors.Count > 0) result.ReadStatus = "partial";
                 return ApiResult<EventContextDto>.Ok(result);
             }
             catch (Exception ex)
@@ -192,8 +202,8 @@ namespace RIMAPI.Helpers
         {
             // Materialize native getters before projecting labels/targets.
             // Nested mod callbacks cannot invalidate an enumerated scratch list.
-            var factions = quest.InvolvedFactions.ToArray();
-            var targets = quest.QuestLookTargets.ToArray();
+            var factions = quest.InvolvedFactions?.ToArray() ?? new Faction[0];
+            var targets = quest.QuestLookTargets?.ToArray() ?? new GlobalTargetInfo[0];
             return new QuestDto
             {
                 Id = quest.id,
@@ -219,7 +229,7 @@ namespace RIMAPI.Helpers
                     return new QuestTargetDto
                     {
                         WorldObjectId = world?.ID,
-                        ThingId = target.HasThing ? (int?)target.Thing.thingIDNumber : null,
+                        ThingId = target.Thing?.thingIDNumber,
                         Tile = target.Tile.Valid ? (int?)target.Tile : null,
                         Label = world?.LabelCap ?? target.Thing?.LabelCap,
                         WorldObjectType = world?.GetType().Name,

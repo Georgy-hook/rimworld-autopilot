@@ -46,7 +46,7 @@ namespace RIMAPI.Helpers
             => new HashSet<string>(orders.Select(o => o.Kind + ":" + o.TargetId));
         // Mirror native roof support's roof-connected search and 6.9-cell radius,
         // treating all currently designated removals plus this candidate as absent.
-        public static bool RemovalWouldEndangerRoof(Thing target, Dictionary<IntVec3,bool> plannedSupportCache = null)
+        public static bool RemovalWouldEndangerRoof(Thing target, Dictionary<IntVec3,bool> plannedSupportCache = null, HashSet<IntVec3> additionalRemovalCells = null)
         {
             if (target == null || !target.Spawned || !target.def.holdsRoof) return false;
             Map map=target.Map;
@@ -63,7 +63,7 @@ namespace RIMAPI.Helpers
                         IntVec3 next=cell+offset;
                         if (!next.InBounds(map) || !next.InHorDistOf(root,RoofCollapseUtility.RoofMaxSupportDistance)) continue;
                         Building holder=next.GetEdifice(map);
-                        if (holder != null && holder.def.holdsRoof && holder != target
+                        if (holder != null && holder.def.holdsRoof && holder != target && !(additionalRemovalCells?.Contains(next) ?? false)
                             && map.designationManager.DesignationAt(next,DesignationDefOf.Mine) == null
                             && map.designationManager.DesignationOn(holder,DesignationDefOf.Deconstruct) == null)
                         { supported=true; break; }
@@ -166,7 +166,8 @@ namespace RIMAPI.Helpers
             WorkGiverDef def = DefDatabase<WorkGiverDef>.GetNamedSilentFail(giverName);
             bool manualCare=kind == "feed" || kind == "rescue" || kind == "tend";
             if (def == null || worker.WorkTypeIsDisabled(def.workType) || (!manualCare && (worker.workSettings?.GetPriority(def.workType) ?? 0) == 0)
-                || def.Worker.ShouldSkip(worker,manualCare) || !(def.Worker is WorkGiver_Scanner scanner)) return null;
+                || def.Worker.ShouldSkip(worker,manualCare) && !thermalRescue && !careYield
+                || !(def.Worker is WorkGiver_Scanner scanner)) return null;
             if (def.requiredCapacities != null && def.requiredCapacities.Any(c => !worker.health.capacities.CapableOf(c))) return null;
             if(scanner is WorkGiver_Warden_InterrogateIdentity)
             {
@@ -175,7 +176,10 @@ namespace RIMAPI.Helpers
                     || !prisoner.guest.IsInteractionEnabled(PrisonerInteractionModeDefOf.Interrogate) || !prisoner.guest.ScheduledForInteraction
                     || (prisoner.Downed && !prisoner.InBed()) || !worker.health.capacities.CapableOf(PawnCapacityDefOf.Talking) || !prisoner.Awake())return null;
             }
-            else if (!scanner.HasJobOnThing(worker, target, manualCare)) return null;
+            else if (!scanner.HasJobOnThing(worker, target, manualCare)
+                && !(kind == "rescue" && target is Pawn coldPatient && CareTriageHelper.ThermalRescueNeeded(coldPatient)
+                    && (coldPatient.IsColonistPlayerControlled || coldPatient.RaceProps.Animal && coldPatient.Faction == Faction.OfPlayer)
+                    && worker.CanReserveAndReach(coldPatient,PathEndMode.Touch,Danger.Some))) return null;
             return scanner;
         }
         public static Job NativeJob(Pawn worker,Thing target,string kind,string giverName, string expectedJob = null, int? expectedPatient = null)
@@ -186,7 +190,6 @@ namespace RIMAPI.Helpers
             if(scanner==null)return null;
             bool rescueExposure=(kind=="rescue" && target is Pawn victim && victim.Downed) || (kind=="dispose_corpse" && target is Corpse);
             Job job = scanner.JobOnThing(worker, target, kind == "feed" || kind == "rescue" || kind == "tend");
-            if (job == null) return null;
             if (kind == "rescue" && target is Pawn exposed && CareTriageHelper.ThermalRescueNeeded(exposed))
             {
                 // Native rescue may choose the closest outdoor spot. Keep native bed eligibility,
@@ -201,6 +204,7 @@ namespace RIMAPI.Helpers
                     .FirstOrDefault(j => CareTriageHelper.JobRouteSafe(worker,j));
                 if (job == null) return null;
             }
+            if (job == null) return null;
             if (kind == "dispose_corpse" && !SafeDisposalDestination(worker, job.targetB)) return null;
             foreach (LocalTargetInfo t in new[] { job.targetA, job.targetB, job.targetC })
                 if (t.HasThing && t.Thing.Spawned && !Safe(worker, t.Thing,rescueExposure && t.Thing == target)) return null;
@@ -350,7 +354,7 @@ namespace RIMAPI.Helpers
                                 LethalMargin=target is Pawn marginPatient && CareTriageHelper.Malnutrition(marginPatient) is Hediff malnutrition ? (float?)(malnutrition.def.lethalSeverity-malnutrition.Severity) : null,
                                 FoodFeasible=pair.Key == "feed" || (pair.Key == "rescue" && target is Pawn hungry && FeedFoodAvailable(worker, hungry)) });
                 }
-                foreach (Pawn patient in patients.Where(p => p != worker && p.IsColonistPlayerControlled))
+                foreach (Pawn patient in patients.Where(p => p != worker && (p.IsColonistPlayerControlled || p.RaceProps.Animal && p.Faction == Faction.OfPlayer)))
                     foreach (string kind in new[] { "feed", "rescue" })
                     {
                         string expectedJob=worker.CurJobDef?.defName;

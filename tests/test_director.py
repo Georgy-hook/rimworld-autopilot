@@ -2420,7 +2420,7 @@ class DirectorTests(unittest.TestCase):
                             "forbidden": [], "things": [], "plants": [],
                             "corpses": [{"thing_id": 99, "label": "deer (dead)",
                                          "position": {"x": 25, "z": 17},
-                                         "categories": ["CorpsesAnimal"], "is_forbidden": False}],
+                                         "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"], "is_forbidden": False}],
                             "work_tables": [{"id": 2, "thing_def": "Campfire", "bills_count": 1}],
                             "item_counts": {}, "construction_projects": []},
         }
@@ -2493,8 +2493,8 @@ class DirectorTests(unittest.TestCase):
     def test_butcher_spot_targets_dense_carcass_pile_not_remote_single_kill(self):
         snapshot = {"development": {"corpses": [
             *[{"position": {"x": 176 + n % 2, "z": 135 + n // 2},
-               "categories": ["CorpsesAnimal"], "is_forbidden": False} for n in range(4)],
-            {"position": {"x": 109, "z": 233}, "categories": ["CorpsesAnimal"],
+               "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"], "is_forbidden": False} for n in range(4)],
+            {"position": {"x": 109, "z": 233}, "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"],
              "is_forbidden": False},
         ]}}
         cluster, center = director.animal_carcass_cluster(snapshot, {"x": 159, "z": 127})

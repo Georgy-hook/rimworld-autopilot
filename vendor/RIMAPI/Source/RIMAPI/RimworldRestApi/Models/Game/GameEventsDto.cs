@@ -19,6 +19,8 @@ namespace RIMAPI.Models
 
     public class QuestsDto
     {
+        public string ReadStatus { get; set; } = "complete";
+        public Dictionary<string, string> ReadErrors { get; set; } = new Dictionary<string, string>();
         public List<QuestDto> ActiveQuests { get; set; } = new List<QuestDto>();
         public List<QuestDto> HistoricalQuests { get; set; } = new List<QuestDto>();
     }
@@ -72,6 +74,8 @@ namespace RIMAPI.Models
 
     public class QuestDto
     {
+        public string ReadStatus { get; set; } = "complete";
+        public string ReadError { get; set; }
         public int Id { get; set; }
         public string QuestDef { get; set; }
         public string Name { get; set; }

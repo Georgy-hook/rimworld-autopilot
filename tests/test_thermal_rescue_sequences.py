@@ -115,7 +115,7 @@ class ThermalRescueSequences(unittest.TestCase):
                 if mutation in ('feed', 'changed_job'): s['combat']['colonists'][1]['current_job'] = 'FeedPatient' if mutation == 'feed' else 'Goto'
                 if mutation == 'carry': s['combat']['colonists'][1]['carrying_pawn_id'] = 1
                 if mutation == 'other_patient': row['target_id'] = 3
-                if mutation == 'in_bed': s['development']['resilience']['patients'][0]['in_bed'] = True
+                if mutation == 'in_bed': s['development']['resilience']['patients'][0].update(in_bed=True, current_bed_id=row['bed_id'])
                 self.assertIsNone(care.offered_care_yield(s, row))
 
     def test_target_bed_and_laydown_job_are_not_physical_arrival(self):

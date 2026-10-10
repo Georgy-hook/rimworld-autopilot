@@ -1,5 +1,12 @@
 # Sustenance: food, preservation and animal welfare
 
+The [10 October postmortem corrections](../audits/postmortem-source-repairs-2026-10-10.md)
+add finite compatible feed hauling into actual connected pens, free warm animal
+spots in existing shelter, rescue of a patient already in an exposed bed and
+qualified-doctor restrictions for elective animal surgery. A haul/spot/order is
+reported separately from delivery, eating, arrival and recovery. This newer
+contract supersedes the medicine/area-only welfare boundary below.
+
 Research target: installed RimWorld 1.6.4871. Core, Royalty, Ideology, Biotech and Anomaly directories are present. Odyssey Data is absent. Shared assembly fishing support is conditional on ModsConfig.OdysseyActive and a loaded fishing workgiver plus existing viable fishing zones; local execution remains unverified. Odyssey-specific animals/plants cannot be inventoried without its defs.
 
 ## Mechanic inventory and execution

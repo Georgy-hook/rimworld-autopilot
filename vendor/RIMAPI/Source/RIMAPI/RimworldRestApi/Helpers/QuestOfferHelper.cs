@@ -14,14 +14,16 @@ namespace RIMAPI.Helpers
     {
         public static List<QuestRewardGroupDto> Rewards(Quest quest)
         {
-            return quest.PartsListForReading.ToArray().OfType<QuestPart_Choice>().Select(part =>
+            return quest.PartsListForReading.ToArray().OfType<QuestPart_Choice>()
+                .Where(part => part.choices != null).Select(part =>
                 new QuestRewardGroupDto {
                     PartIndex = part.Index, ChoiceUsed = part.choiceUsed,
-                    Choices = part.choices.Select((choice, index) => new QuestRewardChoiceDto {
-                        ChoiceIndex = index,
+                    Choices = part.choices.Select((choice, index) => new {choice, index})
+                      .Where(row => row.choice != null).Select(row => new QuestRewardChoiceDto {
+                        ChoiceIndex = row.index,
                         // GetDescription is the player-visible reward, unlike the debug ToString.
-                        Rewards = choice.rewards.Select(PublicRewardDescription).ToList(),
-                        PopulationRewardPossible = choice.rewards.OfType<Reward_Pawn>().Any()
+                        Rewards = (row.choice.rewards ?? new List<Reward>()).Select(PublicRewardDescription).ToList(),
+                        PopulationRewardPossible = (row.choice.rewards ?? new List<Reward>()).OfType<Reward_Pawn>().Any()
                     }).ToList()
                 }).ToList();
         }
@@ -30,6 +32,9 @@ namespace RIMAPI.Helpers
         {
             QuestDto dto = GameEventAutomationHelper.BasicQuestDto(quest);
             bool offered = !quest.Historical && quest.State == QuestState.NotYetAccepted;
+            if (offered && quest.PartsListForReading.OfType<QuestPart_Choice>().Any(p =>
+                    p.choices == null || p.choices.Any(c => c == null || c.rewards == null)))
+                throw new InvalidOperationException("quest_reward_terms_unavailable");
             dto.CanAccept = false;
             dto.AcceptanceReason = "quest_not_offered";
             if (offered)

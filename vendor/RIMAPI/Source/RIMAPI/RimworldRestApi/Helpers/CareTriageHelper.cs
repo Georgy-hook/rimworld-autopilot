@@ -40,7 +40,7 @@ namespace RIMAPI.Helpers
             => destination >= comfortableMin && destination <= comfortableMax
                 && (cold && source < comfortableMin && destination - source >= 5f
                     || hot && source > comfortableMax && source - destination >= 5f);
-        public static bool ThermalRescueNeeded(Pawn p) => p != null && p.Spawned && !p.Dead && p.Downed && !p.InBed()
+        public static bool ThermalRescueNeeded(Pawn p) => p != null && p.Spawned && !p.Dead && p.Downed
             && p.health.hediffSet.hediffs.Any(h => h.Visible && h.Severity >= .1f
                 && (h.def == HediffDefOf.Hypothermia && p.Position.GetTemperature(p.Map) < p.GetStatValue(StatDefOf.ComfyTemperatureMin)
                     || h.def == HediffDefOf.Heatstroke && p.Position.GetTemperature(p.Map) > p.GetStatValue(StatDefOf.ComfyTemperatureMax)));
@@ -59,7 +59,8 @@ namespace RIMAPI.Helpers
             if ((kind != "feed" && kind != "rescue") || worker == null || next == null || worker == next
                 || !worker.IsColonistPlayerControlled || !worker.Spawned || worker.Dead || worker.Downed || worker.Drafted || worker.InMentalState
                 || (worker.CurJob?.def.forceCompleteBeforeNextJob ?? false) || !worker.jobs.IsCurrentJobPlayerInterruptible()
-                || !next.IsColonistPlayerControlled || !next.Spawned || next.Dead || next.Map != worker.Map || worker.carryTracker?.CarriedThing != null
+                || !(next.IsColonistPlayerControlled || next.RaceProps.Animal && next.Faction == Faction.OfPlayer)
+                || !next.Spawned || next.Dead || next.Map != worker.Map || worker.carryTracker?.CarriedThing != null
                 || QueuedCare(worker) || expectedJob == null || !expectedPatient.HasValue || worker.CurJobDef?.defName != expectedJob) return false;
             Job job = worker.CurJob;
             if (job == null || (job.def != JobDefOf.TendPatient && job.def != JobDefOf.Rescue)
@@ -71,6 +72,8 @@ namespace RIMAPI.Helpers
                 && old.health.hediffSet.BleedRateTotal == 0f && worker.health.hediffSet.BleedRateTotal == 0f
                 && !DiseaseCareProtected(old, thermalTransfer:true))
             { reason = "nonbleeding_tend_to_thermal_rescue_same_patient"; return true; }
+            // Animal care may yield only for the exact exposed patient above.
+            if (!next.IsColonistPlayerControlled) return false;
             if (DiseaseCareProtected(old)) return false;
             Hediff mal = Malnutrition(next);
             float? urgent = StarvationTicks(next), oldStarvation = StarvationTicks(old), bleed = BleedoutTicks(old);

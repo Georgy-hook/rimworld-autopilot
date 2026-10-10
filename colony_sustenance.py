@@ -3,12 +3,12 @@ from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 from colony_capabilities import food_planning_facts
 
-_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
+_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather", "penfeed", "warmspot"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
     "sustenance_food_batch": "Choose a feasible food or butcher recipe batch, fishing workflow, or explicit kitchen preparation. Preparation cleans or configures a kitchen and produces no food; a food bill still requires a usable table, enabled skilled worker and reachable ingredients. Compare human reserves, animal feed, fuel, spoilage and poisoning. Existing unused feed bills can be paused deliberately.",
     "sustenance_food_policy": "Choose an existing food policy for one colonist. Compare allowed reachable foods, scarcity, raw-food poisoning, ideology and mood; changing policy does not feed the pawn.",
     "sustenance_preservation": "Choose an existing cooler target or food-storage priority. Compare power, room temperature, spoiling stock, hauling and access; a setpoint is not proof of a frozen room.",
-    "sustenance_animal_welfare": "Choose one animal medicine policy or existing allowed area. Compare illness, pregnancy, nutrition, rest, reachable feed, beds and human medicine reserves. Pen animals use pens rather than allowed areas.",
+    "sustenance_animal_welfare": "Choose finite compatible feed delivery into a connected pen, a free warm animal sleeping spot, an animal medicine policy or an existing allowed area. Compare actual hunger, illness, temperature, pregnancy, reachable feed, beds and human reserves. Spot creation and haul start do not prove rescue, delivery or eating. Pen animals use pens rather than allowed areas.",
     "sustenance_herd_policy": "Choose an existing species total population limit, sterilization bill or release-to-wild designation, preserving pregnant and bonded animals. Compare pasture demand, stored feed, breeding sex/age structure, veneration and explosive death hazards; vanilla handlers may slaughter excess animals."}
 LABELS = {"sustenance_food_batch": "производство и сохранение пищи", "sustenance_food_policy": "пищевые ограничения", "sustenance_preservation": "холодильник и хранение пищи", "sustenance_animal_welfare": "питание и лечение животных", "sustenance_herd_policy": "размер стада и размножение"}
 ACTIONS = set(DESCRIPTIONS)
@@ -63,7 +63,7 @@ def _guard(context, plan):
     kind, target = plan["kind"], plan.get("target_id")
     if kind == "pausefeed":
         return {"compatible_animals": sum(bool(a.get("can_eat_kibble")) for a in context.get("animals") or []), "identity": plan.get("value")}
-    if kind in {"care", "area", "sterilize", "release", "gather", "diet", "customdiet"}:
+    if kind in {"care", "area", "sterilize", "release", "gather", "diet", "customdiet", "warmspot"}:
         pawns = context.get("food_pawns") if kind in {"diet", "customdiet"} else context.get("animals")
         pawn = next((p for p in pawns or [] if p.get("id") == target), {})
         return _clinical(pawn)
@@ -72,7 +72,7 @@ def _guard(context, plan):
         herd = [p for p in context.get("animals") or [] if p.get("species") == species]
         return {"count": len(herd), "pregnant": sum(bool(p.get("pregnant")) for p in herd),
                 "hungry": sum(p.get("food") is not None and float(p["food"]) < .3 for p in herd)}
-    if kind == "pen":
+    if kind in {"pen", "penfeed"}:
         pen = next((p for p in context.get("pens") or [] if p.get("id") == target), {})
         demand = pen.get("consumption_per_day")
         pasture = pen.get("pasture_nutrition_per_day")
@@ -339,7 +339,7 @@ def execute(client, snapshot, map_state, action, selected):
         return _failure(map_state, snapshot, action, key, "invalid_response", response=result, outcome_unknown=True)
     if not result["applied"]:
         return _failure(map_state, snapshot, action, key, result.get("reason") or "sustenance_not_applied", response=result)
-    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
+    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "penfeed", "warmspot", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
     _remember(map_state, snapshot, current_context, [current], duration)
     return {"applied": True, "reason": result.get("reason"), "response": result}
 
@@ -350,6 +350,8 @@ def assess(action, snapshot):
         kinds = {p.get("kind") for p in plans.values()}
         if kinds == {"care"}:
             benefit = "Medicine ceiling only; no feeding job or delivered feed. Tending policy cannot cure starvation."
+        elif kinds & {"penfeed", "warmspot"}:
+            benefit = "Finite compatible feed haul into the connected pen or a completed warm animal spot; delivery, eating and thermal rescue remain unverified."
         else:
             benefit = "Animal medicine, allowed area or pen policy; no direct feeding job. Feed and safe access must exist; policy acceptance does not stop starvation."
     if action == "sustenance_food_batch":

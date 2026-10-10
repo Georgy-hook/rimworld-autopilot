@@ -155,6 +155,7 @@ class FoodCommitmentTests(unittest.TestCase):
 
     def test_priority_one_collision_yields_only_selected_worker_and_does_not_restart_harvest(self):
         s = fixture()
+        s['development']['plants'] = [{'thing_id': 11, 'harvestable_now': True}]
         pawn = s['colonists'][0]
         self.assertIn('Construction', director.food_work_adjustments(s, pawn, 'PlantCutting'))
         self.assertEqual([p['id'] for p in director.priority_deficit_workers(s, 'PlantCutting')], [1])
