@@ -10,5 +10,6 @@ namespace RIMAPI.Models {
   public int BaseYield {get;set;} public float NominalMarketValue {get;set;}
   public float MiningSpeed {get;set;} public float MiningYield {get;set;}
   public int MiningSkill {get;set;} public float TravelDistance {get;set;}
+  public int? EstimatedWorkTicks {get;set;}
  }
 }

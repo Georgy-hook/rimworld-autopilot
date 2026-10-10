@@ -118,7 +118,14 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     care_risks = facts.get("care_risks") if isinstance(facts, dict) else None
     quest_colony = facts.get("quest_colony") if isinstance(facts, dict) else None
     development = facts.get("development") if isinstance(facts, dict) else None
-    protected_units = {key: value for key, value in (("care_risks", care_risks), ("quest_colony", quest_colony),
+    comparison = state.get("comparison_facts")
+    if isinstance(comparison, dict):
+        # Domain collectors supply small factual records per option. Preserve
+        # only the compared subjects, including their numbers and constraints,
+        # instead of prefix-cutting a JSON blob before its crucial fields.
+        comparison = {"shared": comparison.get("shared") or {}, "options": {
+            key: (comparison.get("options") or {}).get(key, {}) for key in options}}
+    protected_units = {key: value for key, value in (("comparison", comparison), ("care_risks", care_risks), ("quest_colony", quest_colony),
                                                   ("development", development))
                        if isinstance(value, dict) and value}
     joint_facts = "care_risks" in protected_units and "quest_colony" in protected_units

@@ -8,7 +8,7 @@ using RIMAPI.Core;
 using RIMAPI.Models;
 namespace RIMAPI.Helpers {
  public static class SustenanceHelper {
-  public sealed class Plan { public string key; public string kind; public int target_id; public string value; public string label; public string cost; public string risk; }
+  public sealed class Plan { public string key; public string kind; public int target_id; public string value; public string label; public string cost; public string risk; public object facts; }
   public static bool KitchenCleanupInFootprint(bool enclosedKitchen, bool sameOutdoorRoom, int distanceSquared) => enclosedKitchen || sameOutdoorRoom && distanceSquared<=9;
   static bool Protected(Pawn p) => p.Dead || p.Downed || p.Drafted || p.InMentalState || p.CurJobDef==JobDefOf.TendPatient || p.CurJobDef==JobDefOf.Rescue || p.CurJobDef==JobDefOf.FeedPatient || p.CurJobDef==JobDefOf.DoBill;
   static bool Safe(Thing t) => !t.IsForbidden(Faction.OfPlayer) && !t.IsBurning() && (t.TryGetComp<CompRottable>()==null || t.TryGetComp<CompRottable>().Stage==RotStage.Fresh)

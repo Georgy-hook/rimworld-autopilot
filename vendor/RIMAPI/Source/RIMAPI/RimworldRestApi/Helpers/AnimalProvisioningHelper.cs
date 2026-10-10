@@ -41,7 +41,11 @@ namespace RIMAPI.Helpers {
       p.health.hediffSet.HasHediff(HediffDefOf.Hypothermia),p.health.hediffSet.HasHediff(HediffDefOf.Heatstroke),p.Position.GetTemperature(m),c.GetTemperature(m),p.GetStatValue(StatDefOf.ComfyTemperatureMin),p.GetStatValue(StatDefOf.ComfyTemperatureMax))
       && GenConstruct.CanPlaceBlueprintAt(spot,c,Rot4.North,m,false).Accepted)
      .OrderBy(c=>c.DistanceToSquared(p.Position)).Take(1);
-    foreach(var c in cells)yield return new SustenanceHelper.Plan{key=$"warmspot:{p.thingIDNumber}:{c.x}:{c.z}",kind="warmspot",target_id=p.thingIDNumber,value=$"{c.x},{c.z}",label=p.LabelShortCap+": roofed warm animal sleeping spot",cost="Loaded zero-work, zero-material spot in existing shelter; rescue remains separate",risk=$"Source {p.Position.GetTemperature(m):F1}C, destination {c.GetTemperature(m):F1}C. Creating a spot is not arrival, warmth or feeding; shared room cleanliness"};
+    foreach(var c in cells)yield return new SustenanceHelper.Plan{key=$"warmspot:{p.thingIDNumber}:{c.x}:{c.z}",kind="warmspot",target_id=p.thingIDNumber,value=$"{c.x},{c.z}",label=p.LabelShortCap+": roofed warm animal sleeping spot",cost="Loaded zero-work, zero-material spot in existing shelter; rescue remains separate",risk=$"Source {p.Position.GetTemperature(m):F1}C, destination {c.GetTemperature(m):F1}C. Creating a spot is not arrival, warmth or feeding; shared room cleanliness",
+     facts=new{source_c=p.Position.GetTemperature(m),destination_c=c.GetTemperature(m),
+      hypothermia=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Hypothermia)?.Severity,
+      heatstroke=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Heatstroke)?.Severity,
+      downed=p.Downed,work=spot.GetStatValueAbstract(StatDefOf.WorkToBuild),materials=0,rescue_pending=true}};
    }
    var food=m.listerThings.AllThings.Where(FreshFood).ToArray();
    float human=food.Where(t=>m.mapPawns.FreeColonistsSpawned.Any(p=>p.RaceProps.CanEverEat(t.def) && p.WillEat(t) && (p.foodRestriction?.CurrentFoodPolicy?.Allows(t) ?? true) && p.CanReach(t,PathEndMode.Touch,Danger.Some)))
@@ -52,8 +56,9 @@ namespace RIMAPI.Helpers {
     var cells=marker.PenState.ConnectedRegions.SelectMany(r=>r.Cells).Where(c=>Empty(m,c) && hungry.Any(p=>p.CanReach(c,PathEndMode.OnCell,Danger.Some)))
      .OrderBy(c=>c.DistanceToSquared(marker.parent.Position)).Take(3).ToArray();
     foreach(var t in food.Where(t=>hungry.Any(p=>p.RaceProps.CanEverEat(t.def) && p.WillEat(t)))) {
+     var compatible=hungry.Where(p=>p.RaceProps.CanEverEat(t.def) && p.WillEat(t)).ToArray();
      float unit=t.GetStatValue(StatDefOf.Nutrition);
-     int count=FeedCount(unit,t.stackCount,hungry.Length);
+     int count=FeedCount(unit,t.stackCount,compatible.Length);
      if(count<=0)continue;
      bool edible=m.mapPawns.FreeColonistsSpawned.Any(p=>p.RaceProps.CanEverEat(t.def) && p.WillEat(t));
      if(!FeedReserve(human,count*unit,edible,m.mapPawns.FreeColonistsSpawned.Count))continue;
@@ -62,7 +67,11 @@ namespace RIMAPI.Helpers {
       var dest=cells.FirstOrDefault(c=>worker.CanReserve(c) && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch)
        && OrdinaryWorkSafety.Route(worker,t.Position,c,PathEndMode.OnCell));
       if(!cells.Contains(dest))continue;
-      yield return new SustenanceHelper.Plan{key=$"penfeed:{marker.parent.thingIDNumber}:{worker.thingIDNumber}:{t.thingIDNumber}:{dest.x}:{dest.z}",kind="penfeed",target_id=marker.parent.thingIDNumber,value=$"{worker.thingIDNumber},{t.thingIDNumber},{dest.x},{dest.z},{count}",label=worker.LabelShortCap+": haul "+count+" "+t.def.label+" into "+marker.RenamableLabel,cost=$"{count*unit:F2} nutrition; remaining human-compatible reserve {human-(edible?count*unit:0):F2}; hauling labor",risk="Fresh compatible feed in connected reachable pen; ordinary haul start is not delivery or ingestion. Finite stockpile must not attract unlimited human food"};
+      yield return new SustenanceHelper.Plan{key=$"penfeed:{marker.parent.thingIDNumber}:{worker.thingIDNumber}:{t.thingIDNumber}:{dest.x}:{dest.z}",kind="penfeed",target_id=marker.parent.thingIDNumber,value=$"{worker.thingIDNumber},{t.thingIDNumber},{dest.x},{dest.z},{count}",label=worker.LabelShortCap+": haul "+count+" "+t.def.label+" into "+marker.RenamableLabel,cost=$"{count*unit:F2} nutrition; remaining human-compatible reserve {human-(edible?count*unit:0):F2}; hauling labor",risk="Fresh compatible feed in connected reachable pen; ordinary haul start is not delivery or ingestion. Finite stockpile must not attract unlimited human food",
+       facts=new{hungry_animals=compatible.Length,min_food=compatible.Min(p=>p.needs.food.CurLevelPercentage),
+        malnutrition=compatible.Max(p=>p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Malnutrition)?.Severity ?? 0f),
+        nutrition=count*unit,human_remaining=human-(edible?count*unit:0),human_minimum=m.mapPawns.FreeColonistsSpawned.Count*1.8f,
+        delivery_pending=true}};
       break;
      }
     }

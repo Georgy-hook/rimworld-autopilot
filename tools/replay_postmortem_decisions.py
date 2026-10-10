@@ -41,10 +41,16 @@ def main():
     records = []
     for reverse in (False, True):
         snapshot = mine_snapshot()
+        # The earlier fixture inherited food=0/Malnutrition=.6 from a food
+        # regression. Deferring discretionary mining there is reasonable.
+        snapshot['map']['resources'].update(nutrition=32, food=40, meals=20)
+        snapshot['colonists'][0].update(hunger=.9, health_conditions=[], downed=False)
+        snapshot['quest_context'] = {'trade_opportunities':[{'id':1}]}
         ore = snapshot['development']['mining']['options'][0]
+        ore['estimated_work_ticks']=6308
         other = copy.deepcopy(ore)
         other.update(key='1:101', thing_ids=[101], product_def='Steel', ore_def='MineableSteel',
-                     base_yield=40, nominal_market_value=76, remaining_hp=1500)
+                     base_yield=40, nominal_market_value=76, remaining_hp=1500,estimated_work_ticks=3154)
         snapshot['development']['mining']['options'] = [other, ore] if reverse else [ore, other]
         memory = {'doctrine': {'mining_product': 'mineable_jade'}}
         labor.prepare(snapshot, memory)
@@ -63,15 +69,20 @@ def main():
             {'key': 'penfeed:9:1:33:30:25', 'kind': 'penfeed', 'target_id': 9,
              'value': '1,33,30,25,16', 'label': 'Worker: haul 16 fresh rice into connected pen',
              'cost': '0.8 nutrition, 5.4 remaining human nutrition',
-             'risk': 'Actual hauler and both routes rechecked; delivery and ingestion not proven'},
+             'risk': 'Actual hauler and both routes rechecked; delivery and ingestion not proven',
+             'facts':{'hungry_animals':2, 'min_food':0, 'malnutrition':.8, 'nutrition':.8,
+                      'human_remaining':5.4, 'human_minimum':1.8, 'delivery_pending':True}},
             {'key': 'warmspot:4:21:21', 'kind': 'warmspot', 'target_id': 4, 'value': '21,21',
              'label': 'Roofed warm animal sleeping spot: -22C to 21C',
              'cost': 'Loaded zero-work zero-material spot inside existing shelter',
-             'risk': 'Patient remains outside until ordinary thermal rescue succeeds'}],
+             'risk': 'Patient remains outside until ordinary thermal rescue succeeds',
+             'facts':{'source_c':-22,'destination_c':21,'hypothermia':.88,'heatstroke':None,
+                      'downed':True,'work':0,'materials':0,'rescue_pending':True}}],
+            'human_food':[{'def_name':'RawRice','fresh_eligible_nutrition':6.2}],
             'pens': [{'id': 9, 'enclosed': True, 'consumption_per_day': 2,
                       'pasture_nutrition_per_day': 0, 'stockpiled_nutrition': 0}],
-            'animals': [{'id': 4, 'food': 0.4, 'downed': True,
-                         'health': [{'def_name': 'Hypothermia', 'stage_index': 3}]}]}
+            'animals': [{'id': 4, 'food': 0.4, 'downed': True, 'temperature':-22,
+                         'health': [{'def_name': 'Hypothermia', 'stage_index': 3,'severity':.88}]}]}
         if reverse:
             context['options'].reverse()
         snapshot['development']['sustenance'] = context
@@ -83,6 +94,41 @@ def main():
         result = sustenance.execute(transport, snapshot, memory, 'sustenance_animal_welfare', selected)
         records.append({'scenario': 'finite_feed_or_warm_spot_choice', 'reverse': reverse,
                         'selection': selected, 'decision': decision, 'result': result, 'orders': transport.orders})
+
+        saved_options=copy.deepcopy(context['options'])
+        context['options']=[p for p in saved_options if p['kind']=='warmspot']
+        memory={};sustenance.prepare(snapshot,memory)
+        selected,decision=sustenance.choose(agent,{},'sustenance_animal_welfare',snapshot)
+        transport=OfflineTransport(context,'/api/v1/sustenance')
+        result=sustenance.execute(transport,snapshot,memory,'sustenance_animal_welfare',selected)
+        records.append({'scenario':'warm_spot_without_feed_alternative','reverse':reverse,
+                        'selection':selected,'decision':decision,'result':result,'orders':transport.orders})
+
+        # Distinguish delivery from warmth; the selected scarce labor must
+        # perform the explicitly chosen task, not a hard-coded fallback.
+        context['options'] = [p for p in saved_options if p['kind']=='penfeed']
+        snapshot['development']['sustenance'] = context
+        memory={}
+        sustenance.prepare(snapshot,memory)
+        selected,decision=sustenance.choose(agent,{},'sustenance_animal_welfare',snapshot)
+        transport=OfflineTransport(context,'/api/v1/sustenance')
+        result=sustenance.execute(transport,snapshot,memory,'sustenance_animal_welfare',selected)
+        records.append({'scenario':'finite_feed_without_thermal_alternative','reverse':reverse,
+                        'selection':selected,'decision':decision,'result':result,'orders':transport.orders})
+
+        # Keep the contradictory older fixture as a model-only diagnostic.
+        # Native MinerReady no longer offers discretionary extraction for a
+        # starving worker; do not report this mock order as native eligibility.
+        snapshot=mine_snapshot()
+        snapshot['development']['mining']['options'][0]['estimated_work_ticks']=6308
+        labor.prepare(snapshot,{})
+        mining.prepare(snapshot,{})
+        selected,decision=mining.choose(agent,{},'mining_extract',snapshot)
+        transport=OfflineTransport(snapshot['development']['mining'],'/api/v1/mining')
+        result=mining.execute(transport,snapshot,{},'mining_extract',selected)
+        records.append({'scenario':'starving_miner_discretionary_extraction','reverse':reverse,
+                        'selection':selected,'decision':decision,'result':result,'orders':transport.orders,
+                        'native_eligible':False,'contradictory_fixture':True})
     output = {'offline': True, 'game_mutations': 0, 'survival_not_proven': True,
               'native_completion_not_proven': True, 'records': records}
     args.output.parent.mkdir(parents=True, exist_ok=True)

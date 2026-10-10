@@ -202,8 +202,14 @@ namespace RIMAPI.Helpers
         {
             // Materialize native getters before projecting labels/targets.
             // Nested mod callbacks cannot invalidate an enumerated scratch list.
-            var factions = quest.InvolvedFactions?.ToArray() ?? new Faction[0];
-            var targets = quest.QuestLookTargets?.ToArray() ?? new GlobalTargetInfo[0];
+            // Cleanup/discard leaves null pawn references in historical parts.
+            // Native IncreasesPopulation dereferences them even for expired
+            // offers. Historical metadata must not run live part callbacks.
+            bool historical = quest.Historical;
+            var factions = QuestPublicReadBoundary.Live(historical,
+                () => quest.InvolvedFactions?.ToArray() ?? new Faction[0], new Faction[0]);
+            var targets = QuestPublicReadBoundary.Live(historical,
+                () => quest.QuestLookTargets?.ToArray() ?? new GlobalTargetInfo[0], new GlobalTargetInfo[0]);
             return new QuestDto
             {
                 Id = quest.id,
@@ -215,10 +221,11 @@ namespace RIMAPI.Helpers
                     ? (float?)(GameTypesHelper.TicksToDays(quest.TicksUntilExpiry) * 24) : null,
                 HasOfferExpiry = !quest.EverAccepted && quest.acceptanceExpireTick >= 0,
                 AcceptedHoursAgo = quest.EverAccepted ? (float?)(GameTypesHelper.TicksToDays(quest.TicksSinceAccepted) * 24) : null,
-                Reward = GameEventsHelper.GetQuestRewardString(quest),
+                Reward = QuestPublicReadBoundary.Live(historical,
+                    () => GameEventsHelper.GetQuestRewardString(quest), new List<string>()),
                 EverAccepted = quest.EverAccepted,
-                RequiresAccepter = quest.RequiresAccepter,
-                IncreasesPopulation = quest.IncreasesPopulation,
+                RequiresAccepter = QuestPublicReadBoundary.Live(historical, () => quest.RequiresAccepter, false),
+                IncreasesPopulation = QuestPublicReadBoundary.Live(historical, () => quest.IncreasesPopulation, false),
                 Tags = quest.tags?.ToList() ?? new List<string>(),
                 InvolvedFactions = quest.root?.hideInvolvedFactionsInfo == true ? new List<string>() :
                     factions.Select(f => f?.Name).Where(s => !string.IsNullOrEmpty(s)).ToList(),

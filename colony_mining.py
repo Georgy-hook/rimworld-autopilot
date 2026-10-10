@@ -65,9 +65,9 @@ def effects(plan):
     if plan.get('kind') == 'haul':
         return {'benefit':f"Transport {plan.get('base_yield')} {plan['product_def']} to the native destination", 'cost':f"Hauler {plan.get('worker')}, travel {plan.get('travel_distance')}", 'risk':'Displaces worker; destination and both route legs rechecked', 'inaction':'Goods remain where observed', 'uncertainty':'No source attribution or sale; delivery unverified'}
     return {'benefit': f"{plan['product_def']}: base yield {plan.get('base_yield')}, nominal value {plan.get('nominal_market_value')} before trader modifiers",
-            'cost': f"{plan.get('worker')}: Mining {plan.get('mining_skill')}, travel {plan.get('travel_distance')}, HP {plan.get('remaining_hp')}, native speed/yield {plan.get('mining_speed')}/{plan.get('mining_yield')}",
+            'cost': f"{plan.get('worker')}: Mining {plan.get('mining_skill')}, travel {plan.get('travel_distance')}, estimated work {plan.get('estimated_work_ticks')} ticks excluding travel/needs, HP {plan.get('remaining_hp')}",
             'risk': 'Miner displaced from other labor; travel/exposure. No food produced. Fresh native path and whole-batch roof support are rechecked.',
-            'inaction': 'Visible resource remains; food/care may take priority',
+            'inaction': 'Worker continues current job; this vein supplies no goods',
             'uncertainty': 'No measured income per hour; a buyer, negotiation, output and delivery remain necessary'}
 
 
@@ -76,21 +76,46 @@ def choose(agent, state, action, snapshot):
     rows = {k:p for k,p in snapshot['development']['mining'].get('prepared_options',allowed).items() if k in allowed}
     products = sorted({p['product_def'] for p in rows.values()})
     product_choices = {p: p + ('; chosen doctrine product' if any(r.get('preferred_product') for r in rows.values() if r['product_def'] == p) else '') for p in products}
-    product_choices['defer'] = 'Preserve labor for food/care; defer extraction'
+    people = {p.get('id'): p for p in snapshot.get('colonists') or []}
+    buyers = snapshot.get('quest_context', {}).get('trade_opportunities')
     facts = {'food_nutrition': snapshot.get('map', {}).get('resources', {}).get('nutrition'),
-             'people': [{k: p.get(k) for k in ('id','current_job','downed','hunger')} for p in snapshot.get('colonists') or []],
-             'buyer_status': snapshot.get('quest_context', {}).get('trade_opportunities', 'unknown'),
-             'option_effects': {p: effects(next(r for r in rows.values() if r['product_def'] == p)) for p in products}}
-    product, first = ask_laya_choice(agent, {'decision_facts':facts}, 'mining_product', DESCRIPTIONS[action], product_choices, detailed=True)
+             'people': len(people), 'hungry': sum(p.get('hunger') is not None and p['hunger'] < .3 for p in people.values()),
+             'downed': sum(bool(p.get('downed', p.get('is_downed'))) for p in people.values()),
+             'buyers': len(buyers) if isinstance(buyers, list) else None}
+    def numbers(plan):
+        pawn = people.get(plan['worker_id'], {})
+        conditions=pawn.get('health_conditions')
+        malnutrition=max((h.get('severity') or 0 for h in conditions or [] if h.get('def_name')=='Malnutrition'),default=0) if conditions is not None else None
+        return {'product': plan['product_def'], 'yield': plan.get('base_yield'),
+                'nominal_value': plan.get('nominal_market_value'), 'hp': plan.get('remaining_hp'),
+                'skill': plan.get('mining_skill'), 'speed': plan.get('mining_speed'),
+                'yield_factor': plan.get('mining_yield'), 'travel': plan.get('travel_distance'),
+                'work_ticks':plan.get('estimated_work_ticks'),
+                'worker_malnutrition':malnutrition,
+                'worker_food': pawn.get('hunger'), 'worker_job': pawn.get('current_job')}
+    product_facts = {p: numbers(next(r for r in rows.values() if r['product_def'] == p)) for p in products}
+    product_effects = {p: effects(next(r for r in rows.values() if r['product_def'] == p)) for p in products}
+    defer_effect = {'benefit':'Retain worker on current job', 'cost':'No mining labor',
+                    'risk':'No mineral output or new trade goods', 'inaction':'Current food/care work continues',
+                    'uncertainty':'No income from this vein'}
+    instruction = 'Compare mineral value, work, travel, food and care. Choose an available plan or defer.'
+    # Product selection is a comparison, not a dispatch. The final exact
+    # worker/vein comparison includes waiting once; no action is preselected.
+    product, first = ask_laya_choice(agent, {'comparison_facts':{'shared':facts,'options':product_facts},
+        'option_effects':product_effects}, 'mining_product', instruction, product_choices, detailed=True)
     if product == 'defer':
         return {'mining_plan':'defer', 'shown_mining_options':list(rows)}, {'stages':[first]}
     if product not in products:
         raise ValueError('Unverified mineral product')
     indexed = {f'v{i}': (key, p) for i, (key, p) in enumerate(rows.items()) if p['product_def'] == product}
-    criteria = {alias: f"{p.get('worker')}; {p.get('ore_def')} at {p['cells'][0]}, {len(p['thing_ids'])}/{p.get('vein_cells')} cells" for alias, (_, p) in indexed.items()}
-    criteria['defer'] = 'Keep labor on current needs; defer this product'
-    chosen, raw = ask_laya_choice(agent, {'decision_facts':{**facts, 'option_effects':{a:effects(p) for a,(_,p) in indexed.items()}}},
-                                  'mining_vein_and_worker', DESCRIPTIONS[action], criteria, detailed=True)
+    criteria = {alias: f"Mine {p.get('base_yield')} {p['product_def']} with {p.get('worker')}; {len(p['thing_ids'])} cells" for alias, (_, p) in indexed.items()}
+    if action=='mining_haul':
+        criteria = {alias:f"Haul {p.get('base_yield')} {p['product_def']} with {p.get('worker')}" for alias,(_,p) in indexed.items()}
+    criteria['defer'] = 'Keep worker on observed current job; leave goods uncollected'
+    chosen, raw = ask_laya_choice(agent, {'comparison_facts':{'shared':facts,
+        'options':{a:numbers(p) for a,(_,p) in indexed.items()}},
+        'option_effects':{**{a:effects(p) for a,(_,p) in indexed.items()}, 'defer':defer_effect}},
+                                  'mining_vein_and_worker', instruction, criteria, detailed=True)
     if chosen == 'defer':
         return {'mining_plan':'defer', 'shown_mining_options':[k for k,p in rows.items() if p['product_def']==product]}, {'stages':[first,raw]}
     if chosen not in indexed:

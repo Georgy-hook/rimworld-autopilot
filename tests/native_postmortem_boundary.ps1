@@ -9,6 +9,7 @@ $taskFeedCount = [regex]::Match($taskAnimal, 'public static int FeedCount\([^;]+
 $taskSurgery = [regex]::Match($taskAnimal, 'public static bool ElectiveSurgeryReady\([^;]+;').Value
 $taskMining = Get-Content -LiteralPath (Join-Path $taskHelpers 'MiningAutomationHelper.cs') -Raw
 $taskBatch = [regex]::Match($taskMining, 'public static List<int> ConnectedBatch\(.*?\r?\n  \}', [Text.RegularExpressions.RegexOptions]::Singleline).Value
+$taskEstimate=[regex]::Match($taskMining, 'public static int EstimatedWorkTicks\(.*?\r?\n  \}', [Text.RegularExpressions.RegexOptions]::Singleline).Value
 if (-not $taskReserve -or -not $taskFeedCount -or -not $taskSurgery -or -not $taskBatch) { throw 'Production boundary method missing' }
 $taskFixture = @'
 using System;
@@ -20,6 +21,7 @@ public static class PostmortemBoundaryFixture {
  FEEDCOUNT
  SURGERY
  BATCH
+ ESTIMATE
  public static int ObservationCases() {
   var errors=new Dictionary<string,string>(); var observed=new List<int>();
   bool failed=ObservationBoundary.Read<int>("historical:1",()=>{throw new NullReferenceException();},observed.Add,errors,
@@ -42,8 +44,20 @@ public static class PostmortemBoundaryFixture {
  }
 }
 '@
-Add-Type -TypeDefinition ($taskFixture.Replace('RESERVE',$taskReserve).Replace('FEEDCOUNT',$taskFeedCount).Replace('SURGERY',$taskSurgery).Replace('BATCH',$taskBatch) + $taskObservation)
+Add-Type -TypeDefinition ($taskFixture.Replace('RESERVE',$taskReserve).Replace('FEEDCOUNT',$taskFeedCount).Replace('SURGERY',$taskSurgery).Replace('BATCH',$taskBatch).Replace('ESTIMATE',$taskEstimate) + $taskObservation)
 $taskCount = [PostmortemBoundaryFixture]::ObservationCases() + [PostmortemBoundaryFixture]::ConnectedCases()
+$taskEstimateCases=@(
+ @{Hp=[int[]]@(1500,1500); Speed=[float]1.2; Rock=$false; Expected=6308},
+ @{Hp=[int[]]@(40,41); Speed=[float]1; Rock=$false; Expected=300},
+ @{Hp=[int[]]@(80,81); Speed=[float]1; Rock=$true; Expected=300},
+ @{Hp=[int[]]@(40); Speed=[float]0; Rock=$false; Expected=[int]::MaxValue}
+)
+foreach($taskCase in $taskEstimateCases) {
+ if([PostmortemBoundaryFixture]::EstimatedWorkTicks($taskCase.Hp,$taskCase.Speed,$taskCase.Rock) -ne $taskCase.Expected) {
+  throw 'Mining work estimate violated per-cell rounding or natural-rock damage'
+ }
+}
+$taskCount+=$taskEstimateCases.Count
 $taskReserves = @(
  @([float]5,[float]1,$true,2,$true),
  @([float]4,[float]1,$true,2,$false),

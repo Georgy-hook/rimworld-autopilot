@@ -14,6 +14,16 @@ namespace RIMAPI.Helpers {
     foreach(int next in adjacency[id])if(seen.Add(next))queue.Enqueue(next);}
    return result;
   }
+  // Loaded 1.6 JobDriver_Mine: a pick hit every rounded 100/MiningSpeed
+  // ticks, 40 ore HP (80 natural-rock HP). Excludes travel, interruptions,
+  // needs, damage modifiers and mod patches; it is not measured throughput.
+  public static int EstimatedWorkTicks(int[] hp,float speed,bool naturalRock) {
+   if(speed<=0f)return int.MaxValue;
+   int hitTicks=Math.Max(1,(int)Math.Round(100f/speed));
+   return hp.Sum(value=>(int)Math.Ceiling((double)value/(naturalRock?80:40))*hitTicks);
+  }
+  static bool MinerReady(Pawn p) => OrdinaryWorkSafety.Worker(p,WorkTypeDefOf.Mining)
+   && p.needs?.food!=null && p.needs.food.CurCategory<HungerCategory.UrgentlyHungry;
   static List<MiningPlanDto> Plans(Map m) {
    var result=new List<MiningPlanDto>();
    var mine=m.listerThings.AllThings.OfType<Mineable>().Where(t=>!t.Position.Fogged(m) && !t.IsForbidden(Faction.OfPlayer)
@@ -24,7 +34,7 @@ namespace RIMAPI.Helpers {
     var unseen=new HashSet<int>(byId.Keys);
     while(unseen.Count>0) {
      var vein=ConnectedBatch(adjacency,unseen.Min(),int.MaxValue);unseen.ExceptWith(vein);
-     foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(p=>OrdinaryWorkSafety.Worker(p,WorkTypeDefOf.Mining))) {
+     foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(MinerReady)) {
       var first=vein.Select(id=>byId[id]).Where(t=>worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
        && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch))
        .OrderBy(t=>t.Position.DistanceToSquared(worker.Position)).FirstOrDefault();
@@ -40,7 +50,8 @@ namespace RIMAPI.Helpers {
        ThingIds=batch.Select(t=>t.thingIDNumber).ToList(),Cells=batch.Select(t=>new PositionDto{X=t.Position.x,Y=0,Z=t.Position.z}).ToList(),
        RemainingHp=batch.Sum(t=>t.HitPoints),BaseYield=amount,NominalMarketValue=amount*group.Key.building.mineableThing.GetStatValueAbstract(StatDefOf.MarketValue),
        MiningSpeed=worker.GetStatValue(StatDefOf.MiningSpeed),MiningYield=worker.GetStatValue(StatDefOf.MiningYield),MiningSkill=worker.skills.GetSkill(SkillDefOf.Mining).Level,
-       TravelDistance=worker.Position.DistanceTo(first.Position)});
+       TravelDistance=worker.Position.DistanceTo(first.Position),
+       EstimatedWorkTicks=EstimatedWorkTicks(batch.Select(t=>t.HitPoints).ToArray(),worker.GetStatValue(StatDefOf.MiningSpeed),group.Key.building.isNaturalRock)});
      }
     }
    }

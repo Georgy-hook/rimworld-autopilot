@@ -46,7 +46,7 @@ namespace RIMAPI.Helpers
             dto.RewardGroups = Rewards(quest);
             dto.Reward = dto.RewardGroups.SelectMany(g => g.Choices).SelectMany(c => c.Rewards).ToList();
             dto.PopulationRewardPossible = dto.RewardGroups.Any(g => g.Choices.Any(c => c.PopulationRewardPossible));
-            dto.IncreasesPopulation = dto.IncreasesPopulation || dto.PopulationRewardPossible;
+            dto.IncreasesPopulation = !quest.Historical && (dto.IncreasesPopulation || dto.PopulationRewardPossible);
             dto.EligibleAccepters = !offered || !quest.RequiresAccepter ? new List<QuestAccepterDto>() : PawnsFinder.AllMaps_FreeColonistsSpawned
                 .Where(p => !p.Dead && QuestUtility.CanPawnAcceptQuest(p, quest))
                 .Select(p => new QuestAccepterDto { PawnId = p.thingIDNumber,
@@ -63,14 +63,16 @@ namespace RIMAPI.Helpers
                 }).ToList();
             // Only unconditional acceptance consequences. Future betrayal and
             // hidden signals are not player knowledge and must not leak here.
-            dto.AcceptanceDiplomacy = quest.PartsListForReading.ToArray().OfType<QuestPart_FactionGoodwillChange>()
+            dto.AcceptanceDiplomacy = quest.Historical ? new List<QuestDiplomacyDto>() : quest.PartsListForReading.ToArray().OfType<QuestPart_FactionGoodwillChange>()
                 .Where(p => p.inSignal == quest.InitiateSignal && quest.root?.hideInvolvedFactionsInfo != true)
                 .Select(p => new QuestDiplomacyDto { Faction = p.faction?.Name,
                     FactionDef = p.faction?.def.defName, GoodwillChange = p.change,
                     MakesHostile = p.ensureMakesHostile,
                     CurrentGoodwill = p.faction?.GoodwillWith(Faction.OfPlayer),
                     CurrentRelation = p.faction?.RelationKindWith(Faction.OfPlayer).ToString() }).ToList();
-            dto.Disclosure = "Offer and native requirements only. Hidden outcomes remain unknown; possible pawn rewards are not guaranteed permanent workers. Reward groups are alternatives, not cumulative rewards.";
+            dto.Disclosure = quest.Historical
+                ? "Historical record only. Discarded actors and live target/population/acceptance callbacks are not read; past arrival, income or completion cannot be inferred from reward text."
+                : "Offer and native requirements only. Hidden outcomes remain unknown; possible pawn rewards are not guaranteed permanent workers. Reward groups are alternatives, not cumulative rewards.";
             using (var sha = SHA256.Create())
             {
                 // Expiry counts and current jobs drift normally. Bind the actual

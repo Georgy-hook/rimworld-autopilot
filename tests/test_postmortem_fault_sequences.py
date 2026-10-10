@@ -93,7 +93,9 @@ class MiningSequences(unittest.TestCase):
         s=mine_snapshot();mining.prepare(s,{'doctrine':{'mining_product':'mineable_jade'}})
         selected,_=mining.choose(None,{},'mining_extract',s)
         self.assertEqual(selected['mining_plan'],'1:91,92')
-        self.assertIn('nominal',ask.call_args_list[0].args[1]['decision_facts']['option_effects']['Jade']['benefit'])
+        self.assertIn('nominal',ask.call_args_list[0].args[1]['option_effects']['Jade']['benefit'])
+        self.assertEqual(ask.call_args_list[0].args[1]['comparison_facts']['options']['Jade']['nominal_value'],400)
+        self.assertIn('defer',ask.call_args_list[-1].args[4])
 
 
 class FoodAndStorageSequences(unittest.TestCase):
