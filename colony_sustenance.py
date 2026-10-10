@@ -2,6 +2,7 @@
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 from colony_capabilities import food_planning_facts
+import colony_husbandry as husbandry
 
 _KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather", "penfeed", "warmspot"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
@@ -198,9 +199,9 @@ def _effects(context, plan):
             'uncertainty':'Ordinary safe compatible haul; arrival and eating remain pending'}
     if kind=='warmspot' and measured:
         return {'benefit':f"Prepare animal bed at {measured.get('destination_c')}C instead of {measured.get('source_c')}C",
-            'cost':f"{measured.get('work')} construction work, {measured.get('materials')} materials; later rescue labor",
+            'cost':f"{measured.get('work')} work, {measured.get('materials')} materials; eligible carriers {measured.get('carrier_count')}; later rescue labor",
             'risk':'Shared shelter cleanliness; creation alone does not move animal',
-            'inaction':f"Downed animal remains exposed with Hypothermia {measured.get('hypothermia')}",
+            'inaction':f"Hypothermia {measured.get('hypothermia')} at {measured.get('source_c')}C; downed {measured.get('downed')}; no added safe bed",
             'uncertainty':'Actual rescue, arrival and warming remain pending'}
     target = plan.get("target_id")
     animal = next((a for a in context.get("animals") or [] if a.get("id") == target), {})
@@ -299,6 +300,8 @@ def _stage(agent, context, rows, question, instructions, state=None, *, allow_de
     facts = {"endgame": state.get("endgame"), "fresh_nutrition": nutrition, "first_rot_ticks": min(rot) if rot else None,
              "feed_access": [{"id": p.get("pawn_id"), "self": p.get("self_reachable_nutrition"), "feeder": p.get("feeder_reachable_nutrition")} for p in sorted(context.get("human_food_access") or [], key=lambda p: (not bool(p.get("downed")), float(p.get("food_level") or 0)))][:2],
              "goal_requirements": state.get("goal_requirements") or {}, "purpose": question}
+    if question.startswith("sustenance_"):
+        facts["livestock"] = husbandry.brief({'development':{'sustenance':context}})
     comparison = {alias:_subject_facts(context, row[3] if len(row)>3 else row[0]) for alias,row in indexed.items()}
     measured_welfare = any(row.get('kind') in {'penfeed','warmspot'} for row in comparison.values())
     choice_state = {"decision_facts": facts, "option_effects": effects}
@@ -307,9 +310,11 @@ def _stage(agent, context, rows, question, instructions, state=None, *, allow_de
             effects['defer'] = {'benefit':'Retain current stock and worker job', 'cost':'No new haul or bed work',
                 'risk':'; '.join(row[2]['inaction'] for row in rows),
                 'inaction':'No new delivered feed or warm bed', 'uncertainty':'Recovery depends on other observed care'}
-        shared = {'human_nutrition':nutrition}
+        # Exact emergency orders need current clinical facts and resource
+        # costs. Seasonal planning is retained in herd, crop and barn choices;
+        # repeating it here crowds the action consequences out of the window.
+        shared={'human_nutrition':nutrition}
         if state.get('endgame'): shared['endgame']=state['endgame']
-        if state.get('goal_requirements'): shared['goal_requirements']=state['goal_requirements']
         if rot: shared['first_rot_ticks']=min(rot)
         choice_state['comparison_facts'] = {'shared':shared, 'options':comparison}
     selected, raw = ask_laya_choice(agent, choice_state, question, instructions, choices, detailed=True)
@@ -344,7 +349,7 @@ def choose(agent, state, action, snapshot):
         purpose = {"job": "Kitchen preparation: cleaning only; produces no food",
                    "kitchenhome": "Kitchen preparation: home area only; produces no food",
                    "penfeed":"Deliver finite feed to hungry animals",
-                   "warmspot":"Create free warm spot for exposed downed animal"}.get(kind, kind)
+                   "warmspot":"Prepare free roofed comfortable animal place; movement still pending"}.get(kind, kind)
         rows.append((kind, purpose, _effects(context, plan), key))
     kind = stage(rows, "sustenance_purpose", "Compare available purposes; final exact action will include waiting." if classify_only else "Choose purpose or defer. Compare independently retained cost, risk and waiting.",allow_defer=not classify_only)
     if kind is None:

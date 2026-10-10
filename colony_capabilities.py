@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 import colony_retry as retry
 import colony_combat as combat
+import colony_husbandry as husbandry
 from laya_decisions import NoFeasibleChoice, ask_laya_choice
 
 DESCRIPTIONS = {
@@ -104,10 +105,13 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
     result = {}
     need = food_planning_facts(snapshot)
     food_required = need["protect_food_supply"]
+    herd = husbandry.planning_context(snapshot)
+    fodder_needed = herd.get("available") and herd.get("fodder_gap")
+    human_urgent = need["immediate_food_gap"]
     # A viable planned field is a labour commitment, not delivered food.
     # Once enough acreage is configured, finish sowing/gathering before adding
     # more fields. Short reserves still protect that commitment until harvest.
-    if new and food_required and not need["crop_capacity_gap"]:
+    if new and food_required and not need["crop_capacity_gap"] and not (fodder_needed and not human_urgent):
         return result
     for site in (snapshot.get("development", {}).get("plant_catalog") or {}).get("growers") or []:
         if (site.get("kind") == "new_ground") != new:
@@ -119,7 +123,7 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                 and defs.get(site.get("plant_def"), {}).get("human_edible_product") is True
                 and current.get("safe_sowing_now")):
             continue  # Includes the accepted but not yet sown food field.
-        if food_required and not need["crop_capacity_gap"] and current.get("safe_sowing_now"):
+        if food_required and not need["crop_capacity_gap"] and current.get("safe_sowing_now") and not fodder_needed:
             continue
         options = {}
         for option in site.get("options") or []:
@@ -127,11 +131,28 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
             if (option.get("safe_sowing_now") and int(option.get("legal_cells") or 0) > 0
                     and workers(snapshot, "Growing", int(definition.get("minimum_skill") or 0))
                     and (new or option["def_name"] != site.get("plant_def"))):
-                options[option["def_name"]] = {**definition, **option}
+                plan = {**definition, **option}
+                # Harvested feed belongs outside connected pens. Pasture is a
+                # distinct grazing purpose and does not deliver harvested hay.
+                feed = bool(plan.get("compatible_product_animal_ids")) and float(plan.get("product_nutrition") or 0)>0
+                graze = bool(plan.get("grazing_animal_ids")) and float(plan.get("live_plant_nutrition") or 0)>0
+                if feed and site.get("pen_ids"):
+                    if plan.get("human_edible_product"): continue
+                    feed=False
+                dedicated = fodder_needed and not human_urgent and feed and site.get("pen_ids") == []
+                pasture = fodder_needed and not human_urgent and graze and bool(site.get("pen_ids"))
+                if dedicated and not plan.get("human_edible_product"):
+                    plan["category"]="stored_animal_feed"
+                elif pasture and not feed:
+                    plan["category"]="animal_pasture"
+                plan["feed_planning"] = husbandry.crop_feed_estimate(plan,site,herd,
+                    [a['id'] for a in husbandry.native_context(snapshot).get('animals') or []])
+                plan["animal_feed_purpose"] = dedicated or pasture
+                options[option["def_name"]] = plan
         if options:
             edible = {k: p for k, p in options.items() if p.get("human_edible_product") is True}
             if food_required:
-                options = edible
+                options = {**edible, **{k:p for k,p in options.items() if p.get("animal_feed_purpose")}}
             # Missing food-product evidence does not authorize reclassifying
             # wood, animal feed or decorations as a human food source.
             if options:
@@ -666,17 +687,34 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
             k: f"{p.get('kind')}; current {p.get('plant_def')}, {p.get('plant_count')} plants; roofed {p.get('roofed')}, powered {p.get('powered')}" for k, p in plans.items()})
         crops = plans[key]["crop_options"]
         food_need = food_planning_facts(snapshot)
-        state = {"choice_context": {"food_need": food_need,
+        state = {"choice_context": {"livestock":husbandry.brief(snapshot), "food_need": food_need,
                                     "plot": {k: plans[key].get(k) for k in ("kind", "plant_def", "roofed", "powered", "plant_count")},
                                     "purpose": snapshot["development"].get("crop_purpose_context")}, "colony": state}
+        state["decision_facts"]={"livestock":husbandry.brief(snapshot), "human_food":food_need}
         groups = {str(p.get("category") or "other") for p in crops.values()}
-        category = pick("crop_purpose", "Choose the purpose of this plot using human food demand and viable field supply. "
+        category = pick("crop_purpose", "Choose human food, stored animal feed or grazing using the reserve gap. Hay is not human food. "
                         "Decoration produces zero human food. New plants cannot feed today's starving patients; gathering and cooking must bridge the harvest delay.", {
             g: (f"{'Produces human food' if any(p.get('human_edible_product') is True for p in crops.values() if str(p.get('category') or 'other') == g) else 'Zero verified human food'}; "
                 + ", ".join(name for name, p in crops.items() if str(p.get("category") or "other") == g)) for g in sorted(groups)})
+        compared = {name:p for name,p in crops.items() if str(p.get("category") or "other")==category}
+        state["option_effects"] = {name:{"benefit":f"Grow {p.get('label')} for {'human food' if p.get('human_edible_product') else 'animals'}",
+            "cost":"Sowing, harvest and hauling labor; field occupied until harvest",
+            "risk":"Weather, blight, grazing and delayed harvest; potential food is not stock",
+            "inaction":"Existing stores and fields continue", "uncertainty":"Actual sowing, growth, harvest and delivery remain pending"} for name,p in compared.items()}
+        reserve=husbandry.planning_context(snapshot)
+        state["comparison_facts"] = {"shared":{
+                "feed_horizon_days":reserve.get("reserve_horizon_days"),
+                "feed_deficit":reserve.get("reserve_deficit_nutrition"),
+                "human_stored_days":food_need["stored_food_days"]},
+            "options":{name:{"human_food":p.get("human_edible_product"),
+                "harvest_days":(p.get("feed_planning") or {}).get("harvest_days"), "warm_days":p.get("outdoor_warm_days_estimate"),
+                "feed_nutrition":(p.get("feed_planning") or {}).get("potential_nutrition"),
+                "feed_cells_needed":(p.get("feed_planning") or {}).get("harvest_cells_lower_bound"),
+                "grazed":(p.get("feed_planning") or {}).get("grazing_prevents_assured_harvest")} for name,p in compared.items()}}
         name = pick("crop_type", "Choose an actual legal crop. Seasonal averages cannot predict cold snaps. Compare time to harvest with remaining outdoor warm days and current food need.", {
-            name: f"{p.get('label')}; human edible {p.get('human_edible_product')}; yields {p.get('harvest_yield')} {p.get('harvested_thing')}; harvest about {p.get('calendar_days_to_harvest_estimate'):.1f} calendar days, warm days {p.get('outdoor_warm_days_estimate')}; fertility {p.get('fertility')}, sensitivity {p.get('fertility_sensitivity')}; skill {p.get('minimum_skill')}; temp {p.get('min_growth_temperature')}..{p.get('max_growth_temperature')}; {p.get('description')}"
+            name: f"{p.get('label')}; human edible {p.get('human_edible_product')}; feed {p.get('feed_planning')}; yields {p.get('harvest_yield')} {p.get('harvested_thing')}; harvest about {p.get('calendar_days_to_harvest_estimate'):.1f} calendar days, warm days {p.get('outdoor_warm_days_estimate')}; fertility {p.get('fertility')}; skill {p.get('minimum_skill')}; temp {p.get('min_growth_temperature')}..{p.get('max_growth_temperature')}"
             for name, p in crops.items() if str(p.get("category") or "other") == category})
+        state.pop("option_effects",None); state.pop("comparison_facts",None)
         pick("crop_worker", "Choose an eligible grower, comparing Plants skill and competing work.", {
             str(p["id"]): person_note(p) for p in workers(snapshot, "Growing", int(crops[name].get("minimum_skill") or 0))})
     elif action == "clear_plant_blight":

@@ -264,6 +264,16 @@ def parameter_facts(snapshot: dict[str, Any], action: str,
         temperature = round(temperature, 1)
     else:
         temperature = None
+    if action=="build_animal_barn":
+        import colony_husbandry as husbandry
+        plan=husbandry.planning_context(snapshot)
+        return {"action":action,"outside_c":temperature,"people":len(people),
+            "downed":sum(bool(p.get("downed")) for p in people),
+            "animal_comfort":husbandry.comfort_intersection(snapshot.get("animals") or []),
+            "feed_reserve_target":plan.get("reserve_target_nutrition"),
+            "feed_cover_days":plan.get("stock_cover_days_if_delivered"),
+            "hay":stock.get("Hay") if "item_counts" in dev else None,
+            "unfinished":len(dev.get("construction_projects") or [])}
     return {
         "action": action,
         "wood": stock.get("WoodLog", 0) if "item_counts" in dev else None,

@@ -993,6 +993,11 @@ class DirectorTests(unittest.TestCase):
                                                            "position": {"x": 168, "z": 135}}],
                                             "zones": [], "item_counts": {}, "forbidden": [],
                                             "work_tables": [], "plants": []}}
+                snapshot['development']['sustenance']={'husbandry':{'available':True,
+                    'animals':[{'id':69098,'temperature':-20 if cause=='Hypothermia' else 45 if cause=='Heatstroke' else 21,
+                                'comfortable_min':16,'comfortable_max':26}],
+                    'animal_beds':[{'id':38424,'temperature':21,'roofed':True,'suitable_ids':[69098],
+                                    'occupied_ids':[],'thermal_benefit_ids':[69098]}]}}
                 state = {"anchor": {"x": 160, "z": 130}, "issued": {}}
                 options = director.animal_rescue_options(snapshot)
                 self.assertEqual((options[0]["animal_id"], options[0]["bed_id"]),
@@ -1009,7 +1014,7 @@ class DirectorTests(unittest.TestCase):
                     "pawn_id": 62, "job_def": "Rescue", "target_thing_id": 69098,
                     "target_thing_id_b": 38424})
 
-    def test_animal_sleeping_places_expand_after_new_animals_join(self):
+    def test_animal_place_count_does_not_authorize_more_outdoor_spots(self):
         snapshot = {"game": {"tick": 1040581},
                     "map": {"id": 0, "resources": {"food": 40, "meals": 40,
                                                    "nutrition": 40}},
@@ -1024,11 +1029,11 @@ class DirectorTests(unittest.TestCase):
                                     "work_tables": [], "plants": [], "construction_projects": []}}
         state = {"anchor": {"x": 160, "z": 130}, "issued": {"animal_spots": 41252}}
         actions, details = director.candidate_actions(None, snapshot, state)
-        self.assertIn("build_animal_spots", actions)
+        self.assertNotIn("build_animal_spots", actions)
         with mock.patch.object(director, "place_checked_building",
                                return_value={"applied": True}) as place:
             director.execute_action(None, snapshot, state, "build_animal_spots", details)
-        self.assertEqual(place.call_args.args[3], {"x": 168, "z": 135})
+        place.assert_not_called()
         self.assertNotIn("build_animal_spots", director.candidate_actions(None, snapshot, state)[0])
         snapshot["game"]["tick"] += 3000
         snapshot["development"]["construction_projects"] = [

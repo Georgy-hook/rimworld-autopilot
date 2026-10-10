@@ -14,6 +14,7 @@ from typing import Any
 
 import rimworld_laya as bridge
 import colony_architect as architect
+import colony_husbandry as husbandry
 import colony_professions as professions
 import colony_inspirations as inspirations
 import colony_events as events
@@ -524,25 +525,12 @@ def animal_barn_blueprint(
     straw_floor: bool,
     powered: bool,
     climate: str,
+    flap_stuff: str = "Cloth",
 ) -> dict[str, Any]:
-    """Enclosed barn with an animal flap, beds and optional climate mitigation."""
-    items: list[dict[str, Any]] = []
-    for x in range(9):
-        if x != 4:
-            items.append(building("Wall", x, 0, stuff=wall_stuff))
-        items.append(building("Wall", x, 6, stuff=wall_stuff))
-    for z in range(1, 6):
-        items.append(building("Wall", 0, z, stuff=wall_stuff))
-        items.append(building("Wall", 8, z, stuff=wall_stuff))
-    items.append(building("AnimalFlap", 4, 0, stuff=wall_stuff))
-    for index in range(max(2, min(8, animal_count + 2))):
-        items.append(building("AnimalSleepingSpot", 1 + index % 4 * 2, 2 + index // 4 * 2))
-    if powered and climate == "cold":
-        items.append(building("Heater", 7, 4))
-    elif climate == "hot":
-        items.append(building("PassiveCooler", 7, 4))
-    floors = [floor("StrawMatting", x, z) for x in range(1, 8) for z in range(1, 6)] if straw_floor else []
-    return blueprint(items, 9, 7, floors)
+    """Compatibility helper; actual proposals validate all loaded definitions/costs."""
+    control = "Heater" if powered and climate=="cold" else "Campfire" if climate=="cold" else "PassiveCooler" if climate=="hot" else None
+    return architect.animal_shelter_layout(wall_stuff,animal_count,mode="barn_run",
+        flap_stuff=flap_stuff,thermal_control=control,straw_floor=straw_floor)
 
 
 def weapon_shelves_blueprint(stuff: str) -> dict[str, Any]:
@@ -1839,6 +1827,11 @@ def animal_rescue_options(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             if row.get("id") is not None and row.get("def") in ANIMAL_BED_DEFS]
     if not beds:
         return []
+    native_housing=husbandry.native_context(snapshot)
+    if native_housing.get("available") is not True:
+        return []  # Missing measurements cannot establish a safe destination.
+    measured_beds={row["id"]:row for row in native_housing.get("animal_beds") or []}
+    measured_animals={row["id"]:row for row in native_housing.get("animals") or []}
     combat = {int(row["id"]): row for row in (snapshot.get("combat") or {}).get("colonists") or []
               if row.get("id") is not None}
     active_rescues = {int(row["current_job_target_id"]) for row in combat.values()
@@ -1859,12 +1852,25 @@ def animal_rescue_options(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                          key=lambda row: (bridge.first_number(row.get("hunger"), 1),
                                           bridge.first_number(row.get("health"), 1))):
         animal_id = int(animal["id"])
-        if animal_id in active_rescues or patient_in_completed_bed(animal, snapshot, beds):
+        clinical=measured_animals.get(animal_id) or {}
+        temperature=husbandry.number(clinical.get("temperature"))
+        minimum=husbandry.number(clinical.get("comfortable_min")); maximum=husbandry.number(clinical.get("comfortable_max"))
+        thermal = None not in (temperature,minimum,maximum) and (temperature<minimum or temperature>maximum)
+        if animal_id in active_rescues or patient_in_completed_bed(animal, snapshot, beds) and not thermal:
             continue
         free_beds = [bed for bed in beds if int(bed["id"]) not in reserved_beds
                      and not any(other.get("id") != animal_id
                                  and patient_in_completed_bed(other, snapshot, [bed])
                                  for other in animals)]
+        if native_housing.get("available") is True:
+            # Even an existing bed can be outside or colder than the patient.
+            # Use completed native beds, never a flag, blueprint or nearest spot.
+            free_beds=[bed for bed in free_beds if (m:=measured_beds.get(int(bed["id"])))
+                and m.get("roofed") is True and animal_id in (m.get("suitable_ids") or [])
+                and not any(owner!=animal_id for owner in m.get("occupied_ids") or [])
+                and husbandry.number(m.get("temperature")) is not None and None not in (minimum,maximum)
+                and minimum<=m["temperature"]<=maximum
+                and (not thermal or animal_id in (m.get("thermal_benefit_ids") or []))]
         if not free_beds or not helpers:
             continue
         bed = min(free_beds, key=lambda row: squared_distance(animal.get("position") or {},
@@ -4517,12 +4523,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         key=lambda animal: bridge.first_number(animal.get("hunger"), 1.0),
     )
     animal_emergency: list[str] = []
-    available_animal_beds = sum(int(counts.get(name) or 0) for name in ANIMAL_BED_DEFS)
-    pending_animal_beds = sum(str(row.get("def_name") or "") in ANIMAL_BED_DEFS
-                              for row in dev.get("construction_projects") or [])
-    if (colony_animals and available_animal_beds + pending_animal_beds < len(colony_animals)
-            and not issued_recently(map_state, "animal_spots", tick, retry_ticks=3000)):
-        animal_emergency.append("build_animal_spots")
+    # A bed count is not a safe location. Measured native warmspot proposals
+    # cover expansion and thermal emergencies with roof/temperature/pen facts.
     rescue_options = animal_rescue_options(snapshot)
     rescue_options = [option for option in rescue_options
                       if not issued_recently(map_state, f"animal_rescue:{option['animal_id']}",
@@ -5097,6 +5099,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         "rooms": dev.get("rooms") or [],
         "colonists": snapshot.get("colonists") or [],
         "animals": colony_animals,
+        "sustenance": dev.get("sustenance") or {},
         "royalty": dev.get("royalty") or {},
         "ideology": dev.get("ideology") or {},
         "storage": dev.get("storage") or {},
@@ -5263,25 +5266,23 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             }
             one_time.append("prioritize_armament")
 
-    if colony_animals and current_doctrine and "animal_barn" not in map_state.setdefault("issued", {}) and material_options:
-        min_comfort = min((float(a.get("min_comfortable_temperature") or -10) for a in colony_animals), default=-10)
-        max_comfort = max((float(a.get("max_comfortable_temperature") or 40) for a in colony_animals), default=40)
-        climate_risk = outdoor_temperature < min_comfort + 5 or outdoor_temperature > max_comfort - 5
-        hay = int(item_counts.get("Hay") or item_counts.get("HayGrass") or 0)
-        details["animal_barn_options"] = {
-            "material_options": material_options,
-            "straw_available": hay >= 100,
-            "hay": hay,
-            "climate_risk": climate_risk,
-            "climate": climate_mode,
-            "animal_count": len(colony_animals),
-        "biome": (dev.get("plant_catalog") or {}).get("biome"),
-        "power_info": dev.get("power_info") or {},
-        "sheltered_beds": sheltered_real_bed_count(dev, anchor) or 0,
-            "comfort_range": [min_comfort, max_comfort],
-        }
-        dev["animal_barn_options"] = details["animal_barn_options"]
-        if climate_risk or len(colony_animals) >= 2:
+    if (colony_animals and material_options and can_work("Construction")
+            and not issued_recently(map_state,"animal_barn",tick,retry_ticks=60000)
+            and not issued_recently(map_state,"animal_barn_attempt",tick,retry_ticks=2500)
+            and not any(p.get("program")=="barn" and p.get("reservation_active",True)
+                        and not (p.get("complete_plan_placed") and p.get("completed_building_count")==len((p.get("layout") or {}).get("buildings") or []))
+                        for p in map_state.get("architecture_projects") or [])):
+        comfortable = husbandry.comfort_intersection(colony_animals)
+        climate_risk = comfortable is not None and (outdoor_temperature<comfortable[0]+5 or outdoor_temperature>comfortable[1]-5)
+        variants={}
+        for material in material_options:
+            barn_context={**architecture_context,"material":material,"item_counts":architect.unreserved_construction_stock(dev)}
+            for key,plan in architect.animal_shelter_variants(barn_context).items():
+                variants[material+"|"+key]={**plan,"material":material}
+        if variants and (climate_risk or len(colony_animals)>=2):
+            details["animal_barn_options"]={"plans":variants,"comfort_intersection":comfortable,
+                "forecast":husbandry.brief(snapshot),"climate_risk":climate_risk}
+            dev["animal_barn_options"]=details["animal_barn_options"]
             one_time.append("build_animal_barn")
 
     pause_zones, resume_zones = capabilities.seasonal_zones(snapshot)
@@ -7085,9 +7086,9 @@ def subchoice_questions_for_action(action: str, snapshot: dict[str, Any]) -> dic
         }}
     elif action == "build_animal_barn" and dev.get("animal_barn_options"):
         opts = dev["animal_barn_options"]
-        q["animal_barn_material"] = {"type": "choice", "instructions": "Choose the barn wall material.", "criteria": dict(opts.get("material_options") or {})}
-        if opts.get("straw_available"):
-            q["animal_barn_floor"] = {"type": "choice", "instructions": "Choose straw or bare ground considering filth, hay and fire.", "criteria": {"straw": "Low filth, consumes hay, highly flammable", "bare": "Free, nonflammable natural ground"}}
+        q["animal_barn_plan"] = {"type":"choice","instructions":
+            "Choose a complete shelter alternative. An indoor pen needs stored feed; an animal flap must connect to an enclosed run. Roof, real temperature, power/fuel and transfer must be observed after construction. Straw is cleanliness, not food or warmth.",
+            "criteria":{key:plan["summary"] for key,plan in opts["plans"].items()}}
     elif action == "build_animal_pen" and dev.get("animal_pen_options"):
         opts = dev["animal_pen_options"]
         q["animal_pen_material"] = {"type": "choice", "instructions": "Choose fence, gate and marker material; preserve food and shelter supplies.", "criteria": dict(opts["materials"])}
@@ -8916,20 +8917,27 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         return {"applied": applied, "phase": "research", "response": response}
     if choice == "build_animal_barn":
         options = details.get("animal_barn_options") or {}
-        material = str(details.get("animal_barn_material") or (map_state.get("doctrine") or {}).get("material") or "WoodLog")
-        floor_choice = str(details.get("animal_barn_floor") or "bare")
-        layout = animal_barn_blueprint(material, int(options.get("animal_count") or len(snapshot.get("animals", []))),
-                                       straw_floor=floor_choice == "straw",
-                                       powered="Electricity" in set(map(str, snapshot["development"].get("finished_research", []))),
-                                       climate=str(options.get("climate") or "temperate"))
+        plan=(options.get("plans") or {}).get(str(details.get("animal_barn_plan") or ""))
+        if not plan: return {"applied":False,"reason":"animal_shelter_choice_missing"}
+        layout=plan["layout"]
+        if layout.get("floors"):
+            fresh=client.get("/api/v1/sustenance/context",map_id=map_id)
+            hay=architect.estimated_stuff_cost({"floors":layout["floors"]},dev.get("building_catalog") or []).get("Hay",0)
+            if not husbandry.straw_feeding_safe({"development":{"sustenance":fresh}},hay):
+                return {"applied":False,"reason":"straw_would_consume_required_feed_or_context_unavailable"}
         near = position(int(anchor["x"]) - 22, int(anchor["z"]) + 18)
+        issued["animal_barn_attempt"]=tick
         site = find_clear_layout_site(client, map_id, near, layout, dev, map_state)
         if site is None:
             return {"applied": False, "reason": "No stable unoccupied site for the barn"}
-        result = post_blueprint(client, map_id, site, layout)
-        issued["animal_barn"] = tick
-        return {"applied": True, "material": material, "floor": floor_choice,
-                "site": site, "response": result}
+        project={"program":"barn","map_id":map_id,"origin":site,"layout":copy.deepcopy(layout),
+            "issued_tick":tick,"variant_id":plan["id"],"material":plan["material"],
+            "width":layout["width"],"height":layout["height"],"reservation_active":True}
+        map_state.setdefault("architecture_projects",[]).append(project)
+        result = post_observed_blueprint(client,map_id,site,layout)
+        if result.get("applied"): issued["animal_barn"] = tick
+        return {**result,"site":site,"project":project,
+            "completion":"construction_roof_heat_feed_and_transfer_unverified"}
     if choice == "build_animal_pen":
         options = details.get("animal_pen_options") or {}
         material = str(details.get("animal_pen_material") or "")
@@ -9422,17 +9430,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["recreation_pin"] = tick
         return {"applied": True, "site": site, "response": result}
     if choice == "build_animal_spots":
-        existing = [row for row in dev.get("buildings") or []
-                    if row.get("def") in ANIMAL_BED_DEFS and row.get("position")]
-        near = (existing[0]["position"] if existing else position(anchor["x"] + 9,
-                                                                   anchor["z"] + 8))
-        result = place_checked_building(client, map_id,
-                                        {"def_name": "AnimalSleepingSpot", "size_x": 1,
-                                         "size_z": 1}, near, radius=20,
-                                        expand_search=False, snapshot=snapshot)
-        if result.get("applied"):
-            issued["animal_spots"] = tick
-        return result
+        return {"applied":False,"reason":"animal_place_requires_measured_shelter_option"}
     if choice == "rescue_downed_animal":
         option = (details.get("animal_rescue_options") or [None])[0]
         if not option:
@@ -9445,6 +9443,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued[f"animal_rescue:{option['animal_id']}"] = tick
         return {"applied": True, "animal": option["animal_name"],
                 "helper": option["helper_name"], "bed_id": option["bed_id"],
+                "completion":"rescue_arrival_temperature_unverified",
                 "response": response}
     if choice == "care_for_injured_animal":
         animal_id = int(details["injured_animal_id"])

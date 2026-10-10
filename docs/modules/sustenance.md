@@ -1,5 +1,9 @@
 # Sustenance: food, preservation and animal welfare
 
+The [10 October husbandry contract](../audits/animal-husbandry-contract-2026-10-10.md)
+adds measured shelter alternatives, shared feed allocation and seasonal reserves.
+Source verification and model fixtures are separate from native completion.
+
 The [10 October postmortem corrections](../audits/postmortem-source-repairs-2026-10-10.md)
 add finite compatible feed hauling into actual connected pens, free warm animal
 spots in existing shelter, rescue of a patient already in an exposed bed and

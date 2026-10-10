@@ -26,31 +26,51 @@ namespace RIMAPI.Helpers {
     && OrdinaryWorkSafety.Route(d,d.Position,patient.Position,PathEndMode.Touch))
     .OrderByDescending(d=>d.GetStatValue(StatDefOf.MedicalSurgerySuccessChance)).FirstOrDefault();
   }
-  static bool FreshFood(Thing t) => t.Spawned && !t.Position.Fogged(t.Map) && !t.IsForbidden(Faction.OfPlayer) && !t.IsBurning() && !t.def.IsCorpse
-   && t.def.ingestible!=null && t.GetStatValue(StatDefOf.Nutrition)>0 && (t.TryGetComp<CompRottable>()?.Stage ?? RotStage.Fresh)==RotStage.Fresh;
+  static bool FreshFood(Thing t) => AnimalHusbandryHelper.FreshStoredFeed(t);
   static bool Empty(Map m,IntVec3 c) => c.InBounds(m) && !c.Fogged(m) && c.Standable(m) && c.GetZone(m)==null
    && !c.GetThingList(m).Any(t=>t is Building || t is Blueprint || t is Frame || t.def.category==ThingCategory.Item);
+  public static bool ComfortableSpot(float destination,float minimum,float maximum,bool roofed)
+   => roofed && destination>=minimum && destination<=maximum;
+  static bool SafeSpot(Map m,Pawn p,IntVec3 c) => Empty(m,c)
+   && ComfortableSpot(c.GetTemperature(m),p.GetStatValue(StatDefOf.ComfyTemperatureMin),p.GetStatValue(StatDefOf.ComfyTemperatureMax),c.Roofed(m))
+   && !c.ContainsStaticFire(m) && m.gasGrid.DensityAt(c,GasType.ToxGas)==0 && m.gasGrid.DensityAt(c,GasType.DeadlifeDust)==0
+   && m.gasGrid.DensityAt(c,GasType.RotStink)==0 && !m.mapPawns.AllPawnsSpawned.Any(e=>!e.Dead && !e.Downed
+    && !e.Position.Fogged(m) && (e.HostileTo(Faction.OfPlayer) || CombatNativeHelper.ActivePredation(e)) && e.Position.InHorDistOf(c,20f));
   public static IEnumerable<SustenanceHelper.Plan> Plans(Map m) {
    var animals=m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal && !p.Dead).ToArray();
    var spot=DefDatabase<ThingDef>.GetNamedSilentFail("AnimalSleepingSpot");
-   if(InstantConstructionHelper.IsInstantBuilding(spot)) foreach(var p in animals.Where(CareTriageHelper.ThermalRescueNeeded)) {
-    if(m.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().Any(b=>CareTriageHelper.ThermalBedBeneficial(p,b)
-      && !b.CurOccupants.Any(o=>o!=p) && RestUtility.CanUseBedEver(p,b.def)))continue;
-    var cells=m.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().SelectMany(b=>b.GetRoom()?.Cells ?? Enumerable.Empty<IntVec3>())
-     .Distinct().Where(c=>Empty(m,c) && c.Roofed(m) && CareTriageHelper.ThermalTransferBeneficial(
+   var beds=m.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().ToArray();
+   var markers=m.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>()).Where(c=>c?.PenState?.Enclosed==true).ToArray();
+   if(InstantConstructionHelper.IsInstantBuilding(spot)) foreach(var p in animals) {
+    bool thermal=CareTriageHelper.ThermalRescueNeeded(p);
+    var ready=beds.Where(b=>RestUtility.CanUseBedEver(p,b.def) && b.OccupiedRect().All(c=>c.Roofed(m))
+      && ComfortableSpot(b.Position.GetTemperature(m),p.GetStatValue(StatDefOf.ComfyTemperatureMin),p.GetStatValue(StatDefOf.ComfyTemperatureMax),true)
+      && (p.Downed || p.playerSettings?.SupportsAllowedAreas==true && (p.playerSettings.AreaRestrictionInPawnCurrentMap?[b.Position] ?? true)
+        || markers.Any(marker=>marker.AcceptsToPen(p) && marker.PenState.ContainsConnectedRegion(b.GetRegion())))).ToArray();
+    if(thermal ? ready.Any(b=>CareTriageHelper.ThermalBedBeneficial(p,b) && !b.CurOccupants.Any(o=>o!=p))
+      : ready.Length>=animals.Count(a=>RestUtility.CanUseBedEver(a,spot)))continue;
+    var cells=beds.Select(b=>b.GetRoom()).Where(room=>room!=null && !room.PsychologicallyOutdoors).Distinct().SelectMany(room=>room.Cells)
+     .Distinct().Where(c=>SafeSpot(m,p,c) && (thermal ? CareTriageHelper.ThermalTransferBeneficial(
       p.health.hediffSet.HasHediff(HediffDefOf.Hypothermia),p.health.hediffSet.HasHediff(HediffDefOf.Heatstroke),p.Position.GetTemperature(m),c.GetTemperature(m),p.GetStatValue(StatDefOf.ComfyTemperatureMin),p.GetStatValue(StatDefOf.ComfyTemperatureMax))
+      : p.Downed || p.playerSettings?.SupportsAllowedAreas==true && (p.playerSettings.AreaRestrictionInPawnCurrentMap?[c] ?? true) && p.CanReach(c,PathEndMode.OnCell,Danger.Some)
+        || markers.Any(marker=>marker.AcceptsToPen(p) && marker.PenState.ContainsConnectedRegion(c.GetRegion(m))))
       && GenConstruct.CanPlaceBlueprintAt(spot,c,Rot4.North,m,false).Accepted)
      .OrderBy(c=>c.DistanceToSquared(p.Position)).Take(1);
-    foreach(var c in cells)yield return new SustenanceHelper.Plan{key=$"warmspot:{p.thingIDNumber}:{c.x}:{c.z}",kind="warmspot",target_id=p.thingIDNumber,value=$"{c.x},{c.z}",label=p.LabelShortCap+": roofed warm animal sleeping spot",cost="Loaded zero-work, zero-material spot in existing shelter; rescue remains separate",risk=$"Source {p.Position.GetTemperature(m):F1}C, destination {c.GetTemperature(m):F1}C. Creating a spot is not arrival, warmth or feeding; shared room cleanliness",
+    foreach(var c in cells)yield return new SustenanceHelper.Plan{key=$"warmspot:{p.thingIDNumber}:{c.x}:{c.z}",kind="warmspot",target_id=p.thingIDNumber,value=$"{c.x},{c.z}",label=p.LabelShortCap+": roofed comfortable animal sleeping spot",cost="Loaded zero-work, zero-material spot in existing shelter; movement/rescue remains separate",risk=$"Source {p.Position.GetTemperature(m):F1}C, destination {c.GetTemperature(m):F1}C. Creating a spot is not arrival, warmth or feeding; shared room cleanliness",
      facts=new{source_c=p.Position.GetTemperature(m),destination_c=c.GetTemperature(m),
       hypothermia=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Hypothermia)?.Severity,
       heatstroke=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Heatstroke)?.Severity,
-      downed=p.Downed,work=spot.GetStatValueAbstract(StatDefOf.WorkToBuild),materials=0,rescue_pending=true}};
+      downed=p.Downed,preventive=!thermal,work=spot.GetStatValueAbstract(StatDefOf.WorkToBuild),materials=0,rescue_pending=p.Downed,
+      carrier_count=m.mapPawns.FreeColonistsSpawned.Count(d=>(OrdinaryWorkSafety.Worker(d,WorkTypeDefOf.Doctor)
+        || CareTriageHelper.CanYield(d,p,"rescue",d.CurJobDef?.defName,p.thingIDNumber,out string reason))
+        && !p.IsForbidden(d) && d.CanReserveAndReach(p,PathEndMode.Touch,Danger.Some)
+        && OrdinaryWorkSafety.Route(d,d.Position,p.Position,PathEndMode.Touch)
+        && OrdinaryWorkSafety.Route(d,p.Position,c,PathEndMode.OnCell))}};
    }
    var food=m.listerThings.AllThings.Where(FreshFood).ToArray();
    float human=food.Where(t=>m.mapPawns.FreeColonistsSpawned.Any(p=>p.RaceProps.CanEverEat(t.def) && p.WillEat(t) && (p.foodRestriction?.CurrentFoodPolicy?.Allows(t) ?? true) && p.CanReach(t,PathEndMode.Touch,Danger.Some)))
     .Sum(t=>t.stackCount*t.GetStatValue(StatDefOf.Nutrition));
-   foreach(var marker in m.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>()).Where(c=>c?.PenState?.Enclosed==true)) {
+   foreach(var marker in markers) {
     var hungry=animals.Where(p=>marker.AcceptsToPen(p) && (p.needs?.food?.CurLevelPercentage ?? 1f)<.3f && marker.PenState.ContainsConnectedRegion(p.GetRegion())).ToArray();
     if(hungry.Length==0)continue;
     var cells=marker.PenState.ConnectedRegions.SelectMany(r=>r.Cells).Where(c=>Empty(m,c) && hungry.Any(p=>p.CanReach(c,PathEndMode.OnCell,Danger.Some)))
@@ -81,7 +101,8 @@ namespace RIMAPI.Helpers {
    var parts=plan.value.Split(',').Select(int.Parse).ToArray();
    if(plan.kind=="warmspot") {
     var def=DefDatabase<ThingDef>.GetNamed("AnimalSleepingSpot"); var cell=new IntVec3(parts[0],0,parts[1]);
-    if(!InstantConstructionHelper.IsInstantBuilding(def) || def.costList?.Any()==true || def.CostStuffCount>0 || !Empty(m,cell)
+    var animal=animalsForSpot(m,plan.target_id);
+    if(animal==null || !InstantConstructionHelper.IsInstantBuilding(def) || def.costList?.Any()==true || def.CostStuffCount>0 || !SafeSpot(m,animal,cell)
      || !GenConstruct.CanPlaceBlueprintAt(def,cell,Rot4.North,m,false).Accepted)return ApiResult<object>.Ok(new{applied=false,reason="warm_spot_changed"});
     var bed=ThingMaker.MakeThing(def);bed.SetFaction(Faction.OfPlayer);GenSpawn.Spawn(bed,cell,m,Rot4.North);
     return ApiResult<object>.Ok(new{applied=true,reason="warm_spot_placed",bed_id=bed.thingIDNumber,completion="rescue_arrival_warmth_unverified"});
@@ -97,5 +118,7 @@ namespace RIMAPI.Helpers {
    bool started=worker.CurJob==job;
    return ApiResult<object>.Ok(new{applied=started,reason=started?"finite_feed_haul_started":"feed_haul_not_started",completion="delivery_and_ingestion_unverified",count=job.count});
   }
+  static Pawn animalsForSpot(Map m,int id) => m.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer)
+   .FirstOrDefault(p=>p.RaceProps.Animal && !p.Dead && p.thingIDNumber==id);
  }
 }
