@@ -39,6 +39,7 @@ namespace RIMAPI.Services
                         {
                             ThingId = t.thingIDNumber,
                             Rotation = t.Rotation.AsInt,
+                            OccupiedCells = t.OccupiedRect().Select(c => new PositionDto { X=c.x, Y=c.y, Z=c.z }).ToList(),
                             DefName = target?.defName,
                             Label = target?.label ?? t.LabelCap,
                             Kind = t is Frame ? "frame" : "blueprint",

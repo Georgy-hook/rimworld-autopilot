@@ -1003,11 +1003,9 @@ class DirectorTests(unittest.TestCase):
                 self.assertEqual((options[0]["animal_id"], options[0]["bed_id"]),
                                  (69098, 38424))
                 actions, details = director.candidate_actions(None, snapshot, state)
-                self.assertEqual(actions, ["feed_hungry_animal"])
-                self.assertNotIn("care_for_injured_animal", actions)
-                state["issued"]["animal_feed:69098"] = snapshot["game"]["tick"]
-                actions, details = director.candidate_actions(None, snapshot, state)
                 self.assertEqual(actions, ["rescue_downed_animal"])
+                self.assertNotIn("feed_hungry_animal", actions)
+                self.assertNotIn("care_for_injured_animal", actions)
                 client = mock.Mock()
                 director.execute_action(client, snapshot, state, "rescue_downed_animal", details)
                 client.post.assert_called_once_with("/api/v1/pawn/job", body={

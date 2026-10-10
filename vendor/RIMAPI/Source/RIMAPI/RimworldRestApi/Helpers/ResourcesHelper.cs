@@ -376,6 +376,9 @@ namespace RIMAPI.Helpers
             };
 
             dto.Quality = -1;
+            // /map/things uses this mapper, not ThingDto.ToDto. Both routes
+            // must expose actual freshness before a corpse can be food stock.
+            ThingDto.SetFoodFacts(dto, thing);
             if (thing.TryGetQuality(out QualityCategory quality))
             {
                 dto.Quality = (int)quality;

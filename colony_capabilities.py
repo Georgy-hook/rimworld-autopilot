@@ -226,7 +226,7 @@ def food_work_adjustments(snapshot, pawn, work):
             "Hunting": {"Hunt", "AttackStatic", "AttackMelee"}, "Growing": {"Sow"}}
     if pawn.get("current_job") in CARE_JOBS | jobs[work]:
         return {}
-    routine = {"Growing", "Handling", "Construction", "Mining", "Smithing", "Tailoring", "Crafting", "Art", "Research", "DarkStudy",
+    routine = {"Growing", "Handling", "Hauling", "Cleaning", "Construction", "Mining", "Smithing", "Tailoring", "Crafting", "Art", "Research", "DarkStudy",
                "Cooking", "PlantCutting", "Hunting"} - {work}
     return {name: 2 for name, setting in (pawn.get("work_priorities") or {}).items()
             if name in routine and not (setting or {}).get("disabled")

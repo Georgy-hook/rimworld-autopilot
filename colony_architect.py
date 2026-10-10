@@ -1126,9 +1126,10 @@ def animal_shelter_layout(material, count, *, mode="indoor_pen", flap_stuff=None
     An animal flap in the outside boundary would make an indoor pen unenclosed.
     Here it only joins the barn to the fenced run; the human entrance is a door.
     """
-    count=max(1,int(count)); width=min(11,max(7,2*math.ceil(math.sqrt(count))+3))
+    minimum = 5 if mode == "pet_shelter" else 7
+    count=max(1,int(count)); width=min(11,max(minimum,2*math.ceil(math.sqrt(count))+3))
     per_row=(width-2+1)//2
-    barn_height=max(7,2*math.ceil(count/per_row)+3)
+    barn_height=max(minimum,2*math.ceil(count/per_row)+3)
     items=_shell(width,barn_height,material,"south",width//2)
     for i in range(count):
         items.append(building("AnimalSleepingSpot",1+2*(i%per_row),2+2*(i//per_row)))
@@ -1184,7 +1185,14 @@ def animal_shelter_variants(context):
     needs_pen=any(a.get("requires_pen") is True or a.get("needs_pen") is True for a in animals)
     modes=["indoor_pen","barn_run"] if needs_pen else ["pet_shelter"]
     climate=str(context.get("climate") or "temperate")
-    controls=[None]
+    outside = context.get("outside_c")
+    seasonal = ((context.get("sustenance") or {}).get("husbandry") or {}).get("seasonal_means") or []
+    temperatures = [outside] if isinstance(outside, (int, float)) else []
+    temperatures += [p["mean_c"] for p in seasonal if isinstance(p.get("mean_c"), (int, float))
+                     and float(p.get("offset_days") or 0) <= 15]
+    unsafe_unheated = bool(comfort and temperatures and
+        any(t < comfort[0] or t > comfort[1] for t in temperatures))
+    controls=[] if unsafe_unheated else [None]
     for name in (["Campfire","Heater"] if climate=="cold" else ["PassiveCooler","Cooler"] if climate=="hot" else []):
         if _available(index,name): controls.append(name)
     flap=index.get("AnimalFlap") or {}

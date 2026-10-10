@@ -72,6 +72,17 @@ namespace RIMAPI.Models
 
             // Safely get Quality
             var qualityComp = thing.TryGetComp<CompQuality>();
+            SetFoodFacts(dto, thing);
+            if (qualityComp != null)
+            {
+                dto.Quality = (int)qualityComp.Quality;
+            }
+
+            return dto;
+        }
+
+        public static void SetFoodFacts(ThingDto dto, Thing thing)
+        {
             var rot = thing.TryGetComp<CompRottable>();
             dto.RotStage = rot?.Stage.ToString();
             dto.TicksUntilRot = rot?.TicksUntilRotAtCurrentTemp;
@@ -82,12 +93,6 @@ namespace RIMAPI.Models
                 dto.CanButcher = corpse.InnerPawn?.RaceProps.Animal == true && corpse.InnerPawn.RaceProps.IsFlesh
                     && (rot?.Stage ?? RimWorld.RotStage.Fresh) == RimWorld.RotStage.Fresh;
             }
-            if (qualityComp != null)
-            {
-                dto.Quality = (int)qualityComp.Quality;
-            }
-
-            return dto;
         }
     }
 

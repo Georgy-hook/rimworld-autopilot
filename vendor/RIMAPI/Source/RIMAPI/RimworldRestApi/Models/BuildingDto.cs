@@ -32,6 +32,7 @@ namespace RIMAPI.Models
         public bool Roofed { get; set; }
         public int Rotation { get; set; }
         public PositionDto Size { get; set; }
+        public List<PositionDto> OccupiedCells { get; set; }
         public bool RequiresPower { get; set; }
         public bool PowerOn { get; set; }
         public int? PowerNetId { get; set; }

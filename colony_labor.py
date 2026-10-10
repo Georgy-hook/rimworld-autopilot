@@ -87,11 +87,18 @@ def can_assign(snapshot, pawn, work):
     if work in FOOD_WORK and not source_ready(snapshot, work, pawn.get("id")):
         return False
     row = (snapshot.get("development", {}).get("labor_commitments") or {}).get(str(pawn.get("id")))
-    if work not in {"Doctor", "Patient", "BedRest", "Firefighter"} and any(pawn.get("current_job") in jobs for name, jobs in JOBS.items() if name != work):
+    # Research/mining commitments protect normal development, but cannot lock
+    # the only mobile worker away from ready food or required cooking fuel.
+    # Eating, care and another food job still own their actors.
+    from colony_capabilities import food_planning_facts
+    urgent_food = work in FOOD_WORK and food_planning_facts(snapshot)["immediate_food_gap"]
+    yielding = {"Research", "Mining"} if urgent_food else set()
+    if work not in {"Doctor", "Patient", "BedRest", "Firefighter"} and any(pawn.get("current_job") in jobs for name, jobs in JOBS.items() if name != work and name not in yielding):
         return False
     # Care, eating, firefighting and urgent thermal work have their own fresh
     # native checks. A food priority must not steal another accepted food task.
-    return not (row and row.get("work") != work and work not in {"Doctor", "Patient", "BedRest", "Firefighter"})
+    return not (row and row.get("work") != work and row.get("work") not in yielding
+                and work not in {"Doctor", "Patient", "BedRest", "Firefighter"})
 
 
 def remember(snapshot, pawn_id, work, target_ids=None):

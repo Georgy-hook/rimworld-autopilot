@@ -625,6 +625,7 @@ namespace RIMAPI.Helpers
                             Z = building.Position.z,
                         },
                         Rotation = building.Rotation.AsInt,
+                        OccupiedCells = building.OccupiedRect().Select(c => new PositionDto { X=c.x, Y=c.y, Z=c.z }).ToList(),
                 StuffDefName = building.Stuff?.defName,
                         Size = new PositionDto
                         {

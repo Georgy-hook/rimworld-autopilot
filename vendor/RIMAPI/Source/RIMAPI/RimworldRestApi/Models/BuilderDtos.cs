@@ -44,6 +44,7 @@ namespace RIMAPI.Models
 
     public class ConstructionProjectDto
     {
+        public List<PositionDto> OccupiedCells { get; set; }
         public int Rotation { get; set; }
         public int ThingId { get; set; }
         public string DefName { get; set; }

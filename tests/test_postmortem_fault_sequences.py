@@ -61,6 +61,8 @@ class MiningSequences(unittest.TestCase):
         s=mine_snapshot();memory={};labor.prepare(s,memory);labor.remember(s,1,'Cooking')
         self.assertEqual(mining.prepare(s,memory),[])
         memory['labor_commitments'].clear()
+        s['map']['resources']['nutrition']=100
+        s['colonists'][0].update(hunger=.9,health_conditions=[])
         s['colonists'][0]['current_job']='Mine'
         self.assertFalse(labor.can_assign(s,s['colonists'][0],'Cooking'))
         labor.remember(s,1,'Mining')
