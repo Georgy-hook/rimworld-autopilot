@@ -88,8 +88,14 @@ try {
     if (Test-Path -LiteralPath $installDirectory) {
         Remove-Item -LiteralPath $installDirectory -Recurse -Force
     }
-    & $builder (Join-Path $projectRoot "install_payload.py") $projectRoot $installDirectory
+    & $builder (Join-Path $projectRoot "install_payload.py") $releaseDirectory $installDirectory
     if ($LASTEXITCODE -ne 0) { throw "Install payload build failed." }
+    foreach ($executable in @("RimWorld-Autopilot.exe", "RimWorld-Autopilot-Setup.exe")) {
+        if ((Get-FileHash -LiteralPath (Join-Path $distribution $executable) -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath (Join-Path $installDirectory $executable) -Algorithm SHA256).Hash) {
+            throw "Install payload contains a different GUI build: $executable"
+        }
+    }
     foreach ($unwanted in @("README.md", "RELEASE_NOTES.md", "PLAYTEST_REPORT.md", "docs", "tools", "assets", "laya_gui", "Source")) {
         if (Test-Path -LiteralPath (Join-Path $installDirectory $unwanted)) {
             throw "Source-only item entered the install payload: $unwanted"
