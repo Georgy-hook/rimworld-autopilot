@@ -32,6 +32,24 @@ def prepared_colony():
 
 
 class DevelopmentReadinessTests(unittest.TestCase):
+    def test_blocked_research_project_can_enter_the_action_comparison(self):
+        snapshot = prepared_colony()
+        snapshot["development"]["construction_projects"] = [{
+            "thing_id": 77, "def_name": "SimpleResearchBench", "stuff_def_name": "Silver",
+            "position": {"x": 15, "z": 15}, "rotation": 0,
+            "materials_needed": [{"def_name": "Silver", "required_count": 75}],
+        }]
+        actions, details = director.candidate_actions(None, snapshot,
+            {"anchor": {"x": 11, "z": 11}, "issued": {}})
+        self.assertIn("repair_research_bench", actions)
+        self.assertIn("77|WoodLog", details["research_bench_repair_options"])
+        # The real comparison asks for this description before model inference.
+        # A missing entry used to crash the director and leave the observer paused.
+        self.assertTrue(director.action_description("repair_research_bench", snapshot))
+        for language in ("ru", "en"):
+            self.assertNotEqual("repair_research_bench",
+                director.action_label("repair_research_bench", snapshot, language))
+
     def test_roofed_spots_expose_research_prison_and_cover_before_a_raid(self):
         snapshot = prepared_colony()
         actions, _ = director.candidate_actions(None, snapshot, {"anchor": {"x": 11, "z": 11}, "issued": {}})
