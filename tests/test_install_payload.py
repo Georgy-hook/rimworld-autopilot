@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 
 from install_payload import MOD_FILES, MOD_FOLDERS, RUNTIME_FILES, copy_install_payload
+from rimworld_installation import MOD_DEPENDENCIES
 
 
 class InstallPayloadTests(unittest.TestCase):
@@ -45,6 +46,8 @@ class InstallPayloadTests(unittest.TestCase):
                 folder = mod / name
                 folder.mkdir(parents=True)
                 (folder / "example.xml").write_text(name, encoding="utf-8")
+            for name in MOD_DEPENDENCIES.values():
+                (mod / name).write_bytes(b"runtime dependency")
             for name in ("README.md", "RELEASE_NOTES.md", "PLAYTEST_REPORT.md"):
                 (source / name).write_text("source only", encoding="utf-8")
             for name in ("assets", "docs", "laya_gui", "tools", "vendor/RIMAPI/Source"):
@@ -63,6 +66,8 @@ class InstallPayloadTests(unittest.TestCase):
                 self.assertTrue((destination / "vendor" / "RIMAPI" / name).is_file(), name)
             for name in MOD_FOLDERS:
                 self.assertTrue((destination / "vendor" / "RIMAPI" / name / "example.xml").is_file(), name)
+            for name in MOD_DEPENDENCIES:
+                self.assertEqual((destination / "vendor/RIMAPI" / name).read_bytes(), b"runtime dependency")
             for name in ("README.md", "RELEASE_NOTES.md", "PLAYTEST_REPORT.md", "assets", "docs", "laya_gui", "tools", "vendor/RIMAPI/Source"):
                 self.assertFalse((destination / name).exists(), name)
 
@@ -87,6 +92,8 @@ class InstallPayloadTests(unittest.TestCase):
                 item.write_text(name, encoding="utf-8")
             for name in MOD_FOLDERS:
                 (mod / name).mkdir(parents=True)
+            for name in MOD_DEPENDENCIES.values():
+                (mod / name).write_bytes(b"runtime dependency")
 
             copy_install_payload(source, destination)
 

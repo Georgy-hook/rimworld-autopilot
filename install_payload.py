@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shutil
 from pathlib import Path
+from rimworld_installation import MOD_DEPENDENCIES, copy_mod_dependencies
 
 
 RUNTIME_FILES = (
@@ -81,7 +82,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
         if not candidate.is_file():
             raise FileNotFoundError(candidate)
     mod = source / "vendor" / "RIMAPI"
-    for name in MOD_FILES:
+    for name in (*MOD_FILES, *MOD_DEPENDENCIES.values()):
         if not (mod / name).is_file():
             raise FileNotFoundError(mod / name)
     for name in MOD_FOLDERS:
@@ -101,6 +102,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
         shutil.copy2(mod / name, target)
     for name in MOD_FOLDERS:
         shutil.copytree(mod / name, destination_mod / name, dirs_exist_ok=True)
+    copy_mod_dependencies(mod, destination_mod)
 
 
 if __name__ == "__main__":

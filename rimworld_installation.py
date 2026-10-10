@@ -14,6 +14,7 @@ from uuid import uuid4
 
 GAME_EXE = "RimWorldWin64.exe"
 STEAM_APP_ID = "294100"
+MOD_DEPENDENCIES = {"1.6/Assemblies/Newtonsoft.Json.dll": "Libraries/Newtonsoft.Json.dll"}
 
 
 def normalize_game_path(value: str | os.PathLike[str]) -> Path:
@@ -155,10 +156,21 @@ def prepare_mod_directory(game: Path) -> Path:
     return mods
 
 
+def copy_mod_dependencies(source: Path, destination: Path) -> None:
+    """RimWorld loads assemblies from the version folder, not Libraries."""
+    for target_name, source_name in MOD_DEPENDENCIES.items():
+        dependency = source / source_name
+        if not dependency.is_file():
+            raise FileNotFoundError(dependency)
+        target = destination / target_name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dependency, target)
+
+
 def install_mod(source: Path, game: Path, backup_root: Path) -> Path:
     """Stage first; keep old mods outside Mods to avoid duplicate package IDs."""
     source = source.resolve()
-    for relative in ("About/About.xml", "1.6/Assemblies/RIMAPI.dll"):
+    for relative in ("About/About.xml", "1.6/Assemblies/RIMAPI.dll", *MOD_DEPENDENCIES.values()):
         if not (source / relative).is_file():
             raise FileNotFoundError(source / relative)
     mods = prepare_mod_directory(game)
@@ -171,6 +183,7 @@ def install_mod(source: Path, game: Path, backup_root: Path) -> Path:
     moved = False
     try:
         shutil.copytree(source, stage)
+        copy_mod_dependencies(source, stage)
         if target.exists():
             backup_root.mkdir(parents=True, exist_ok=True)
             shutil.move(str(target), str(backup))

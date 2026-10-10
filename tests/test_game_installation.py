@@ -19,7 +19,7 @@ class GameInstallationTests(unittest.TestCase):
         return root.resolve()
 
     def mod(self, root, text="new mod"):
-        for name in ("About/About.xml", "1.6/Assemblies/RIMAPI.dll"):
+        for name in ("About/About.xml", "1.6/Assemblies/RIMAPI.dll", *installation.MOD_DEPENDENCIES.values()):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
@@ -91,10 +91,23 @@ class GameInstallationTests(unittest.TestCase):
             backup = root / "Laya" / "mod-backups"
             self.assertEqual(installation.install_mod(source, game, backup), target)
             self.assertEqual((target / "About" / "About.xml").read_text(), "new mod")
+            self.assertEqual((target / "1.6/Assemblies/Newtonsoft.Json.dll").read_text(), "new mod")
             self.assertEqual(len(list(backup.iterdir())), 1)
             self.assertEqual(next(backup.iterdir()).joinpath("About/About.xml").read_text(), "old mod")
             self.assertEqual([p.name for p in (game / "Mods").iterdir()], ["RIMAPI"])
             self.assertEqual(save.read_bytes(), b"untouched save")
+
+    def test_missing_dependency_preserves_existing_game_mod(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            game = self.game(root / "game")
+            source = self.mod(root / "source")
+            target = self.mod(game / "Mods/RIMAPI", "old mod")
+            (source / "Libraries/Newtonsoft.Json.dll").unlink()
+            with self.assertRaises(FileNotFoundError):
+                installation.install_mod(source, game, root / "backup")
+            self.assertEqual((target / "1.6/Assemblies/RIMAPI.dll").read_text(), "old mod")
+            self.assertEqual([p.name for p in (game / "Mods").iterdir()], ["RIMAPI"])
 
     def test_failed_replacement_restores_old_mod_and_cleans_staging(self):
         with tempfile.TemporaryDirectory() as folder:
