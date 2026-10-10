@@ -5,24 +5,32 @@ from __future__ import annotations
 import argparse
 import shutil
 from pathlib import Path
+from rimworld_installation import MOD_DEPENDENCIES, copy_mod_dependencies
 
 
 RUNTIME_FILES = (
     "VERSION",
     "app_version.py",
     "RimWorld-Autopilot.exe",
+    "RimWorld-Autopilot-Setup.exe",
+    "rimworld_installation.py",
     "colony_architect.py",
     "colony_actions.py",
     "colony_capabilities.py",
     "colony_modules.py",
     "colony_reasoning.py",
     "colony_retry.py",
+    "colony_labor.py",
+    "colony_storage.py",
+    "colony_mining.py",
     "colony_outcomes.py",
+    "colony_plan.py",
     "colony_production.py",
     "colony_society.py",
     "colony_progression.py",
     "colony_specialists.py",
     "colony_sustenance.py",
+    "colony_husbandry.py",
     "colony_resilience.py",
     "colony_medical_recovery.py",
     "colony_mental_safety.py",
@@ -35,11 +43,13 @@ RUNTIME_FILES = (
     "colony_combat.py",
     "colony_director.py",
     "colony_events.py",
+    "colony_quests.py",
     "colony_growth.py",
     "colony_expeditions.py",
     "colony_professions.py",
     "colony_strategy.py",
     "laya_decisions.py",
+    "laya_runtime.py",
     "laya_preferences.py",
     "rimworld_laya.py",
     "stream_observer.py",
@@ -68,12 +78,12 @@ def copy_install_payload(source: Path, destination: Path) -> None:
         return
     for name in RUNTIME_FILES:
         candidate = source / name
-        if name == "RimWorld-Autopilot.exe" and not candidate.is_file():
+        if name.endswith(".exe") and not candidate.is_file():
             candidate = source / "dist" / name
         if not candidate.is_file():
             raise FileNotFoundError(candidate)
     mod = source / "vendor" / "RIMAPI"
-    for name in MOD_FILES:
+    for name in (*MOD_FILES, *MOD_DEPENDENCIES.values()):
         if not (mod / name).is_file():
             raise FileNotFoundError(mod / name)
     for name in MOD_FOLDERS:
@@ -83,7 +93,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for name in RUNTIME_FILES:
         candidate = source / name
-        if name == "RimWorld-Autopilot.exe" and not candidate.is_file():
+        if name.endswith(".exe") and not candidate.is_file():
             candidate = source / "dist" / name
         shutil.copy2(candidate, destination / name)
     destination_mod = destination / "vendor" / "RIMAPI"
@@ -93,6 +103,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
         shutil.copy2(mod / name, target)
     for name in MOD_FOLDERS:
         shutil.copytree(mod / name, destination_mod / name, dirs_exist_ok=True)
+    copy_mod_dependencies(mod, destination_mod)
 
 
 if __name__ == "__main__":

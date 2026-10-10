@@ -214,6 +214,7 @@ namespace RIMAPI.Models
     {
         public int Id { get; set; }
         public int CellsCount { get; set; }
+        public List<PositionDto> Cells { get; set; }
         public string Label { get; set; }
         public string BaseLabel { get; set; }
         public string Type { get; set; }
@@ -296,6 +297,8 @@ namespace RIMAPI.Models
     public class CreateStockpileRequestDto
     {
         public int MapId { get; set; }
+        public bool? AllowFresh { get; set; }
+        public bool? AllowRotten { get; set; }
         public PositionDto PointA { get; set; }
         public PositionDto PointB { get; set; }
         public string Name { get; set; }
@@ -321,6 +324,8 @@ namespace RIMAPI.Models
     public class UpdateStockpileRequestDto
     {
         public int ZoneId { get; set; }
+        public bool? AllowFresh { get; set; }
+        public bool? AllowRotten { get; set; }
         public string Name { get; set; }
         public int? Priority { get; set; }
         public List<string> AddItemDefs { get; set; }

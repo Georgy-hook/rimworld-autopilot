@@ -52,6 +52,15 @@ namespace RIMAPI.Controllers
             await context.SendJsonResponse(result);
         }
 
+        [Post("/api/v1/pawn/bed/assign")]
+        [EndpointMetadata("Claim an available ordinary sleeping bed and take a normal sleep job, preserving clinical care")]
+        public async Task AssignSleepingBed(HttpListenerContext context)
+        {
+            var body = await context.Request.ReadBodyAsync<MedicalBedRestRequestDto>();
+            var result = _pawnJobService.AssignSleepingBed(body);
+            await context.SendJsonResponse(result);
+        }
+
         [Post("/api/v1/pawn/prisoner/capture")]
         [EndpointMetadata("Capture a specific downed hostile into a completed prison and apply a normal prisoner policy")]
         public async Task CapturePrisoner(HttpListenerContext context)

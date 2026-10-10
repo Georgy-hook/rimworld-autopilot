@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from laya_decisions import ask_laya_choice
+import colony_quests as quests
+import colony_reasoning as reasoning
+from colony_retry import recent as retry_recent, failure_record
+from colony_affordances import interaction_identity
 
 DESCRIPTIONS = {"progression_research": "Resolve native prerequisite or supporting infrastructure research for the chosen ending route, comparing alternatives and defer.",
                 "progression_ship": "Compare ordinary ship reactor startup or launch against defer using actual engine blockers and survival facts.",
@@ -24,6 +28,43 @@ ENDING_ROUTES = {
     "odyssey_mechhive": {"dlc": "odyssey", "prerequisites": "Build and operate a gravship, progress offered gravship quests, obtain native space capability, travel to and resolve the mechhive objective.", "cost": "Gravship construction, fuel, travel, upgrades and orbital combat.", "risk": "Space hazards and mechanoid defenses; unavailable while Odyssey is inactive."},
 }
 PENDING_WINDOWS = ("Dialog_ChooseThingsForNewColony", "Dialog_ConfigureIdeo", "Screen_ArchonexusSettlementCinematics")
+
+
+def canonical_route(route):
+    return {"imperial_ascension": "royal_ascent", "mechhive": "odyssey_mechhive"}.get(route, route)
+
+
+def option_route(row):
+    """Native QuestScriptDef / site identity, independent of localized labels."""
+    if row.get("kind") == "odyssey":
+        return "odyssey_mechhive"
+    route = canonical_route(row.get("route"))
+    if route in ENDING_ROUTES:
+        return route
+    name = str(route or row.get("site") or "")
+    if "RoyalAscent" in name:
+        return "royal_ascent"
+    if "Archonexus" in name:
+        return "archonexus"
+    if "Void" in name:
+        return "anomaly_void"
+    if any(word in name for word in ("Gravship", "Mechhive", "Cerebrex")):
+        return "odyssey_mechhive"
+    if "ShipEscape" in name:
+        return "ship_journey"
+    return None
+
+
+def route_matches(chosen, row):
+    chosen = canonical_route(chosen)
+    # Resolve a native transaction already in progress, including cancel.
+    # A new route requires an explicit doctrine change, not an unrelated menu.
+    if row.get("kind") in {"selection", "continuation", "world-targeting"}:
+        return True
+    if not chosen:
+        return True
+    candidate = option_route(row)
+    return candidate == chosen or {candidate, chosen} <= {"ship_escape", "ship_journey"}
 
 
 def peek_pending(client):
@@ -66,6 +107,12 @@ def _ending_unchanged(selected, row):
         return False
     for key, value in row.items():
         if key == "expires_in_ticks":
+            continue
+        if kind == "accept" and key == "quest_offer":
+            # Countdown/current-job drift is not a different offer. The native
+            # version binds actual terms; execute still refreshes colony readiness.
+            if (selected.get(key) or {}).get("offer_version") != (value or {}).get("offer_version"):
+                return False
             continue
         if kind == "job" and key in {"current_job", "inspect"}:
             continue  # Native eligibility and protected-worker guards are regenerated.
@@ -206,18 +253,19 @@ def prepare(snapshot, map_state):
         return []
     import colony_sessions
     context["_transition_memory"] = colony_sessions.transition_memory(map_state, "progression_transitions", snapshot)
+    context["_interaction_pending"] = map_state.setdefault("interaction_pending", {})
+    context["_game_tick"] = int((snapshot.get("game") or {}).get("tick") or 0)
     context["options"] = _options(context)
     doctrine = (map_state or {}).get("doctrine") or snapshot.get("development", {}).get("doctrine") or {}
-    chosen_route = doctrine.get("endgame") or doctrine.get("ending_route")
-    chosen_route = {"imperial_ascension": "royal_ascent", "mechhive": "odyssey_mechhive"}.get(chosen_route, chosen_route)
+    chosen_route = canonical_route(doctrine.get("endgame") or doctrine.get("ending_route")
+                                   or map_state.get("ending_commitment"))
     context["chosen_ending_route"] = chosen_route
     context["chosen_route_support"] = (context.get("support_research") or {}).get(chosen_route) or {}
     support_frontier = set(context["chosen_route_support"].get("frontier") or [])
     for name, row in context["options"].items():
         row["ending_support"] = name in support_frontier
-    pursuing_ship = (doctrine.get("primary_direction") == "research_starflight"
-                     or doctrine.get("endgame") == "ship_escape"
-                     or doctrine.get("technology") == "starflight")
+    pursuing_ship = chosen_route == "ship_escape" or (not chosen_route and (
+        doctrine.get("primary_direction") == "research_starflight" or doctrine.get("technology") == "starflight"))
     # Only add a decision when the route exposes an actionable prerequisite.
     # Ordinary research selection already belongs to the director.
     actions = ["progression_research"] if (pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values())) or any(r.get("ending_support") for r in context["options"].values()) else []
@@ -281,6 +329,9 @@ def _transition_row(row):
     observation = dict(row)
     for field in ('expires_in_ticks', 'remaining_points', 'progress', 'inspect', 'description'):
         observation.pop(field, None)
+    if row.get('kind') == 'accept' and isinstance(observation.get('quest_offer'), dict):
+        observation['quest_offer'] = observation['quest_offer'].get('offer_version')
+    observation.pop('quest_plan', None)
     if row.get('kind') == 'journey':
         for field in ('label', 'travelers', 'home_food_nutrition', 'mass', 'capacity', 'approximate_distance_tiles',
                       'travel_estimate_reason', 'travel_days', 'food_margin_days', 'native_approx_food_days', 'daily_nutrition'):
@@ -293,7 +344,16 @@ def ending_options(context):
     import colony_sessions
     rows = _ending_options(context)
     memory = context.get('_transition_memory') or {}
-    return {key: row for key, row in rows.items() if not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
+    pending = context.get('_interaction_pending') or {}
+    tick = int(context.get('_game_tick') or 0)
+    pending_transaction = pending_action(context) is not None
+    return {key: row for key, row in rows.items() if (pending_transaction or route_matches(context.get('chosen_ending_route'), row)) and not (
+        row.get('kind') == 'job' and retry_recent(pending.get(_interaction_key(row)), tick, 30000))
+        and not colony_sessions.transition_wait(memory, 'progression_ending:' + _transition_row(row), _transition_row(row))}
+
+
+def _interaction_key(row):
+    return interaction_identity({"kind": "menu", "target_id": row.get("thing_id"), "label": row.get("label")})
 
 
 def journey_summary(context):
@@ -427,8 +487,7 @@ def choose(agent, state, action, snapshot):
                 return row.get("category") or row.get("operation")
             if row.get("kind") == "continuation":
                 return row.get("operation")
-            route = str(row.get("route") or row.get("site") or "")
-            return "ship_journey" if row.get("kind") == "journey" and route == "ship_journey" else "imperial_ascension" if "RoyalAscent" in route else "archonexus" if "Archonexus" in route or route == "archonexus" else "anomaly_void" if "Void" in route else "odyssey_mechhive" if "Gravship" in route or "Mechhive" in route else "ship_escape"
+            return option_route(row) or "unknown_native_route"
         target_rows = {group(row): row for row in candidates.values()}
         target_choices = {key: (key + ": " + str(row.get("label") or row.get("site") or "native route")) for key, row in target_rows.items()}
         pending = pending_action(context) == action
@@ -474,6 +533,8 @@ def choose(agent, state, action, snapshot):
                 selected_rows = [r.get("label") for r in (row.get("selection") or {}).get("rows") or [] if r.get("selected")]
                 effects[key]["risk"] = f"Sell colony; keep {selected_rows}; abandon all others. Opens native consequence confirmation."
         facts = {"journey_needs": journey_summary(context), "stage": target, "native_blockers": (context.get("ending_selection") or {}).get("blocker")}
+        facts["care_risks"] = reasoning.attention_facts(snapshot).get("care_risks")
+        facts["quest_colony"] = {**quests.colony_facts(snapshot), "ending": context.get("chosen_ending_route")}
         if not pending:
             choices["defer"] = "Prepare before committing this route step."
             effects["defer"] = {"benefit": "Preserve colony work.", "cost": "Time.", "risk": "Offer may expire.", "inaction": "Route step postponed.", "uncertainty": "Readiness may change."}
@@ -481,7 +542,15 @@ def choose(agent, state, action, snapshot):
                                     'Choose an ordinary progression step or defer; compare benefit, risk, cost, delay and uncertainty.', choices, detailed=True)
     if first is not None:
         raw["ending_route_choice"] = first
-    return ({'defer': True} if selected == 'defer' else candidates[selected]), raw
+    candidate = {'defer': True} if selected == 'defer' else candidates[selected]
+    if candidate.get("kind") == "accept":
+        choice, review, plan = quests.review(agent, candidate.get("quest_offer") or {}, snapshot,
+            {"chosen_ending_route": context.get("chosen_ending_route")})
+        raw["quest_review"] = review
+        if choice != "accept":
+            return {"defer": True}, raw
+        candidate = {**candidate, "pawn_id": plan.get("accepter_pawn_id") or 0, "quest_plan": plan}
+    return candidate, raw
 
 
 def _execute(client, snapshot, map_state, action, selected):
@@ -493,6 +562,9 @@ def _execute(client, snapshot, map_state, action, selected):
         _record_cooldown(snapshot, map_state, action, deferred=True)
         return {"applied": False, "reason": "deliberately deferred; reconsider after 15000 ticks", "deferred": True}
     fresh = collect(client, {"map": snapshot.get("map") or {}})  # Execution bypasses earlier-cycle research cache.
+    doctrine = map_state.get("doctrine") or (snapshot.get("development") or {}).get("doctrine") or {}
+    fresh["chosen_ending_route"] = canonical_route(doctrine.get("endgame") or doctrine.get("ending_route")
+                                                   or map_state.get("ending_commitment"))
     if fresh.get("victory_verified") is True:
         return {"applied": False, "reason": "native victory already verified", "victory_verified": True}
     if action == "progression_ending":
@@ -503,6 +575,16 @@ def _execute(client, snapshot, map_state, action, selected):
         if candidate is None:
             return {"applied": False, "reason": "ending requirements, option or pawn job changed; new decision required"}
         try:
+            if candidate["kind"] == "job" and retry_recent(
+                (map_state.get("interaction_pending") or {}).get(_interaction_key(candidate)),
+                int((snapshot.get("game") or {}).get("tick") or 0), 30000):
+                return {"applied": False, "reason": "interaction_awaiting_observed_result"}
+            if candidate["kind"] == "accept":
+                import rimworld_laya as bridge
+                result = quests.accept_reviewed(client, selected.get("quest_plan"), bridge.collect_snapshot(client))
+                if result.get("applied"):
+                    _record_cooldown(snapshot, map_state, action)
+                return {**result, "victory_verified": False}
             if candidate["kind"] == "journey":
                 fields = ("map_id", "object_id", "team", "supply_days")
             elif candidate["kind"] in ("odyssey", "world-targeting"):
@@ -516,6 +598,9 @@ def _execute(client, snapshot, map_state, action, selected):
                 query["manifest"] = ",".join(f"{r['def_name']}:{r['count']}" for r in sorted(candidate.get("manifest") or [], key=lambda r: r["def_name"]))
             response = client.post("/api/v1/colony/endings/" + candidate["kind"], query=query)
             applied = response in ("ending_caravan_forming", "ending_quest_accepted", "ending_native_action_requested", "sale_confirmation_opened", "sale_selection_updated", "sale_cancelled", "settlement_tile_chosen", "ideology_continuation_requested", "gravship_pilot_job_requested", "gravship_destination_chosen", "gravship_destination_cancelled", "gravship_landing_marker_placed", "gravship_landing_requested", "gravship_landing_map_selected", "world_target_chosen", "world_target_cancelled")
+            if applied and candidate["kind"] == "job":
+                map_state.setdefault("interaction_pending", {})[_interaction_key(candidate)] = failure_record(
+                    int((snapshot.get("game") or {}).get("tick") or 0), seconds=120)
             if applied and candidate["kind"] not in ("selection", "continuation", "odyssey", "world-targeting"):
                 _record_cooldown(snapshot, map_state, action)
             return {"applied": applied, "reason": str(response), "victory_verified": False, "native_choices_required": True}
@@ -590,6 +675,11 @@ def execute(client, snapshot, map_state, action, selected):
         colony_sessions.transition_record(memory, key, readiness, {'applied': False, 'reason': 'network_outcome_unknown'})
         raise
     colony_sessions.transition_record(memory, key, readiness, result)
+    if result.get('applied'):
+        route = option_route(selected) if action == 'progression_ending' else 'ship_escape' if action in {
+            'progression_ship', 'progression_boardship'} else None
+        if route:
+            map_state['ending_commitment'] = route
     return result
 
 
@@ -604,8 +694,12 @@ def _options(context):
 
 
 def boarding_options(context):
+    if context.get('chosen_ending_route') and canonical_route(context['chosen_ending_route']) not in {'ship_escape', 'ship_journey'}:
+        return {}
     return _filter_transitions(context, 'progression_boardship', _rawboarding_options(context))
 
 
 def ship_options(context):
+    if context.get('chosen_ending_route') and canonical_route(context['chosen_ending_route']) not in {'ship_escape', 'ship_journey'}:
+        return {}
     return _filter_transitions(context, 'progression_ship', _rawship_options(context))

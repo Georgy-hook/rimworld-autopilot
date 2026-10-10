@@ -585,11 +585,25 @@ def _ask(agent: Any, state: dict[str, Any], question_id: str, instructions: str,
     facts = {"endgame": chosen.get("endgame") or current.get("endgame") or "choose_now",
              "direction": chosen.get("primary_direction") or current.get("primary_direction"),
              "income": chosen.get("economy_product") or current.get("economy_product"),
+             "diplomacy": chosen.get("diplomacy") or current.get("diplomacy"),
              "people": state.get("population"), "food": state.get("food"),
              "sheltered_beds": state.get("sheltered_beds"), "income_blocked": state.get("income_blocked")}
+    if facts["endgame"] == "imperial_ascension":
+        facts["ending_requirements"] = "Empire relations, royal rank, throne room and defense of the visiting high stellarch; hostile Empire raiding can block this goal."
+    elif facts["endgame"] == "anomaly_void":
+        facts["ending_requirements"] = "Monolith study, containment and the final anomaly encounter; unrelated royal titles do not complete it."
     effects, english = {}, {}
     for key, label in criteria.items():
         description = label if not any('\u0400' <= char <= '\u04ff' for char in label) else key.replace('_', ' ')
+        if question_id == "doctrine_primary_direction" and key in DIRECTIONS:
+            row = DIRECTIONS[key]
+            description += ": " + ", ".join(row.get("mechanics") or ())
+        if question_id == "doctrine_diplomacy":
+            description = {
+                "raider": "Raid other factions for resources; hostile Empire relations conflict with imperial ascent. Raises retaliation and combat burden.",
+                "friendly": "Improve relations and trade; supports access to allies and the Empire.",
+                "neutral": "Avoid new wars and preserve trade routes; reassess each faction's actual relations.",
+            }.get(key, description)
         benefit, risk, cost = (ENDING_EFFECTS[key] if question_id == "doctrine_endgame" else
             (description, "This focus can divert labor and resources from survival or the selected ending",
              "Only actual feasible research, construction and work may execute this intention"))
@@ -597,7 +611,7 @@ def _ask(agent: Any, state: dict[str, Any], question_id: str, instructions: str,
         effects[key] = {"benefit": benefit, "risk": risk, "cost": cost,
                         "inaction": "Retain the previous course; unresolved prerequisites remain",
                         "uncertainty": "Strategy intention is not progress; future native gates and actual outcomes must be observed"}
-    selected, raw = ask_laya_choice(agent, {"decision_facts": facts, "option_effects": effects},
+    selected, raw = ask_laya_choice(agent, {"planning_context": facts, "option_effects": effects},
                                    question_id, instructions, english)
     raw["strategy_context"] = facts
     return selected, raw
@@ -660,7 +674,12 @@ def choose_cascaded_doctrine(agent: Any, state: dict[str, Any], context: dict[st
 
     settlements = _filter_axis(SETTLEMENTS, flags)
     if context.get("mountain_possible"):
-        settlements["mountain"] = "Горная база: защищённая и пожаростойкая, но медленная и уязвимая для заражений"
+        settlements["mountain"] = (
+            "Excavated rock base: mining and chunk hauling cost labor. Verify thick roof, "
+            "supports, an accessible entrance, evacuation paths and insect choke positions. "
+            "Rock walls do not protect wooden contents from fire or heat. Food, fuel, "
+            "fungus eligibility and cooler exhaust need separate plans; a rock block is not a ready base."
+        )
     family_options = {
         key: str(row["label"]) for key, row in ECONOMY_FAMILIES.items()
         if _requires_available(row.get("requires"), flags)

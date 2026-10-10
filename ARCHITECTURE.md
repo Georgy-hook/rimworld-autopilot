@@ -14,6 +14,7 @@ The 0.0.7 candidate uses deterministic application code to project state and def
 | `colony_medical_recovery.py` | Native patient/helper eligibility, temporary-bed prerequisites, rescue/feed recovery focus and compact triage facts for the director |
 | `colony_sessions.py` | Pending native dialogs and world continuations |
 | `colony_expeditions.py` | Shared trade, raid and rescue preview, consequence cards and exact-plan confirmation |
+| `colony_quests.py` | Complete public quest/letter terms, bounded review pages, exact rewards/accepters and fresh common acceptance |
 | Other `colony_*.py` | Construction, combat, strategy, capabilities, events and supporting policy; see module contracts for ownership |
 | `laya_decisions.py`, `rimworld_laya.py` | Bounded model comparisons; model/runtime and local HTTP transport |
 | `laya_gui/` | Desktop UI and process services; `autopilot_*.py` are launchers |

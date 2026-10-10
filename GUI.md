@@ -7,6 +7,8 @@ The 0.0.6 RimWorld Autopilot control center is intentionally separate from the c
 - `i18n.py` owns Russian/English copy and friendly names for internal decisions;
 - `services.py` owns process control, local API checks and export operations;
 - `setup_app.py` is the graphical installation assistant;
+- `rimworld_installation.py` discovers saved/registered game locations and Steam
+  libraries, validates the game root, and stages ordinary mod installation;
 - `laya_preferences.py` is shared with the autonomous director and validates player guidance.
 
 ## Pages
@@ -16,7 +18,7 @@ The 0.0.6 RimWorld Autopilot control center is intentionally separate from the c
 3. **Priorities** — eight 0–100 preference weights, a free-form personal note and explicit peaceful/safety boundaries.
 4. **History** — friendly explanations by default; exact JSON is available only after enabling technical mode.
 5. **Stream** — starts/stops a separate camera observer and shows its current shot and target. The observer persists after closing the GUI; the enabled preference restores it when the GUI opens again.
-6. **Settings** — Russian/English switch with real flag assets, diagnostic logging, compact/hidden in-game HUD controls, standard Windows uninstall and exports.
+6. **Settings** — selected RimWorld folder and repeatable setup assistant, Russian/English switch with real flag assets, diagnostic logging, compact/hidden in-game HUD controls, standard Windows uninstall and exports.
 
 The interface uses native Tk widgets and the standard library. It therefore adds no UI framework dependency to the already large local-model installation. Rounded cards, animated buttons and orbit particles are drawn locally. The 1240×800 minimum size protects the decision-boundary controls, while long pages remain vertically scrollable. History and page scrollbars use a compact rounded track with keyboard support instead of legacy arrow controls. Buttons expose keyboard focus and Enter/Space activation.
 
@@ -52,10 +54,23 @@ All calls into the Laya decision model pass through one guard. Questions with ex
 1. chooses the Program Files destination and optional desktop shortcut;
 2. copies the application, bilingual UI and complete local artwork set;
 3. creates Start-menu launch and uninstall entries;
-4. extracts `RimWorld-Autopilot-Setup.exe` only into Inno Setup's temporary directory;
-5. optionally runs that friendly assistant to locate Python 3.10–3.12 and a real RimWorld folder;
-6. creates `.venv`, installs `requirements.txt`, downloads the root Laya model, backs up/replaces `Mods/RIMAPI` and writes local configuration;
-7. deletes the temporary assistant as setup exits.
+4. retains `RimWorld-Autopilot-Setup.exe` in the application directory;
+5. optionally runs that assistant to locate Python 3.10–3.12 and a real RimWorld
+   folder from the saved choice, Windows Steam registrations and each recorded
+   Steam library (modern or legacy KeyValues); a manual folder is always allowed;
+6. validates the game executable/Core directory and Mods write access before
+   dependency/model downloads, creates `.venv`, installs `requirements.txt`,
+   downloads Laya, stages the mod, keeps the previous copy outside `Mods`, and
+   saves the absolute game path without clearing run settings;
+7. exposes the same assistant through Settings for a moved game. Launching the
+   administrator helper uses Windows elevation with separately quoted arguments.
+
+The installer does not crawl all disks. A missing saved game is skipped during
+discovery, and a stale explicitly selected folder is rejected before installation.
+No match leaves the folder field empty; it does not pretend a default location
+exists. The game root may include spaces, Unicode characters, another drive or
+an executable pasted into the field. Stock game/DLC definitions and the native
+API come from the running RimWorld process, not from a path inferred by Laya.
 
 The installer does not request an API key, start RimWorld, alter saves or enable mods without the player. `unins000.exe` is registered in Windows Installed apps and removes files installed by Setup and its shortcuts. Writable LocalAppData and the game mod are preserved deliberately to avoid destructive surprise. The assistant also generates `.venv` and `rimworld-autopilot.json` in the selected application directory after Setup has registered its file list; the uninstaller does not track these, so they may remain and should be reviewed before manual removal.
 

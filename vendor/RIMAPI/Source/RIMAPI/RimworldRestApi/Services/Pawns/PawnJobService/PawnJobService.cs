@@ -98,6 +98,8 @@ namespace RIMAPI.Services
                 if (attackJob && target.Thing is Pawn alliedTarget && MentalSafetyHelper.Allied(alliedTarget)
                     && !MentalSafetyHelper.ActiveAlliedAggressor(alliedTarget))
                     return ApiResult.Fail("allied_attack_target_no_longer_active");
+                if (attackJob && (CombatNativeHelper.HasClinicalCareJob(pawn) || CombatNativeHelper.HasCareRetreat(pawn)))
+                    return ApiResult.Fail("attack_patient_care_owned; use exact caregiver_retreat to suspend care");
 
                 if (request.KillIncappedTarget)
                 {
@@ -267,6 +269,14 @@ namespace RIMAPI.Services
                     || !doctor.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
                     return ApiResult.Fail("Selected doctor is not currently controllable for treatment");
                 bool reassign = request.ReassignFromPatientId.HasValue;
+                bool rescueYield = request.ReassignFromRescuePatientId.HasValue;
+                if (reassign && rescueYield)
+                    return ApiResult.Fail("Only one exact current care binding may be supplied");
+                // Repeating the exact assignment is readback, not a new job.
+                // Keep medicine pickup and tend progress, including self-tending.
+                if (!reassign && doctor.CurJobDef == JobDefOf.TendPatient
+                    && doctor.CurJob.targetA.Thing == patient)
+                    return ApiResult.Ok();
                 if (reassign)
                 {
                     Pawn oldPatient = doctor.CurJob?.targetA.Thing as Pawn;
@@ -282,8 +292,18 @@ namespace RIMAPI.Services
                         || rate <= 0f)
                         return ApiResult.Fail("Emergency reassignment requires the exact stable current tend patient and a different patient with active bleeding");
                 }
-                else if (doctor.CurJobDef == JobDefOf.TendPatient || doctor.CurJobDef == JobDefOf.Rescue
-                    || doctor.CurJobDef == JobDefOf.FeedPatient)
+                else if (rescueYield)
+                {
+                    // An urgent bleed can be tended before lifting this exact patient.
+                    // Once carrying has begun, keep the transfer intact.
+                    if (doctor.CurJobDef != JobDefOf.Rescue
+                        || doctor.CurJob?.targetA.Thing != patient
+                        || request.ReassignFromRescuePatientId.Value != patient.thingIDNumber
+                        || doctor.carryTracker?.CarriedThing is Pawn
+                        || patient.health.hediffSet.BleedRateTotal < 1.5f)
+                        return ApiResult.Fail("Emergency tending requires the exact unstarted rescue of a critically bleeding patient");
+                }
+                else if (CombatNativeHelper.HasClinicalCareJob(doctor) || CombatNativeHelper.HasCareRetreat(doctor))
                     return ApiResult.Fail("Selected doctor is already providing patient care");
                 if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))
                     return ApiResult.Fail("Selected doctor cannot reserve and reach the patient");
@@ -314,6 +334,8 @@ namespace RIMAPI.Services
 
                 if (!HealthAIUtility.ShouldSeekMedicalRest(patient))
                     return ApiResult.Fail("medical_rest_not_indicated");
+                if (CombatNativeHelper.HasClinicalCareJob(patient) || CombatNativeHelper.HasCareRetreat(patient))
+                    return ApiResult.Fail("patient_is_providing_care; recovery must wait for current care");
                 if (patient.CurJobDef == JobDefOf.Ingest)
                     return ApiResult.Fail("patient_is_eating");
 
@@ -339,6 +361,40 @@ namespace RIMAPI.Services
             {
                 return ApiResult.Fail(ex.Message);
             }
+        }
+
+        public ApiResult AssignSleepingBed(MedicalBedRestRequestDto request)
+        {
+            try
+            {
+                Pawn pawn = PawnHelper.FindPawnById(request.PatientPawnId);
+                Building_Bed bed = request.BedBuildingId.HasValue
+                    ? BuildingHelper.FindBuildingByID(request.BedBuildingId.Value) as Building_Bed : null;
+                if (pawn == null || bed == null || !pawn.Spawned || !bed.Spawned || pawn.Map != bed.Map
+                    || pawn.Faction != Faction.OfPlayer || bed.Faction != Faction.OfPlayer
+                    || bed.Medical || bed.ForPrisoners || pawn.Dead || pawn.Downed || pawn.Drafted || pawn.InMentalState)
+                    return ApiResult.Fail("ordinary_sleeping_bed_or_actor_unavailable");
+                if (CombatNativeHelper.HasClinicalCareJob(pawn) || CombatNativeHelper.HasCareRetreat(pawn)
+                    || pawn.CurJobDef == JobDefOf.Ingest)
+                    return ApiResult.Fail("sleep_assignment_would_interrupt_care_or_food");
+                if (bed.OwnersForReading.Any(p => p != pawn)
+                    || !RestUtility.CanUseBedEver(pawn, bed.def))
+                    return ApiResult.Fail("sleeping_bed_owned_or_incompatible");
+                if (pawn.CurJobDef == JobDefOf.LayDown && pawn.CurJob?.targetA.Thing == bed)
+                {
+                    pawn.ownership.ClaimBedIfNonMedical(bed);
+                    return ApiResult.Ok();
+                }
+                if (!pawn.CanReserveAndReach(bed, PathEndMode.OnCell, Danger.Some)
+                    || !ResilienceAutomationHelper.RoutineRouteSafe(pawn, bed))
+                    return ApiResult.Fail("sleeping_bed_unreachable_or_unsafe");
+                Job job = JobMaker.MakeJob(JobDefOf.LayDown, bed);
+                job.restUntilHealed = false;
+                if (!pawn.jobs.TryTakeOrderedJob(job)) return ApiResult.Fail("sleep_job_not_accepted");
+                pawn.ownership.ClaimBedIfNonMedical(bed);
+                return ApiResult.Ok();
+            }
+            catch (Exception ex) { return ApiResult.Fail(ex.ToString()); }
         }
 
         public ApiResult<MedicalFeedResultDto> AssignFeedJob(MedicalFeedRequestDto request)

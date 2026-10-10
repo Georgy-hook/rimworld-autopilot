@@ -27,6 +27,8 @@ namespace RIMAPI.Helpers
                     result.Add(new BuildingCatalogDto
                     {
                         DefName = def.defName,
+                        WorkToBuild = def.GetStatValueAbstract(StatDefOf.WorkToBuild),
+                        IsInstantBuilding = InstantConstructionHelper.IsInstantBuilding(def),
                         Label = def.LabelCap,
                         Description = def.description,
                         DesignationCategory = def.designationCategory.defName,
@@ -111,6 +113,7 @@ namespace RIMAPI.Helpers
                     {
                         DefName = terrain.defName,
                         ConstructionKind = "terrain",
+                        WorkToBuild = terrain.GetStatValueAbstract(StatDefOf.WorkToBuild),
                         Label = terrain.LabelCap,
                         Description = terrain.description,
                         DesignationCategory = terrain.designationCategory.defName,

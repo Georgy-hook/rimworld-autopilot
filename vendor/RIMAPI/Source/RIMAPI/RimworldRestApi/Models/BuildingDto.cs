@@ -27,8 +27,12 @@ namespace RIMAPI.Models
         public string StuffDefName { get; set; }
         public string Label { get; set; }
         public PositionDto Position { get; set; }
+        public int? RoomId { get; set; }
+        public float? CurrentTemperature { get; set; }
+        public bool Roofed { get; set; }
         public int Rotation { get; set; }
         public PositionDto Size { get; set; }
+        public List<PositionDto> OccupiedCells { get; set; }
         public bool RequiresPower { get; set; }
         public bool PowerOn { get; set; }
         public int? PowerNetId { get; set; }
@@ -47,14 +51,17 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }
+        public bool AllowShortThermalErrand { get; set; }
     }
 
     public class BuildingRefuelResultDto
     {
         public bool Applied { get; set; }
+        public bool InProgress { get; set; }
         public string Reason { get; set; }
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }
+        public object FuelRouteFacts { get; set; }
     }
 
     public class PowerGeneratorInfoDto : BuildingDto

@@ -1,6 +1,6 @@
 # Colony playtest log
 
-Current candidate: **0.0.7**. Historical tests below retain their own revision and version context.
+Current candidate: **0.0.8**. Historical tests below retain their own revision and version context.
 
 This log tracks real runs and explicitly identified technical replays. Death records distinguish native causes, final-save conditions and uncertain observer captions. Wall-clock runtime excludes intentional development pauses when noted.
 
@@ -552,5 +552,1410 @@ phase boundaries and distinguishes discarded branches.
 The subsequent user request authorized offline repairs and 0.0.7 preparation.
 Confirmed production cooldown, kitchen footprint, allied Berserk/care and
 clinical prompt defects were corrected; 1174 tests and native compilation pass.
-These changes were not played in the ended colony or a new one. See
-[0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md).
+At that preparation checkpoint these changes had not yet been played in the
+ended colony or a new one. See [0.0.7 readiness](docs/RELEASE_READINESS_0.0.7.md).
+
+## Published 0.0.7: new random colony ended before first hourly review — 2026-10-06
+
+The separate run on tile 119304 used source f6786a2/package 5dc1168. One generation,
+Cassandra/Medium/permadeath; autonomy began 13:16:44 UTC at tick 25. Native Game Over
+arrived at 308496 and was detected 13:56:28 UTC: approximately 39m44s, 5.141 game days.
+Population 0, caravans 0, victory=false; the final pause is 308589. Director,
+observer and read-only monitor exited without manual process termination.
+
+Native letters confirm three founder deaths from BloodLoss and the emergency
+man-in-black death from WoundInfection. The sole fighter first had megaspider
+wounds; the two pacifist founders later acquired rat-teeth wounds. The survivor
+stopped his own bleeding, ate and rested, but right-leg infection 0.996 exceeded
+immunity 0.6527 before death. Treatment quality was initially 9.8%, later 24.5%.
+
+Remaining findings include tending/retreat alternation for the same caregivers,
+nine redundant self-tend HTTP 500s while care was already running, 44 medical
+policy deferrals and 10 rest choices returning exact_care_job_in_progress. These
+are observed competing/repeated orders; their individual causal contributions
+need separate investigation. Initial shelter and some food/recreation facilities
+were actually completed. No research or sale was recorded; final campfire fuel 0
+despite 161 accessible wood. The bounded tail contains 451 decision records;
+the full decisions log was not read.
+
+The first hourly review after 14:22 UTC confirmed the already ended run. The last
+disk save 300000 predates the terminal death; live evidence, letters and memory
+verify the outcome. One pre-autonomy NRE remained unchanged in Player.log.
+Hourly automation is paused. No fixes, replay, new colony or memory reset were
+performed during observation. [Detailed outcome](docs/playtests/Release-007-2026-10-06.md).
+
+## Authorized offline repairs after the release run — 2026-10-06
+
+At the user's request the terminal state was saved and actual disk XML tick
+308589 verified at 15:10:53 UTC. RimWorld quit normally; process exit was
+verified at 15:10:55 UTC. The hourly automation remains paused. This later
+technical save is separate from the hourly review's older save at 300000.
+
+The care/retreat conflict was reproduced offline: generic protection previously
+disappeared at contact or on exposed travel. Clinical tending, feeding and rescue
+now retain ownership in Python, native group tactics and the draft/attack APIs.
+An exact `caregiver_retreat` choice lets Laya explicitly weigh abandoning one
+patient against an immediate pawn/turret threat. Native POST rechecks the actor,
+job, patient, carried pawn and escape route before replacing care. Group orders
+cannot implicitly make that decision. The accepted exact escape retains its
+actor until that native Job finishes; another doctor can still help the patient.
+Rejected identical escape routes are bounded by native retry memory.
+
+Redundant self-tend proposals are suppressed while the actor already provides
+care; repeated native tending of the same patient preserves the current job.
+Medicine inability is distinguished from a disabled automatic Doctor priority.
+The 44 medical-policy deferrals were ceiling choices, not refusals to perform
+treatment: the last survivor already permitted Best medicine. Proposals now
+require an actual stock-access improvement or a genuine scarcity tradeoff.
+Native context includes permissions/potency/quality limits for stocked
+medicines and actual infection immunity/tend facts. Medical defer memory ignores
+unrelated hunger changes and spans both 120 real seconds and 30000 game ticks,
+unless a meaningful clinical or supply change occurs.
+
+The repeated rest requests found an already observed LayDown. The previous
+validation returned early without configuring recovery priorities; now the
+selected priorities are set once while that exact rest job continues. Urgent
+temperature maintenance can also be offered to a sick but mobile survivor,
+with recovery cost stated explicitly and active clinical care still protected.
+Rejected refueling no longer creates an issued marker, observed ongoing
+refueling is not reoffered, and the native facility/fuel routes are checked.
+
+Verification: **1204 Python tests passed**, including 30 added regressions/source
+contracts; four prior protection expectations were updated to require an
+explicit care suspension. Release-1.6 compilation: **0 warnings, 0 errors**.
+Offline inventory: **308 routes**, no missing literal calls or duplicate routes.
+No game, autonomous director, colony, rollback or memory reset was launched for
+these repairs. Native job completion, escape success and future survival remain
+gameplay checks. [Repair details](docs/playtests/Release-007-offline-fixes-2026-10-06.md).
+
+## New random cold colony after the care fixes — 2026-10-06
+
+One generation on tile 34927, seed laya-care-ownership-20261006,
+Cassandra/Medium/permadeath, baseline tick 21. Initial temperature -30.8°C.
+The three founders survived the startup interval; their roofed shelter had
+13 walls, a door, a campfire and three sleeping spots, but serious hypothermia
+developed while it was still cold.
+
+A startup contract check caught native escape IDs omitted by collect_snapshot.
+The same game was saved and paused at 16077, the Python forwarding fix passed
+1206 tests, then the same progress/memory resumed at 17:11:49 UTC. No reroll,
+rollback or game restart. At 17:12:18 UTC the bedroom reached 13.16°C and two
+founders were actually Wait_SafeTemperature with declining hypothermia; the
+third was eating and still seriously hypothermic. One finger acquired frostbite.
+All three alive, no downed or bleeding. A real save at 17755 and subsequent tick
+17779 were verified. Normal 3× with 1× for thermal emergencies; hourly observation
+active, first full check after 18:12 UTC. Native care escape completion is still
+unproven. [Startup evidence](docs/playtests/Care-ownership-start-2026-10-06.md).
+
+At 17:16:58 UTC, tick 110889, all three remained alive, upright and nonbleeding;
+hypothermia had cleared from their actual health records and frostbite was also
+absent. The human bedroom was 19.78°C against outdoors -25.91°C. Two actually
+rested and one ate. Observer returned to 3×. Stock declined to 27 initial meals;
+this confirms early thermal recovery, not sustainable nutrition or survival.
+
+First hourly review after 18:12 UTC: this same campaign is now Complete Union
+of Leler (Permadeath). At tick 659160 food was zero, two founders were downed
+with extreme malnutrition, and the empty campfire left the roofed bedroom at
+-19.64°C despite 162 wood. Later two founders died from Malnutrition, native
+ticks 666631/669060, observer 18:16:23/18:17:05 UTC. Continuous autonomy after
+the startup pause was about 64m34s/65m16s. Native letters and exact_culprit
+confirm both causes. A surviving founder plus the man in black remain alive;
+GameOver/victory false at 18:19 UTC. No terminal colony outcome is claimed.
+
+Open observed defects: ordinary assign_real_bed repeatedly calls medical
+bed-rest and gets medical_rest_not_indicated; repeated refuel requests get
+unsafe_fuel_route; zero food does not reliably keep effective food work ahead
+of accepted ending requests and deferrals. Late hold_survival is an active
+waiting loop with worsening patients, not a frozen Python process. Earlier
+brief meat/meal production occurred, so the issue is sustained provisioning.
+Current save XML 660000 and matching campaign ID verified on disk. Hourly
+observation continues without runtime edits or game intervention. Further
+evidence is appended to the startup playtest document linked above.
+
+Closing 18:24:34 UTC, tick 694676: two alive. The surviving founder actually
+received food (0.949, malnutrition 0.536), but remained downed with extreme
+hypothermia 0.719. Stock food still zero, observer 1×, GameOver/victory false.
+
+Second hourly review 19:16:07 UTC, tick 1176699: last founder and man in black
+remain alive and mobile; a temporary nonworking hospitality guest is present.
+No new colonist death confirmed. Thermal recovery/fueled campfire and cleared
+construction backlog are real, but human reachable nutrition is zero and
+malnutrition severe. Immature rice does not yet feed them. Bounded decisions
+showed flowers/dye selected during starvation and repeated native-menu
+monolith investigation, completion unverified. Production logistics returned
+HTTP 200 with an empty JSON body twice, despite top-level module availability.
+Save XML 1140000 and campaign verified; emergency 1×, observation active.
+
+The last founder subsequently died from Malnutrition, native tick1205026,
+observer19:24:35UTC, exact cause also in the native letter. Total autonomy
+excluding the startup pause about2h14m06s. All founders lost; this is not
+the terminal campaign outcome. At19:26UTC the man in black, guest and new
+arrival remained alive; nativeGameOver/victoryfalse. Observation continues.
+
+## Third hourly review after 20:12 UTC — 2026-10-06
+
+At 20:16:48 UTC, tick 1385905, all three replacement/guest pawns were
+starving. The man in black died from Malnutrition at native tick 1391721,
+observer 20:18:25 UTC; native letter and exact_culprit agree. At 20:18:47 UTC,
+tick 1393053, two remain alive: the temporary nonworking guest and a colony
+member, now downed with malnutrition 0.855. The guest was Ingest with food
+still zero; intake is not yet confirmed. GameOver/victory false.
+
+Food did arrive briefly during this interval: sampled stock peaked at 11
+and food levels rose. Sustainable supply still failed. Thirty of 31 rice
+plants were harvestable at the main snapshot; early rice harvest requests
+were accepted twice but delivered nutrition was unverified. A fresh caribou
+corpse had a nearby third butcher spot and an active bill. Nine sampled
+monolith requests reassigned the same unfinished investigation, four to the
+working arrival and five to the guest. Hunger and malnutrition are present
+in decision evidence, so missing all hunger context is not established.
+The rice zone was configured for dandelions and zone count grew from six to
+11. One bed blueprint failed because it would block the campfire interaction
+cell, failure_count eight. Nested production logistics remains unavailable.
+
+The new member belongs to PlayerColony in the save, with no host faction or
+quest tags; permanent membership is supported. His prosthetic arm and child
+MissingBodyPart entries predate this review and are not new surgical damage.
+Campfire fuel 1.118/20, wood zero, roofed bedroom 28.35 C. Save XML 1380000,
+mtime 20:15:05 UTC, same campaign and stable read verified. All processes live,
+observer 1x for critical starvation, no forced pause. No runtime fixes,
+orders, restart, rollback or memory reset. Observation remains active.
+
+The new colony member died at 2026-10-06T20:23:54.841148+00:00, native 1411247, cause Malnutrition, corroborated by native letter and observer exact_culprit.
+Follow-up 2026-10-06T20:25:06.253440+00:00, tick 1415177: 1 alive; GameOver/victory False/False. At 20:23:49 UTC the temporary guest actually had food 0.427 and malnutrition fell to 0.612; she had returned to InvestigateMonolith. The new member was then downed at malnutrition 0.998. No game or runtime intervention.
+
+## Native terminal outcome of the care-ownership colony — 2026-10-06
+
+GameOver verified on the same campaign at native tick 1565355; director
+completed at 2026-10-06T20:38:21.644705+00:00, observer and monitor stopped normally.
+Read-only confirmation at 21:09/21:10 UTC: zero colonists, zero caravans,
+victory false, same campaign ID, game paused at 1565358. Total autonomy
+excluding the startup technical pause was about 3h28m (26.1 game days).
+All founders were already lost after about 2h14m. Native outcome is
+"everyone dead or gone"; this does not establish that every guest died.
+A late pawn died by gunfire, but the last guest's precise fate still needs
+individual evidence. No runtime code, game orders, replay, restart, rollback
+or memory reset was performed. Hourly automation is being paused.
+
+Final evidence refinement: both last pawns' bodies are present on the map.
+The temporary guest's corpse ID 27478 confirms death; observer first reported
+it at 20:38:07 UTC with Unknown cause, no exact native tick. Blood loss had
+risen to 0.917 while malnutrition was falling; blood loss is a plausible
+cause, not native-confirmed. The late arrival was the Intro_Deserter reward,
+not another man in black. She died by gunfire at native 1564956, corpse 27497.
+
+New confirmed context defect: the actual accept-quest model input at
+20:37:07 had empty decision_facts and only the event JSON prefix through
+the pawn name. Empire hostility, immediate attacking trooper and colony
+clinical state did not survive. _detailed_state clips the broad event context
+to budget/6; agent.predict receives exactly that clipped visible_state.
+Only 116 of 312 state tokens were used. Installed and source SHA256 match
+for laya_decisions.py and colony_events.py. The API supplied the full quest
+description; population flag was nevertheless false for its Reward_Pawn.
+The selected imperial ending also conflicted with the quest's Empire hostility.
+
+Five direct-tend plans were rejected while the same actor was actively
+rescuing that patient. Distance declined, so this was not a frozen actor.
+The mismatch between offered plans and care job protection remains open;
+a successful alternative treatment is not established. A late rice harvest
+request accepted designations despite worker=None and no eligible PlantCutting
+worker. These are observations only. Runtime and game state were not changed.
+The scheduled observation is PAUSED; RimWorld remains on the native final pause.
+
+## Offline quest corrections after the final care-ownership loss — 2026-10-07
+
+No colony was started or resumed and no game commands were issued. The recorded
+deserter acceptance exposed loss of public consequences before inference; it is
+not treated as the only cause of the preceding starvation losses. Complete
+terms review, exact native rewards/accepters, stale-offer/roster guards and
+cross-module interaction retry memory are now corrected in source.
+
+All 120 installed named quest scripts passed complete-field/tokenizer transport
+checks; automatic/internal scripts are included in that count. The Python suite
+passed 1223 tests, native guards and index-mutation selection passed, and the
+native bridge compiled. Actual cached Laya deferred the recorded deserter crisis
+and accepted a prepared trade fixture without any game/API command. This is
+offline evidence, not a successful colony or a guarantee of completing all quests.
+See the [quest audit](docs/audits/quest-prompts-native-contract-2026-10-07.md)
+for exact scope, script inventory and remaining live/monument gaps.
+
+
+## Quest-review candidate: one new random colony — 2026-10-07
+
+User authorized a new launch. Installed Python/package 3e7aa57, native source 75a0aea
+and DLL 1.10.0+75a0aea after 1223 tests, 310 routes and 120 quest-context checks.
+One random generation: Southwestern Hadussia Manifest League (Permadeath),
+tile 16155, world seed laya-quest-review-20261007, map seed 16622162,
+campaign 3323562a948840808815db9d068482ea; Cassandra/Medium.
+Baseline 22; autonomy 07:21:26.913835 UTC, normal 3x, CUDA with 4 CPU threads.
+No previous save/memory reused, no reroll/rollback or direct pawn orders.
+
+At 07:25:51 UTC tick 93175 all three founders 985/988/991 were alive,
+without downed/bleeding/conditions; 43 initial meals remained.
+Actual 23 walls/door/3 beds, room 60 fully roofed at 23.04C;
+the animal spot was outdoors. HarvestDesignated observed earlier, sustainable
+food and actual quest/reward completion remain unproved.
+Imperial ending selected alongside anomaly direction/raider diplomacy;
+their consistency needs actual observation. Disk save 88618 and later 88742
+verified the same campaign. One director/observer/read-only monitor, stderr 0.
+One pre-new-game NRE Ref 8B5D0CDC without original stack remains unresolved;
+Player.log did not grow after 07:20:18 UTC. Hourly heartbeat active,
+first full check 08:23 UTC. This is an ongoing run, not a survival success.
+
+Closing minute sample 07:28:25 UTC, tick 144397: all three alive without
+downed/conditions, food levels 0.924/0.864/0.996, 36 initial meals and a
+fully roofed bedroom at 23.31C. No hourly outcome is available yet.
+
+## First quest-review hour — 2026-10-07
+
+Same campaign 3323562a948840808815db9d068482ea, now named Roinor (Permadeath).
+Primary evidence 08:28:03 UTC / 1074902: all three founders alive after
+1h06m37s autonomous time, about 17.91 game days. Stock food/meals/raw 0;
+Sandoval and Noah had early Malnutrition. Across 65 minute samples there
+were no growing zones/crops, despite an active growing season. Raw food and
+meal replenishment did occur earlier; do not report complete absence of cooking.
+
+Bounded latest 100 decisions, 08:19:56–08:28:03 UTC: 66 hold_survival records,
+all single_feasible_action with only that candidate. Nine at-risk crop harvests
+were accepted: seven expected only WoodLog, one WoodLog/MedicineHerbal,
+one WoodLog/RawBerries. The model criterion said dying crops without these
+actual products; source permits arbitrary dying harvestable plants/trees.
+This is a confirmed meaning mismatch; indefinite looping is not established.
+
+Bonded Labrador Lilith 5045 died from native-confirmed Blood loss at 860978,
+between minute samples 08:13:16–08:14:18 UTC, about 52 minutes after autonomy.
+Her last four samples had 9 tendable wounds, quality 0 / ticks_left -1 and
+BloodLoss 0.324/0.520/0.706/0.902. Successful tending was not confirmed.
+An unrelated Beggars child's corpse is present; precise death cause/time unknown.
+
+Generator 1000W powered one 30W lamp; Cooler 45765 was off in a different network.
+26 fires/two home fires and a pyromaniac spree existed on the primary slice;
+observer's emergency 1x was justified, ticks moved and force_pause was false.
+Later closing 08:35:59 UTC / 1221140: all three still alive after 1h14m32s,
+no downed/bleeding/Malnutrition, food 17 (meal 1 / raw 16) / 1.7 nutrition,
+Sugar DoBill at Campfire 43337, Noah HaulToCell; Sandoval recovering FoodPoisoning.
+Fires 0 then; extinction cannot be attributed uniquely to pawns versus rain.
+
+Real research bench, Microelectronics 75/3000; no new permanent residents/sales.
+Intro_Wimp and Hospitality_Refugee offers expired unaccepted; Beggars failed.
+No actual new quest acceptance/reward verified. Production/logistics returned
+valid data / 19 options on this slice; earlier empty-body fault remains open.
+Same-campaign renamed disk save 1260000 / mtime 08:37:46 UTC checked stable;
+no save POST issued. Single services healthy, stderr 0, Player.log unchanged.
+GameOver/victory false; hourly monitoring ACTIVE, next 09:23 UTC.
+No runtime/game edits, pawn orders, replay, restart, rollback or memory reset.
+
+## Second quest-review hour and expanded verification — 2026-10-07
+
+Same Roinor campaign, installed runtime unchanged at package 3e7aa57/native 75a0aea.
+Primary 09:22:21 UTC / 2000507, closing 09:42:06 / 2316515:
+2h20m40s continuous autonomy, 38.61 game days from baseline 22.
+Founders lost from the map: Sugar 988 died at 1400386, observer 08:49:27 UTC,
+exact Scratch after a red-fox predation letter (1h28m); Sandoval 985 died at
+2004266, observer 09:23:27 UTC, exact Bruise / beaten to death after Berserk
+(2h02m). Killer unverified. Noah 991 was kidnapped at 2109028 by Blight Party,
+between 09:28:22 and 09:29:25 minute slices; not recorded as dead.
+Hanson 78079 is the emergency man in black, not planned recruitment.
+GameOver/victory remain false.
+
+New animal loss: colony rhinoceros 39292 executed by cutting at 2040602 after
+Noah's Slaughterer 2040038 / Malnourished. Earlier bonded Labrador blood-loss
+death remains a separate, already recorded event. Rhino's last observed
+Obedience/Release were unlearned, unwanted, no master/follow_drafted; sampled
+tameness steps 4 to 1. Wild prey are excluded from pet losses.
+
+Sixteen self_tend_985 attempts 09:19:58–09:22:16 rejected
+care_actor_or_patient_changed; actor remained drafted/Wait_Combat while the
+only observed hostile was downed. No completed care. Her subsequent beating
+death is not attributed solely to this delay. Thirteen at-risk crop harvests
+in primary100: nine wood-only, two herbs/wood, one herbs, one berries.
+Twenty-three elective augmentation choices in closing100 were deferred;
+no surgery or stocked bionic/prosthetic part. The same patient became hungry/downed.
+
+Two growing zones finally appeared, both roses, 45/46 cells, edible yield 0;
+fertility 1.0, year-round temperate forest. Five beds in three roofed rooms
+17.5–19.6C, but primary barracks cleanliness -13.4/hospital -4.33 and corpse
+contamination. Stove/cooler off, generator empty/output zero at closing;
+earlier networks differed. Microelectronics 75 to 77/3000; trade ledger empty,
+no comms/beacon, no planned permanent population gain or completed ending milestone.
+
+User requested verification of pictures/layout, losses/raids and colony plans.
+Added docs/COLONY_VERIFICATION.md and a saved-evidence-only card/layout utility
+tools/colony_verification.py, five targeted tests passed. Actual cards were
+generated for this run and the prior cold colony; no game/runtime behavior changed.
+Base PNG verified between 2300371–2300384 at 09:39:08 UTC. Only camera/UI capture;
+no jobs, speed, pause, save or memory commands. Native screenshot required
+snake_case fields; HideUI did not visibly clear the interface. Five archived
+raid announcements: two older threats disappeared across repeated minute
+slices with all founders alive, one encounter unobserved, one downed attacker
+in the later defense, latest raid kidnapped Noah. Complete attacker fates / a
+count of clean repelled raids remain unverified.
+
+Closing Hanson downed/hunger0, infection0.905/immunity1.0, raw34/1.7nutrition.
+Later 09:59:41 UTC / 2608819: still alive, mobile; infection, malnutrition and
+poisoning gone, hunger rose 0.065 to 0.258, Ingest then BeatFire. Recovery/food
+are observed, stable supply is not: raw1/0.05nutrition, meals0. Campaign ongoing.
+Disk 2280000 / mtime09:36:59 UTC verified; services healthy, stderr0,
+Player.log still old3331bytes. Reports and comparison retained in private outputs.
+No full decision history read; each tail at most8MB/100records. Hourly ACTIVE,
+next10:23 UTC, expanded assessment now in the automation prompt.
+
+## Quest-review colony concluded by user; 0.0.8 corrections — 2026-10-07
+
+Single landing, 07:21:26–10:27:09 UTC, **3h05m43s**, 44.82 game days, no
+rollback or technical pause during autonomy. Founder A died of Scratch at
+1400386 (08:49:27 observation); Founder B died of Bruise at2004266
+(09:23:27 observation). Founder C was kidnapped at2109028: death unverified.
+The bonded dog died of Blood loss860978; the tamed rhinoceros was executed
+by cutting2040602 during a starvation-triggered Slaughterer break. A later
+arrival's Burn death2679614 is recorded separately, membership unverified.
+Original founders lost; final campaign nativeGameOver=false/victory=false:
+the man in black was alive/downed/catatonic/hunger0, and a fresh quest arrival
+was healthy and performing Rescue. User ended this run; do not fabricate a
+complete native defeat or attribute every loss to the same code defect.
+
+Final2689439: food0/medicine0, no surviving real beds/research bench/generator/
+stove. Sleeping spots outdoors, major fire visible in the final base screenshot,
+roof-collapse letters. Several raid letters, last late attack2580000, do not
+establish how many raids were repelled. Microelectronics77/3000, completed
+sales0. Initial shelter succeeded; sustainable food, permanent growth and a
+compatible ending plan did not. Full private report has named outcomes,
+screenshots, map coordinates, bounded decision samples and save evidence.
+
+Stopped the one director, observer and monitor, paused scheduled observation,
+verified XML2689439/mtime10:27:35UTC and campaign, copied final save, then closed
+RimWorld. Their last 'running' status files precede termination, not proof of
+continued processes. No new map was generated during the repairs.
+
+Recovery audit: [root causes and limits](docs/audits/roinor-recovery-2026-10-07.md).
+1235 tests,311 routes(no missing literal calls/duplicates), native build0warnings/
+0errors, six actual predator-intent boundary cases. Cached-model crop replay
+now selects human food for both option orders; startup replay exits equipment
+to hunting after two observed offline acknowledgments. Live completion remains
+unverified. Development continues as0.0.8; published0.0.7 advanced to stablemain
+anddeveloping without force. Obsolete merged branch names removed; historical
+clean checkouts preserved detached. Branch rename closed oldPR4, so a replacement
+candidate PR carries its continuation.
+
+## Candidate 0.0.8: one new random landing — 2026-10-07
+
+After offline repairs, source29df0ef and package2a3572d were pushed to
+feature/0.0.8, draftPR5 into developing. Both native installs hash-match
+DLL1.10.0+29df0ef; runtime files and rebuilt0.0.8GUI verified, backups retained.
+Stablemain/developing remain publishedv0.0.7, not this working candidate.
+Random tile10598, one generation, Cassandra/Medium/permadeath, no previous
+save/memory reuse. Autonomy began11:11:50UTC, baseline22; normal3x.
+First hourly observation no earlier12:13UTC/15:13MSK. Automationlaya ACTIVE.
+
+Startup11:14:53UTC/65760: three founders alive, no new injuries/downed/bleeding.
+One has an initial prosthetic leg and missing replaced components, not a new
+operation. Two cannot fight fires, one cannot cook, one cannot perform medicine;
+workforce limitations must remain visible. Food51meals/45.9nutrition, medicine34,
+outside14.10C/growthseasontrue. Native orders unlocked supplies and built
+22walls/door/3beds/torch; room23 remains outdoors(openroof58777), so neither
+this physical inventory nor the screenshot proves completed shelter.
+Fields, sustainable production, sales and permanent growth unverified.
+
+One visible game, CUDA director4CPU, observer and read-onlymonitor verified;
+venv parent/child pairs are one logical worker. Stderr0. Actual ticks grew after
+save; XML60000/mtime11:14:35UTC/campaign verified. Logistics returned realJSON
+12then17options; this does not close every future serialization boundary.
+Screenshot, native positions, comparison card and SVG retained privately.
+Solitary pre-generation NRE still lacks a stack. No manual pawn orders,
+diagnostic gameplay replay, rollback or second landing were used.
+
+## Candidate 0.0.8: first hourly observation — 2026-10-07
+
+Same tile10598/campaign and installed package2a3572d/native29df0ef, renamed
+Lenrobum. Primary12:16:05UTC/990966:1h04m15s continuous autonomy,16.52game
+days. Closing12:20:39/1002224:1h08m48s; all three founders alive, GameOver/
+victoryfalse. No restart, rollback, technical pause or manual memory reset.
+Food/meals/raw/reachable nutrition0; founderA Malnutrition0.806/downed outside,
+founderB0.447/mobile, founderC0.803/downed in bed. Real founderB Rescue targetA,
+bed53349 observed; no pickup/food yet. health1.0 does not negate starvation.
+
+First field appeared at513281/~8.55game days after landing. Primary13zones:
+two potato, six hops, five cotton;87actual potato plants~12.7%/9.21days to
+harvest, no harvestable crops. Closing14zones. Earlier raw food and replenished
+meals did occur, including meals1to11; do not report complete lack of cooking.
+Since11:57:18 minute stocks remained0;26of62food0 samples include the initially
+forbidden baseline. Campfire fueled18.41/20, active meal bill; nearby butcher
+spot/active Forever bill. Production/logistics validJSON/23options; no current
+ingredients ready. More production setup alone has not sustained nutrition.
+
+Bounded64decisions12:04:43–12:15:53(last8MB, not whole history):23configure_crop,
+including exact potato-to-hops changes on zones7,3,10,12 over5–6minutes. Two new
+plots selected psychoid/hops. This is accepted reconfiguration, not measured
+destruction of every plant or a claim of indefinite looping. Actual prompt has
+food0/hunger0/runway0 but potential8.3nutrition/day versus demand4.8,
+renewable_food_gapfalse. Source only preserves food plots/enforces edible choices
+while potential capacity is inadequate: future crops unlock nonfood changes
+despite empty inventory and harvest days away. Confirmed guard weakness; not
+the sole established cause of starvation. Criterion/context truncation also
+observed; total absence of food context disproved.
+
+Bonded initial monkey died at708683, between11:46:52–11:47:54UTC(~36minutes),
+native letter beaten to death. Same-campaign XML healthStateDead and finalBruise
+combatLogText identify second-raid attacker. Flu had been tended quality0.230;
+last immunity0.602>illness0.513. Do not attribute this death to absent flu care.
+Current tamed squirrel healthy; no new completed training. Three raid arrivals
+324000/706000/820000; first two observed attackers later corpses, third Flee/
+downed. Founders survived, pet lost; complete repelled-raid count unverified.
+
+Physical shelter useful: original three beds room47roofed; by closing new room50
+also roofed/three beds,23.4–23.6C. Animal spot outside.54wooden walls/2doors,
+stonecutter/table/chair,3shelves, unpowered standing lamp without generator/
+conduits. Art bench frame and45concrete floor frames started during starvation;
+researchbench absent/currentnone, no completed sales. Screenshot/native
+coordinates/card/SVG inspected. Room cleanliness-2.6, dead human near new house;
+no exact sanitation/path causality inferred.
+
+Skylantern ritual began12:13:45 during starvation, occupied two workers about
+three game hours. Real beautiful result70%,+6mood, visitors and offered joiner;
+offer not accepted/three residents at closing. Taming wild human and active
+rescue quest have not produced another worker. Orbital income attempt rejected
+for missing research bench; doctrine imperial ascent/anomaly/raiding still lacks
+completed compatible milestones. Positive ritual result and labor cost retained
+separately. Comparison with previous first hour: fields earlier but unstable
+food unchanged; previous dog blood-loss death is not this monkey's combat loss.
+
+Single game/CUDA4CPUdirector/observer/read-onlymonitor healthy, fresh heartbeats,
+stderr0. Emergency1x from starvation, actual ticks grow, no force_pause windows.
+Disk Lenrobum XML960000/mtime12:04:17UTC/campaign stable; not latest tick save.
+No savePOST issued. Old startupNRE has no new repeats, zone-on-marble warnings
+added. Hourly ACTIVE, next13:13UTC. Private report/evidence includes named
+outcomes and PNG12:18:56UTC; camera-only capture, no runtime/game corrections.
+Final read-only12:28:18UTC/1021112:1h16m28s, all three alive/nativeendingfalse.
+FounderA now actually in bed53349 after Rescue; founderC bed38017. All satiety0,
+stockfood0; MalnutritionA0.937/C0.938/B0.612. Delivery to bed confirmed, feeding
+not confirmed. Mobile B FinishFrame54005; ritual joiner offer remains unaccepted.
+Single services fresh/emergency1x. No new human death at this final check.
+
+## Candidate 0.0.8: second hourly observation — 2026-10-07
+
+Same Lenrobum/tile10598/campaign, no restart/rollback/pause or memory reset.
+Primary13:14:06UTC/1315565:2h02m16s continuous autonomy,21.93game days.
+FounderC died of Malnutrition1029878, observer12:31:53UTC:1h20m03s from
+landing. FounderA Malnutrition1030230,12:32:13UTC:1h20m24s. Exact native
+culprit, Death letters and XML Dead agree; wall times are observer detection.
+Nine later Unknown/ticknull captions repeat founderA's one death, not nine
+additional deaths. Observer deduplication remains an open reporting defect.
+
+FounderB survives. Ritual-offered joiner actually arrived at1052177; real
+cooking/harvest/construction jobs observed. XML faction14/kindColonist,
+hostFactionnull and hidden WandererJoins3 endedSuccess confirm joining.
+Quest3.pawn tag remains; do not infer temporary guest status from the tag.
+Existing go-juice dependency/scar are not new infection or implantation.
+Stock/satiety0 again. Short food pulses and feeding occurred:2meals/5raw
+at12:43UTC, later10raw;38of44minute stocks since prior closing0. Sustainable
+nutrition still fails, not a claim that no cooking or feeding ever happened.
+
+Primary26plots:12hops/9cotton,1each potato/corn/tinctoria/nutrifungus/fibercorn.
+Seven of68actual potato plants natively harvestable/alreadydesignated; most
+future crop estimates are days away.11configure_crop in14primary bounded
+decisions;30in40closing decisions. Future capacity guard weakness remains.
+New event emergency_harvest rejected13:11:47 for no verified mature plant.
+Saved native21092plant DTOs all use thing_id/harvestable_now and no id;
+event executor10673 reads id/can_harvest/is_harvestable. Confirmed contract
+mismatch, independently of the ordinary harvest path. No live replay/fix;
+neither the mismatch nor one failed action alone establishes death causation.
+
+Six roofed human beds persist; animal spot outdoors. Art bench completed but
+bills0; no completed sales or researchbench/currentresearch. Unpowered lamps,
+no generator/conduits. Native Heatwave1308000; similar heatwave offer remains
+unaccepted, do not blame accepted quest. At closing13:21:21UTC/1334195 all
+two residents alive/GameOverfalse/victoryfalse: founderB Malnutrition0.755,
+joiner0.328, satiety0/bothFinishFrame. Outside40.7C/bedrooms37.9and36.7C,
+no Heatstroke yet. Fueled PassiveCooler built; adequate cooling unverified.
+Third steel house/three additional beds planned:40projects while food0.
+Native Starving tantrum for founderB and unburied-colonist tantrum for joiner.
+
+No new colony-pet death found; earlier monkey raid death unchanged. A bison
+self-tamed1220000, not a completed Laya tame. No new raid letters this hour;
+old full repelled count unverified. FounderB now rifle/joinerautopistol.
+Imperial/anomaly/raider doctrine unchanged, no completed ending milestone.
+Silver stock not profit. True PNG13:16:00/ticks1320331–1320334 inspected;
+card/SVG compare crops/base/animals/raids/growth/economy with prior hour.
+
+One visible game/CUDA4CPUdirector/observer/read-onlymonitor fresh/stderr0,
+ticks advance/no force_pause. Native starvation1x, no manual speed orders.
+XML1320000/mtime13:15:52UTC/campaign stable; no savePOST. Player.log3801bytes
+unchanged, old startup NRE not reclassified. Only bounded8MB/max100decisions,
+camera-only capture; no runtime edits or gameplay commands. Automation ACTIVE,
+next14:13UTC/17:13MSK. Named report and evidence retained privately.
+
+## Candidate 0.0.8: third hourly observation — 2026-10-07
+
+Same Lenrobum/tile10598/campaign/package2a3572d/native29df0ef. Primary
+14:14:08UTC/1577071:3h02m18s uninterrupted autonomy,26.28game days.
+Last founderB died Malnutrition1362449, observer13:32:16.777028UTC:
+2h20m26s from landing. Exact culprit, native Death letter and XML Dead/
+Malnutrition1 agree. All original founders lost; complete campaign defeat
+still false. Earlier founderA/C deaths unchanged, not new observations.
+
+Only joined worker remains. Primary hunger0/Malnutrition0.321/Repair; closing
+14:21:27UTC/1594299 hunger0.612/Malnutrition0.375/Repair, alive/mobile/no
+bleeding/nativeGameOverfalse/victoryfalse. FoodPoisoning0.913 new, source
+unverified; existing go-juice deficiency1.807, not immune disease. Real food
+intake occurred:49of50minute stocks0, one3meals/4raw pulse. Native HideInRoom
+1448718 final straw Ate human meat; meat source/command/poisoning cause unknown.
+
+Primary39of52potatoes harvestable/expected353product, closing29of34/266;
+potential yield not delivered food, missing plants not solely blamed on fire.
+31growing zones now19tinctoria/9cotton/2nutrifungus/1potato. Prior plants
+remain despite new settings. No sampled HarvestDesignated for remaining worker
+in50minutes; shorter work between samples not excluded. Plants0 but capability
+enabled/GrowingandPlantCuttingpriority1; no fabricated skill prohibition.
+
+Bounded100decisions14:05:51–14:14:03UTC:96hold_survival,4expand_home_area;
+69candidate lists onlyhold, so not96independent model refusals. Actual context
+food0/runway0/hunger0. Native home fire and Firefighter.disabledtrue coincide
+with source focus_active_fire_choices2803: homefire retainscare/wait, dropping
+harvest without checking a firefighter exists. Confirmed suppression rule,
+likely contribution to observed waiting; other guards/cooldowns not excluded,
+no live pipeline replay or sole-cause proof. Previous emergency_harvest contract
+mismatch remains open; ordinary harvesting is a separate path.
+
+Fire127/36home primary,306/111home closing. Roofed bedrooms108.76C/426.06C,
+third22.99C; outside21.81C. Centered real PNG14:22:32UTC/ticks1597200–1597203
+shows two houses burning and the remaining worker in third. Eight real beds/
+three roofed rooms for one resident,103walls/6doors; steel shell does not prove
+combustible contents safe. Both animal beds outside; squirrel/bison alive,
+no new verified pet loss. New raid1505000/currenthostiles0, full outcome and
+possible involvement of visiting combat supplier unverified; not counted as
+a confirmed Laya repelled raid. Fire cause not established by raid timing.
+
+Campfire fueled5.45/20, two passivecoolers9.24and10.72/50, butcher/bills present;
+no electrical network/researchbench/currentresearch, artbenchbills0/sales0.
+Silver857stock, not income. Doctrine ending has no completed new milestone.
+
+One visible responsive game/CUDA4CPUdirector/observer/read-onlymonitor fresh,
+actual tick growth/no force_pause. Normal target3x, native fire emergency1x;
+current worker no thermal condition, not safe-room proof. Director stderr201bytes
+new Transformers warning10485tokens>8192; director continues, crash/index error
+not established. Other stderr0, Player.log3801bytes unchanged. SaveXML1560000/
+mtime14:07:07UTC/campaignstable, no savePOST. Only8MB/max100decisiontail,
+camera-only captures, no runtime edits/orders/pause/restart/rollback/reset.
+Private report/card/SVG/deathXML/firefilterproof saved; automation ACTIVE,
+next15:13UTC/18:13MSK. Complete native defeat/victory not established.
+
+## Candidate 0.0.8: fourth hourly observation — 2026-10-07
+
+Same campaign/tile10598/package2a3572d/native29df0ef; primary15:13:29UTC,
+tick1808720:4h01m39s uninterrupted autonomy,30.14game days. Closing15:22:04UTC,
+1944354:4h10m14s,32.41game days. No new verified human death, native complete
+GameOver/victoryfalse. All previous founder hunger deaths remain recorded.
+
+A man in black arrived1706598, first observed14:48:06UTC. Native letter and
+XML StrangerInBlack/player faction confirm storyteller aid, not planned Laya
+recruitment or a quest reward. Initial permanent arm/leg scars are not new.
+Actual Rescue targeted joined worker/bed at14:48and14:49; worker in that bed
+14:50with satiety0.880, mobile again14:52. Delivery and nutrition verified,
+exact feeder/source/issuing model decision unverified. Closing joined worker
+no Malnutrition/FoodPoisoning, satiety0.134/DoBill; rescuer0.392/Sow. Both mobile,
+no bleeding. Existing go-juice deficiency worsened1.807->2.973, supply absent.
+
+Raw potatoes88/nutrition4.4/meals0 at primary and closing.44of50minute stock
+samples since previous closing0; short unsampled cooking is not excluded.
+New worker Harvest13of25sampled jobs, real crop acquisition. Primary campfire
+empty/WoodLog0 despite ingredients; closing actually fueled19.35/20/WoodLog9.
+DoBill target or completed cooking unverified; stock meals still0.
+
+Primary bounded100choices14:55:35–15:13:22UTC include84configure_crop:
+40cotton,39tinctoria,3potato,2corn. Same zones switch food->nonfood and cycle
+cotton/tinctoria; accepted settings not completed crops or proof of destroying
+each old plant. Primary36plots:16cotton/13tinctoria/5nutrifungus/2corn; closing
+38:18cotton/14tinctoria/5nutrifungus/1corn. No configured potato zone despite
+old potato plants. Future-capacity protection and emergency-harvest DTO mismatch
+remain open. No hold_survival in primary bounded tail after fire stopped;
+this is not a code fix of the fire-focus suppression rule.
+
+Sampled fire peak332; first0 at14:31:24UTC/FoggyRain. Exact extinguishing cause
+unknown, not attributed to joined worker who cannot firefight. RoofCollapse
+1619331 crushed torch73%. Beds8->3, walls103->80, doors6->4 after fire; no built
+passivecooler remains. One intact roofed bedroom17.31C primary/24.27C closing,
+three beds; animal spots outside. Additional bed/cooler remain projects. Real
+PNG15:15:39UTC/ticks1842319–1842337 inspected, shows fire damage. Separate
+API/photo/XML times retained. New physical simple research bench157,135 first
+sampled15:00:41; native Autodoors can_start_now/appropriate_benchtrue. Current
+researchnone/bothResearchpriority0/no newly completed project. Artbenchbills0,
+no confirmed sales or ending milestone, silver857stock; hops102->332 not food.
+
+Squirrel healthy; bison last alive14:26:10UTC/1607117, mental state/Goto near
+map edge, no enclosed pen. Subsequently absent from API and XML1860000;
+no death letter/corpse. Fate unknown, not recorded as killed. Current handlers
+Animals0 are below squirrel8/bison6 requirement. No new verified pet death or
+new raid announcement; old raid outcomes still partial, no fabricated repelled
+count. New worker is storyteller aid, not a confirmed completed quest.
+
+Same visible game/CUDA4CPUdirector/observer/read-onlymonitor, fresh running
+status/real ticks advancing/no force_pause, observer normal3x. Director stderr
+201bytes unchanged (old10485tokens>8192warning), others0. Player.log4106bytes:
+new Direct3D timing warnings, no new NRE. Logistics JSON14options/recipes3 is
+a positive reading, not proof prior empty200 fixed. Save1920000/mtime15:20:16UTC/
+campaign stable. Only bounded8MB/max100decisions per capture, no savePOST.
+Camera and reporting only: no runtime edits/orders/speed/pause/restart/rollback/
+memory reset/live replay. Private report/card/SVG/care/crop/bison evidence saved;
+automation ACTIVE, next16:13UTC/19:13MSK. Complete campaign outcome not verified.
+
+## Candidate 0.0.8: fifth hourly observation — 2026-10-07
+
+Same campaign/tile10598/package2a3572d/native29df0ef. Primary16:13:25UTC,
+2347655:5h01m35s uninterrupted autonomy,39.13game days. Closing16:18:57UTC,
+2360865:5h07m07s,39.35game days. Both remaining colonists alive/mobile/no
+bleeding, native complete GameOver/victoryfalse. Earlier founder losses unchanged.
+No new verified colony-member death; neutral refugee loss recorded separately.
+
+Food/raw/meals0 and both satiety0 again. Closing rescuer Malnutrition0.640,
+joined worker0.459; bothRepair.35of49minute stock samples0, max59food/3meals:
+short actual cooking/intake happened, not sustainable supply. Campfire0/20,
+torch0/20, WoodLog0; active meal/butcher bills persist. Cooler still blueprint
+needs50wood/available0. Broad equal work priorities did not secure nutrition.
+
+Bounded100choices15:54:28–16:13:19UTC include83configure_crop:42hops/35cotton/
+5potato/1fibercorn. Same zones35/21/20/3 potato->hops, repeatedcotton/hops.
+Actual contextfood0/hunger0 includesberry harvest and9safehunt options; not
+complete loss of hunger context. Primary50plots:25hops/15cotton/6nutrifungus/
+2fibercorn/1potato/1tinctoria; closing21hops/19cotton/other counts unchanged.
+Actual food plants:potato0,fungi5unharvestable,corn1unharvestable.669total
+plants includesgrass/commercial crops, not a food reserve. Growthseasontrue.
+Earlier future-capacity protection/emergency-harvest DTO issues remain open.
+
+New raid2181000. Rescuer actualAttackStatic targeted known pigskin79441 at
+2193048. XML corpse Dead and Gunshot combatLogText confirm rescuer revolver
+hits2190306/2190723/2193946. Rescuer lost right arm2192617 to that raider's
+autopistol, exact XML combatLogText; first sampled15:38:33UTC, previous
+15:37:31without loss. Hand/fingers are descendants of one arm loss, not separate
+new ten-part events. Full raid roster/terminal cause/loot/kidnapping unverified;
+not counted as fully verified repelled raid. Currenthostiles0 alone is insufficient.
+Closing rescuer manipulation0.32/moving0.57, overallhealth1 despite missingarm.
+
+Transport relative/refugee77707 arrived2094000, found Dead in same-campaign
+XML2340000/factionnull/SpaceRefugee/BloodLoss1. Never verified colony member.
+Death tick/exact culprit/full rescue-attempt history unknown. New second pod
+2288000 has unknown outcome, not assumed dead or rescued. Native Beggars now
+EndedSuccess but item transfer/reward not independently verified. Deserter and
+hospitality offers expired unaccepted. RoyalAscent newNotYetAccepted; logging
+site observedOngoing not completed expedition. Older refugee quest failed state
+was already present before this hour, not reclassified as a new failure.
+
+Joined worker go-juice deficiency2.973->4.362, no verified supply. New dependency
+tantrum/advanced-starvation hallucination/hunger tantrum letters. Ingest target
+79724 at15:52:13 corresponds known raider corpse; intake/result/policy issuer
+not fully established. Both food and dependency remain actionable risks.
+
+Four human beds in two roofed rooms21.11C/18.71C closing, walls80/doors3.
+Diningtable/chair/electriclamp missing since previous hour; exact cause of each
+removal unverified despite tantrum letters. No new fires. Real PNG16:15:49UTC/
+ticks2353662–2353665 inspected; protected human rooms/scattered plots visible,
+animal spots outdoors. Native Batteries selected15:22:46, progress2by15:23:49,
+still2/400 primary/closing; no sampled Research job or newly finished project.
+RescuerResearchpriority1/joiner0. Artbenchbills0/no verified new sales,
+silver857stock/hops83not food or income; no completed ending milestone.
+
+Squirrel alive/Tameness4->3of5, wantedtrue but handlersAnimals0 below8.
+Handlingpriority1 does not establish training. Bison still missing with no new
+death/escape proof; no new verified player-pet death. Old raid outcomes remain
+partial. Report/card/SVG/crop/battle/XML/quest-state evidence retained privately.
+
+Same visible responsive game/CUDA4CPUdirector/observer/read-onlymonitor fresh,
+actual ticks advance/no force_pause. Observer1x withcritical_starvationtrue/
+other_emergency is a slowdown, not a freeze. Stderr201bytes unchanged for
+director, otherstderr0; old model10485tokens>8192warning still unresolved.
+SaveXML2340000/mtime16:11:02UTC/campaignstable, no savePOST. Only bounded
+8MB/max100decisions per capture; file about238MB. Camera/reporting only, no
+runtime edits/orders/speed changes/pause/restart/rollback/reset/live replay.
+Automation ACTIVE, next17:13UTC/20:13MSK; complete campaign outcome unverified.
+
+## 2026-10-07 — candidate 0.0.8 terminal outcome (Lenrobum)
+
+One random map, Cassandra/Medium, Permadeath; autonomy 11:11:50–16:47:49 UTC,
+5h35m59s / 40.53 game days. Native GameOver tick2431617, matching campaign,
+zero colonists/caravans, victory=false. Director, observer and read-only monitor
+ended normally on native confirmation; no technical pause, restart, rollback
+or memory reset during this run. Hourly automation paused for user-authorized
+corrections and a new test colony after verification.
+
+All three founders and both later permanent inhabitants died of Malnutrition,
+confirmed by native letters and exact culprit. Founder loss ticks1029878,
+1030230,1362449; later losses2410253,2431218. The latest disk save2400000
+predates the final deaths; terminal API/letters/observer, not that XML, prove
+full defeat. The previous monkey combat death is unchanged; the living squirrel
+has declining tameness, the missing bison's fate remains unknown. Partial raid
+results do not establish a complete repelled-raid count.
+
+Food was acquired, cooked and consumed intermittently, but last28minute samples
+had stock/meals0. Future crop capacity incorrectly lifted food protection before
+harvest, while crop configuration repeatedly displaced food work. First field
+at8.55game days; final51zones predominantly cotton/dye. The emergency event
+harvest DTO mismatch and fire focus without a capable firefighter remain
+confirmed defects. Both late inhabitants became downed before terminal waiting;
+all42final hold rows had one candidate, not42 model refusals. No new completed
+research, verified sales or ending milestone; silver+108 was a gift. Roofed
+housing survived but empty fuel and missing food made it insufficient.
+
+Private report outputs/colony-008-final-20261007-2013.md; read-only evidence,
+terminal card, exact death chronology and inspected base PNG in this run folder.
+No source/game changes were made during hourly observation. Fixes and the next
+campaign must be verified and documented separately.
+
+## 2026-10-07 — candidate 0.0.8 food commitment fixes and Dayouinum start
+
+User-authorized corrections after Lenrobum's native defeat, then one random
+new colony. Source 7b1e810, package d2b476b, installed DLL 1.10.0+7b1e810;
+payload SHA256 verified. 1245 Python tests, 311-route contract audit and
+Release-1.6 build pass with zero warnings/errors. Local cached-model replays
+on the former campaign's food-crisis slices selected food work and retained
+the edible crop across persisted global dwell checks. Offline verification
+does not guarantee a live colony's survival. No 0.0.8 release or tag created.
+
+Corrections separate reserve/first-harvest timing from potential crop capacity,
+preserve edible planting, enforce cross-actor/plot crop dwell, fix emergency
+harvest native DTO and food exclusion by fire focus without a firefighter,
+raise a selected food worker above equal-priority routine tasks, and exclude
+empty-store/healthy-animal/unexecutable-kitchen distractions during shortage.
+Observer death captions deduplicate a pawn already announced; tokenizer fit
+probes are bounded. Audit docs/audits/lenrobum-food-commitment-2026-10-07.md.
+
+Dayouinum (Permadeath), random tile51033, world seed
+laya-food-commitment-008-20261007, map16622162, Cassandra/Medium,
+campaign1e4b7bc1228b42f282d6a7dbcca28884. One generation, baseline20,
+autonomy18:23:57UTC/21:23:57MSK. No restart, rollback, manual pawn orders or
+memory reset after autonomy began. Different campaign from all prior runs.
+Initial -32.27C/no growing season; all founders cannot Research/DarkStudy.
+Unforbidding supplies,13walls/door/campfire/3sleeping spots completed by Laya;
+room37 roofed and21.50C by18:29, then26.73C. That did not establish rescue.
+
+Founder286 died Hypothermia58685, observer18:37:07UTC,13m11s from start;
+founder289 Hypothermia59261,18:37:27UTC,13m31s. Both remained outside the warm
+house. Founder292 BloodLoss92945,18:43:16UTC,19m20s; fresh megaspider wounds,
+LayDown targeted bed37788 but actual position161,72 was far from184,174;
+physical bed placement was not proved. Severe bleeding documented. All human exact
+culprit/native letters agree. Labrador30406 BloodLoss94331 native letter;
+wall-clock death time/killer not established. These new cold/care failures
+are recorded separately and are not claimed fixed by the earlier food patch.
+
+Native StrangerInBlack38032 joined81325: storyteller rescue, not a planned
+hire or verified quest reward. Closing18:47:07UTC/175840 only this inhabitant
+alive, health1/hunger0.808/LayDown/no bleeding/downed. Native GameOver and
+victory false, campaign continues after complete founder loss. Stock94food/
+47.2nutrition/27medicine, campfire0fuel, roofed bedroom-23.47C/outside-25.13C:
+stored food and a roof do not establish sustainable supply or adequate warmth.
+No confirmed completed raid, sales, research or ending step. No fields/power
+network/research bench/commercial output; all routes and rescue order history
+are not yet fully assessed. Real inspected PNG18:31 predates deaths/late cold.
+
+One visible game/CUDA4CPUdirector/observer/read-onlymonitor, real commands
+verified, statuses fresh, stderr0, force_pausefalse, ticks175840->176643.
+AutosaveXML120000/mtime18:44:45UTC/campaign stable, older than final API tick;
+technical startup saves16680/48432 separately recorded. Old pre-generation
+NRERef335BBC32 remains unexplained, no new repeat at final check. Private
+report outputs/colony-008-food-commitment-20261007.md and current run's
+review-20261007-184706 evidence/card/SVG/death records. First full hourly
+review no earlier than19:25UTC/22:25MSK; continue this same campaign without
+source/game changes during observation, stop only on native full ending.
+
+## 2026-10-07 — Dayouinum native defeat at first hourly review
+
+Same one-random-map campaign1e4b7bc1228b42f282d6a7dbcca28884, tile51033,
+Cassandra/Medium/Permadeath. Native GameOver934203, observer19:18:19UTC,
+54m22s continuous autonomy /15.57 game days from baseline20. Review19:28:59UTC
+paused934368, zero people/caravans, victoryfalse. Director/observer/monitor
+ended normally on native confirmation; visible game remains responsive.
+No technical pause, restart, rollback or memory reset during the run.
+
+New verified loss is kidnapping of sole replacement38032 by Pest Army791905,
+native letter plus kidnapped_pawns/health0.619. Last seen alive19:14:27UTC/
+788197, first absent19:15:28/812442; wall-clock is only an interval. No
+confirmed death of this inhabitant. Previously recorded founder286/289
+Hypothermia58685/59261, founder292 BloodLoss92945 and Labrador30406
+BloodLoss94331 unchanged; do not count this kidnapping as another death.
+
+Base still13woodwalls/1door/3sleeping spots; roofed room37,18.69C at finale,
+outside17.65C, campfire0fuel. Earlier room min-28.11/max29.68C in minute
+samples, failed actual warm rescue already documented. Two butcher spots
+157,69 and162,177, one bill each/campfire one bill; recreation pin added.
+No electrical network, research bench, fields, commercial workshop or new
+research.55minute samples all growing_zones/crop_plants0; seasonfalse.
+No full route verification. Real inspected PNG19:32:52UTC/934368 shows
+compact house near mountains, no completed defense line; hide_ui retained UI.
+
+Nutrition8.85 remains/23meals+1raw, medicine31.54of55stock samples nonzero,
+sole zero at forbidden-supplies baseline. Actual repeated Ingest and one
+campfire DoBill observed; source of each stack/long-term output unverified.
+Different failure path from earlier starvation: cold/clinical founder losses,
+then raid kidnapping despite stored food. Cold biome cannot certify edible
+crop preservation and all food-loop regressions. No recorded sales/ledger
+entries or new ending milestone; anomaly_level0 after sampled investigations.
+Doctrine imperial/anomaly/raider still lacks demonstrated coherent execution.
+
+Raid announcements324000/787000; complete first outcome unknown, second
+confirmed kidnapped sole resident. Not recorded as two repelled raids. Bounded
+last100choices19:06:08-19:18:19: positioning/cover without attacking IDs,
+later focus-fire with attacking38032, then accepted melee and three empty
+appliedfalse no-ops. Later inspection confirms commands=[] on those three;
+they preserved the current job, not three failed reissued attacks. Completion unverified; this sequence does not establish
+the sole cause of loss.12hold rows after worker absence interleaved with other
+choices; zero-worker waiting is not rescue. Future correction needs actual
+combat/cold-care sequence evidence, not assumed HTTP completion.
+
+## 2026-10-07 — Dayouinum corrections and shutdown at user request
+
+The same campaign's final paused tick934368 was saved on disk19:48:27UTC,
+XML/campaign/mtime verified, then native quit succeeded; RimWorld process absent.
+Director, observer and private monitor already exited at native defeat. Automation
+laya remains PAUSED. No new colony, restart, rollback, memory reset or live replay.
+
+Recorded31104 exposes a nonbleeding downed patient with Hypothermia0.643,
+life_threatening=true, frostbite tending active, while roofed bedroom37 was21.50C.
+The previous exact-care yield supported starvation only: life-threatening cold
+blocked the transition from TendPatient to Rescue, and rescue tied to food feasibility.
+Thermal rescue now has a separate exact same-patient clinical binding, native usable
+roofed bed at safe temperature and route checks, repeated at POST. It requires no
+food. Bleeding, immune disease, feeding, lifted patients and queued care stay protected.
+A sick but mobile idle caregiver may be natively considered for this rescue.
+
+The main pipeline compares the thermal response before wound-only care, then its
+exact native actor/patient. Tending frostbite is explicitly not warming. Native
+rescue examines completed safe-temperature beds instead of accepting a nearest
+outdoor spot. Detailed downed/dead caregiver flags are respected; unchanged failed
+care pairs wait at least30real seconds and2000ticks, other patients remain available
+and a material clinical change or rollback reopens the pair. Routine nonbleeding
+care avoids known hostile approaches. Clear shots from the current position preserve
+an exact ongoing AttackStatic. Empty-map development offers no new building/doctrine;
+native world/ending evidence still determines the outcome.
+
+Building telemetry now exports current temperature, room and roof. Refuel prompts
+distinguish an empty cold campfire from auto_refuel configuration. Neither this
+context correction nor accepted jobs prove completed heat maintenance or recovery.
+
+QA:1256Python tests,311route audit/no missing literal calls or duplicates,
+native Release-1.6 zero warnings/errors,8actual native thermal-transfer boundary
+cases. Cached-model CUDA/4CPU full thermal sequence chooses rescue in both native
+option orders and preserves it through8following cycles. This is fixture-native
+feasibility plus offline model/transport, not a live safe-route or warming proof.
+Early direct-ID prompts still chose defer; the final response-then-binding pipeline
+is the tested correction. Generic three-way wound/rescue prompt optimization does
+not establish safety for every illness; the explicit thermal gate avoids wound-only
+triage for this verified nonbleeding exposure case.
+
+Full live rescue-to-bed warming, repeated thermal fuel delivery, infection/wound
+care under a simultaneous attack, and complete raid defense remain future gates.
+The old startup NRE remains unexplained. See
+docs/audits/dayouinum-thermal-care-2026-10-07.md and private correction evidence.
+
+Latest same-campaign stable autosaveXML900000/mtime19:17:31UTC predates
+GameOver; terminal API/letter/observer prove outcome. Stderr0; Player.log4519
+contains earlier single pre-generation NRE and zone-over-Granite warnings,
+no new NRE repeat. No source/game orders, speed changes, savePOST or live
+replay during review. Private final report outputs/colony-008-food-commitment-
+final-20261007-2225.md, prepared192858evidence and terminal card/SVG/photo.
+Hourly automation paused after recording native ending; no new colony started.
+
+## 2026-10-08 — candidate 0.0.8 thermal-care verification, single random start
+
+Human-authorized new run following completed Dayouinum. Source fc133c9,
+package bacc429, DLL1.10.0+fc133c9;59 installed/source payload hashes verified.
+1256 prior Python tests,311 routes,8 native thermal predicate boundaries and
+native build/model replay passed offline. New live rescue is not yet proven.
+One generation, tile52676, worldseed laya-thermal-care-008-20261008,
+map16622162, Cassandra/Medium/Permadeath, campaign171f3d445b5a41f0a30ec525f6cf7b9d.
+Visible game launched; baseline21; autonomy06:38:56UTC/09:38:56MSK.
+No restart, rollback, manual pawn jobs or previous-memory reset. Separate
+campaign state preserves prior run records. Founders427/430/433 have no initial
+health conditions;430 incapable of violence;Medicine1/2/5,Construction3/2/2.
+All have Firefighter/Research capability. Initial-29.74C/growing-seasonfalse;
+forbidden starting food is not absence of food. Laya unforbade supplies and
+completed13woodwalls/door/campfire/3sleeping spots, roofed room80.
+Closing06:42:41UTC/tick78089: three alive, no downed/bleeding,
+Hypothermia absent after earlier427=.186/433=.054. Room80=29.57C,
+fuel8.20/20;food47/meals46,nutrition41.65.
+Native downed thermal rescue not encountered; warmth recovery is not its proof.
+No farm/network/researchbench/commercial workshop/revenue/verified raid win or
+new permanent recruitment at startup. Native Anomaly dialogue resolved by
+director; no endpoint acceptance labeled victory. Five sampled loadout changes
+require further actual weapon/job review. Bed ownership/target != arrival.
+PNG06:41:30UTC/ticks51158–51338 viewed; earlier frame occluded by native dialogue;
+hide_ui still leaves interface. Coordinates125,148/campfire and125,144/door;
+bed36006–36008 in room80; outdoor33250 separately. Full route/firebreak audit
+not performed. Disk saveXML77661/06:42:38UTC, campaign
+matches;live77709 confirms progress. Startup saves are
+technical verification, not autonomous actions. Game64888,director46212
+CUDA/4CPU,observer13212,monitor91220;fresh/running,stderr0,force-pausefalse.
+Player.log3333bytes has single pre-generation NRE without initial stack;
+cause unresolved, no new repeats observed. First full check>=07:40UTC/10:40MSK,
+then hourly atminute40; readonly checks, silence without meaningful change.
+Private report outputs/colony-008-thermal-care-20261008.md and comparable
+JSON/SVG/PNG in longrun-008-thermal-care-20261008; no0.0.8release/tag created.
+
+Later startup closing06:48:06UTC/tick195173/live195413: three alive,
+no downed/bleeding, founder427 mildHypothermia.015, othersno conditions;
+hunger.780/.580/.420. Room80roofed28.28C,fuel17.82/20,
+food22/meals21/raw1,19.15nutrition. Prior46meals ->21 proves initial reserve
+consumption, not renewed production. No new death/native end. Allservices
+fresh/running/empty stderr, observer normal3x. Newer closing evidence/card/layout
+preserved, automationlayaACTIVE/minute40. No behavioral changes after startup.
+
+## 2026-10-08 — Thieron, first hourly observation (10:40 MSK)
+
+Same campaign171f3d445b5a41f0a30ec525f6cf7b9d renamed Western Ashinaneria
+Strong Covenant. Primary07:42:16UTC/t698451,1h03m20s/11.64game days;
+closing07:53:45UTC/t739330,1h14m49s/12.32days, no pause/restart/rollback.
+Unay430 died Bite544278, exact/native/XML; wolf attack injury at death tick
+names Wolf_Timber. Observer07:05:09.679UTC,26m13.5s life; not Malnutrition.
+Gleb29067 died Malnutrition737293, native letter; exact wall time unknown,
+between live07:49:24 and confirmation07:53:45. Failed feed_hungry_animal
+twice patient_not_available_in_bed; no successful pet feed verified.
+Stone/Jill alive, nativeGameOver/victoryfalse. ClosingStone hunger0/Malnutrition
+.546/Wait_Combat, Jill downed/catatonia/hunger.002/Malnutrition.230/LayDown.
+Autonomous StoneFeedPatient→Jill and hunger.891 at07:44:49 verified feeding;
+stock6 InsectJelly/.3nutrition is not six cooked meals or sustainable supply.
+Roofed room80 remains27.49C, campfire8.72/20,13walls/one door/three sleeping
+spots, no real beds/grid/researchbench/commercial production. New food zones
+Rice/Rice, actual7potato/7rice immature; firstzone557594/~9.29game days.
+Bounded100 decisions80hold,41single feasible and39hierarchical; mental state
+explains some worker unavailability. Not proven infinite loop or80 independent
+model deferrals. Raid324000 partially evidenced OrthoziteDead + wounds from
+Stone/Jill; second727000 ongoingBriggs37286. No invented full raid victory.
+Silver800 stock, no verified revenue/recruit/research/final stage; quest offer
+expired unaccepted. PNG07:44:26 viewed, separate API/XML times, comparable
+cards/layout. Minimized window restored only; servicesfresh,stderr0,ticks
+grow,forcePausefalse,observer1xcriticalStarvation. SaveXML720000/mtime
+07:48:19UTC/campaign stable predates pet death. Player.log3697 with oldstartup
+NRE/no new repeat. Production JSON readings positive, not global fix proof.
+No code/game behavior/jobs/speed/manual memory changes or savePOST/replay.
+Detailed Russian report outputs/colony-008-thermal-care-hourly-20261008-1040.md;
+review-20261008-074214,074922,075343 evidence in longrun-008-thermal-care-20261008.
+Automation laya ACTIVE, next08:40UTC/11:40MSK.
+
+
+## Дополнение при записи Demo — 08:11:46 UTC / 11:11:46 МСК
+
+Тик804982, native GameOver/victoryfalse. Ondra37382 прибыл как Man in black741502:
+помощь рассказчика, не плановый найм. Jill мобильна/TendPatient, кататония
+больше не наблюдается. Stone downed/Wait_Downed/hunger0/Malnutrition.235 со
+свежими ранами; Ondra downed/LayDown со множественными свежими травмами.
+У всех bleeding0, Jillhunger.047; полное выздоровление не подтверждено.
+MadCaribou782000 и CaribouRevenge788134 — новые угрозы, не отбитые рейды.
+Food14/meals7/raw7/6.65питания — новый запас, не устойчивое снабжение.
+SaveXML780000/mtime08:05:05.555UTC/campaignstable новее смертиGleb, но до
+указанных caribou events. Службыfresh/stderr0, observer1×. Доказательства
+review-20261008-081144-* сохранены; это дополнение, не второй полный контроль.
+
+Demo08:09:42UTC, тики797681→799479, реальная игра/nativeLayaHUD, без игровых
+приказов или изменения скорости. Застывший первый захват отброшен. Готовый
+outputs/laya-demo-20261008/Laya-live-demo-30s.mp4:1080p/30fps/900кадров/30.000с;
+48из48 проверенных кадров после титра различаются. Сохранились доказательства
+recording-live-evidence.json и просмотренное preview-live.png. Следующий полный
+контроль08:40UTC/11:40МСК, автоматизацияACTIVE.
+
+## 2026-10-08 — Western Ashinaneria Strong Covenant, second hourly observation (11:40 MSK)
+
+Same campaign171f3d445b5a41f0a30ec525f6cf7b9d; primary08:44:58UTC/t1225199,
+2h06m02s autonomous; closing08:56:42/t1272072,2h17m46s/21.20game days.
+Jill433 died Scratch911358, observer08:26:56.566UTC/11:26:56MSK,1h48m00s;
+exact/native/XMLWolf_Timber claw at death tick, predator907383. Stone427 died
+Infection1270701, native Death letter; observer08:56:18.031UTC/11:56:18MSK,
+2h17m22s. ObserverUnknown/ticknull does not override native Infection evidence.
+Infection.415/.3546→.812/.7133→.949/.8382; tend0→.1603→0, medicine0,
+late in_bedtrue/currentbed36007, LayDown and feeding observed, survival failed.
+All founders lost, Ondra37382 alive healthy/hunger.442/Wait_Combat; native
+GameOver/victoryfalse, no new colony. Closing3RawRice/.15nutrition, meals0.
+SevenRicezones,125actualrice/23harvestable/73potentialyield, not stored food;
+early designation, observed HarvestDesignated and rice arrival, sustainable
+supply still unverified. Food/MealSimple/MealFine arrived earlier, no claim of
+no cooking/feeding. Campfire11.07/20, roofedroom80 29.17C,13walls/one door/
+3sleepingspots/noBed/grid/researchbench/commercial production; new HorseshoesPin
+and distant ButcherSpot48,137. Elkself-tamed835000, no enclosedpen, no newpetdeath.
+BriggsDead with Stone/Ondra gunshots; thirdraid841000 has externalparticipants,
+complete outcomes/kidnaps/theft unknown. SamSpaceRefugeeDead is not colonist.
+Primary25hold/100, some singlefeasible; later priority switching observed.
+No verified revenue/research/final stage; baseline7research unchanged,
+ShipToStarsOngoing is not completed/modelaccept. Photo08:46:04/t1234992–1235011
+viewed, separate API/XMLzonecoordinates1260000; comparablecards/SVG. Minimized
+window restored; servicesfresh/stderr0/ticksgrow/forcepausefalse, observer1x
+criticalinfection then3x. SaveXML1260000/08:53:16UTC predatesStone death.
+Player.log4865 oldNRE only; fullLogisticsJSON not global fix proof.
+No workingcode/gamejobs/speed/savePOST/replay/restart/rollback/memoryreset.
+Detailed report outputs/colony-008-thermal-care-hourly-20261008-1140.md,
+review-20261008-084456/085211/085516/085640 evidence. layaACTIVE,next09:40UTC.
+
+Second-hour later09:05:38UTC/t1475354/native1475421: Ondra alone healthy,
+hunger.516/Harvest, food26/meals14/raw12/13.2nutrition, medicine0; one stock
+poll is not sustainable supply proof. NativeGameOver/victoryfalse. New verified
+autosaveXML1500000/mtime2026-10-08T09:06:27.454715+00:00/samecampaignstable includes
+StoneHuman427Dead/WoundInfection1 after death1270701; no savePOST.
+See hourly-20261008-0840-final-live-check/final-save.json.
+
+### 2026-10-08 — development audit against real player tutorials (offline)
+
+At the user's request, reviewed the colony evidence against original player
+tutorials on recruitment, labor, prisons, weapons, food, trading, construction
+and research. Private corpus: complete captions from33 Francis John/Adam Vs
+Everything/Noobert videos,170812words/12.45hours. Full reads and selected chapter
+coverage are distinguished in the private source index. This is not a claim of
+watching every video in full. Full captions are not repository or installer
+payload; colony logs/saves were not uploaded to caption services. Older numerical
+rules and version-specific exploits are not assumed correct for1.6.
+
+Confirmed source defect: the shelter filter required true Bed furniture even
+with enough enclosed roofed SleepingSpot places. It removed preventive prison,
+research, income and cover preparation from the healthy warm Thieron start.
+Offline old/new filter comparison at195173 and1225199 shows those choices now
+survive that gate. Lenrobum2347655 and Roinor1074902 already passed the old gate;
+their failures cannot all be attributed to this defect. Other feasibility,
+clinical, food, material and native guards remain applicable.
+
+Source changes: count roofed usable human sleeping places, shared beds with two
+places, excluding known medical/prison/animal/ancient/remote beds; prepare prison
+from real stored food runway rather than misleading meal item counts; offer
+general construction prioritization only with actual unfinished projects; retain
+measured development facts beside ordinary care/quest facts; distinguish novice,
+incapable, temporarily unavailable and unassigned roles; normalize actual native
+active quests instead of counting wrapper keys/history. Development context may
+yield to critical care/quest data if the real token budget is exceeded.
+
+Verification card now retains work priorities/skills/jobs, weapons/ranges/armor,
+prison beds, family observations, workshop bills and research. Unknown is not
+zero, assignments are not worker hours, a bed is not a recruit/birth, output is
+not income, and a raid announcement is not a confirmed successful defense.
+
+Cross-run evidence: Lenrobum bounded100-command window had84 configure_crop,
+not84% of worker time. Its art bench had0bills and no verified sale; Battery
+progress remained2/400 for roughly50minutes without sampled Research job.
+Some cooking, feeding, actual rescue, combat and a permanent Fenix recruit were
+confirmed, so the system is not described as never accomplishing any of them.
+Three prioritize_construction choices occurred in the current bounded sample
+despite0projects. Four baseline rosters had no internal spouse/lover/fiance pair;
+TryForBaby validates an existing couple. Family formation/fertility and sustained
+care need separate verification, not forced births as a survival condition.
+
+Regression coverage in tests/test_development_readiness.py and
+tests/test_colony_verification.py includes native-shaped records and the cached
+real Laya tokenizer/312-token normal consequence budget. Complete suite:
+1268 tests passed in 7.827 seconds, no failures or skips. The direct read-only
+card script produced the development card and coordinate SVG. The suite log
+and generated artifacts are in the private audit folder. No native
+source/DLL, running payload, game order, speed, savePOST, restart, rollback,
+map generation or memory reset was used for this audit. These source corrections
+are not a live survival result. The current campaign's previously logged deaths
+and assistance from the man in black remain separate from this technical work.
+
+Detailed private report: outputs/laya-development-audit-20261008.md.
+Source/coverage index: outputs/laya-development-audit-20261008/sources.md.
+Saved-state filter comparison: saved-state-development-check.json in that folder.
+Portable summary: docs/COLONY_DEVELOPMENT_AUDIT_20261008.md.
+
+
+### 2026-10-08 — Thieron / Western: native defeat 2248520
+
+Same campaign 171f3d445b5a41f0a30ec525f6cf7b9d, tile52676, one generation.
+Native GameOver2248520/victoryfalse; observer09:56:56.422680UTC,
+continuous autonomy3h18m00.276s from06:38:56.146855UTC,37.48game days.
+Final live10:49UTC:0colonists/0caravans, paused2248796. Services completed/stopped
+for native ending; one existing RimWorld64888 remains visible and responsive.
+New exact Ondra37382 Malnutrition2248121, observer09:56:51.304350UTC.
+New Elk1/id36270 Malnutrition2213989/native Death letter and corpse43772;
+last alive09:46:38, absent09:47:39. Earlier Unay/Jill wolf wounds,
+Stone Infection and Gleb starvation were already recorded, not new deaths.
+Four confirmed permanent residents ultimately lost; Ondra was storyteller help.
+Hiroki departure is not evidence of successful permanent recruitment.
+
+After09:05:38,51minute samples,27stockfood0,maxnutrition29.7 with real new
+meals before depletion. Later Ondra downed/extreme Malnutrition, starvation
+death confirmed. MuscleParasites not an immune race or native lethal culprit.
+Bounded100 decisions contain11fallback_line on Shambler43669; all accepted
+positioning, attacking_pawn_ids[], completionunverified.11sampled drafted
+Wait_Combat observations during deteriorating hunger. No verified kill;
+defense/labor lock needs investigation, not a claim of sole cause of death.
+Late berry order worker=null/No eligible colonist for PlantCutting; designation
+and new SleepingSpot did not establish food/build completion while downed.
+
+Final46walls/2doors across two buildings,1Bed+1SleepingSpot roofed room80
+at-6.80C, campfire0/20/noWoodLog.4ButcherSpot+TableButcher queues, noingredients.
+Research bench built but Microelectronics0/3000, finished research unchanged.
+Fence31/gate/marker built, feeding/pen adequacy not established;3traps built,
+2frames.7Rice zones/240cells/allallowsowfalse, actualRice0/expectedyield0,
+growthseasonfalse.StandingLamp exists but powerproduction/consumption0.
+Silver800 is stock/noverifiedsale or income;18projects unfinished.
+Raid1963000 and other raid outcomes partial/unknown, no invented repelled count.
+Actual PNG10:53:42UTC/t2248796 before-after, viewed; nativeGameOver text visible.
+Card/SVG generated from frozen evidence, no model replay or orders.
+
+Save XML2220000/mtime09:48:57.594901UTC/samecampaignstable predates final death:
+OndraDown/Malnutrition.803. No claim of final-tick save; no savePOST.
+All59installed payload hashes matchbacc429/fc133c9; offline development audit
+edits were not installed, so this is not a live test of those source changes.
+stderr0; one old startupNRE/no new repeats; logistics fullJSON12options.
+Technical actions: foreground existing window, native camera, report files.
+No gameplay commands/speed/pause/reset/restart/rollback/new map.
+Native defeat warrants automation pause; confirmed status recorded separately.
+Report: outputs/colony-008-thermal-care-final-20261008-1348.md; frozen review-20261008-104859-* and final-20261008-1048-* in run folder.
+
+Automation laya PAUSED via automation_update; persisted status verified,
+proof final-20261008-1048-automation-paused.json. Current game remains visible,
+natively ended/paused; no further hourly check scheduled for this campaign.
+
+
+### 2026-10-08 — additional creator, Shorts, mountain and insect audit
+
+User requested other creators and Shorts, with special attention to insects
+and underground living. Reviewed28 original videos/22 channels, including
+17Shorts. Public captions obtained for27 (32547words);25 tracks read fully,
+two long-video chapter selections. OmegaConstruct description/frame1:53 and
+Exterminater Short geometry frame~0:35 reviewed; no claim of28 full viewings.
+Private source index records scope, time and hashes. No private game evidence
+was submitted to the transcript service; caption text remains outside payload.
+
+Primary lessons: stage excavation after usable facilities; budget mining and
+chunk hauling; verify roof/support, access and evacuation; prepare actual
+capable armored melee and shooting positions, substitutions and treatment.
+Bait rooms are probabilistic. Burning requires isolated evacuated compartments,
+temperature/recovery evidence and accounts for destroyed supplies. The
+infestation_burn label has no currently supported executor. Existing native
+roof guards and infestation_choke eligibility are acknowledged, not absent.
+
+Current game definitions contradict Cooking8=nofoodpoisoning and straw=sterile:
+FoodPoisonChance.0015 at8; strawCleanliness-.1/FilthMultiplier.05/Flammability1.5,
+sterileCleanliness+.6. Fungus needs darkness/fertility; fungal gravel needs
+thick roof and Tunneler designator eligibility. Odyssey is not in native
+active_mods; its new insect examples are separate. Unverified exact spawning
+thresholds from imperfect captions were not copied into native contracts.
+
+Saved checkpoints: Lenrobum990966 had23crop choices/64decisions and1revolver/
+2knives/armor_sharp0. Its fifth-hour closing2360865 had88/100crop choices,
+distinct from primary83/100. Western final2248796 retains11fallback_line
+position-only/unverified attack responses. These counts are not worker hours
+or independent model refusals. Native bed-room mountain_cells0 at the inspected
+checkpoints: previous losses are not established as a mountain-housing failure.
+
+Open source gaps: solid7x7 mining choice without proven accessible entrance/
+thickroof/hive/evacuation metadata; mountain Heater chosen from researched
+Electricity instead of observed network; cold non-electrical furnishing lacks
+a separate heating plan; furnished=True after blueprint ACK. No executor replay,
+sole-cause attribution or claim of mechanical fixes to those gaps.
+
+Source correction: mountain doctrine prompt now describes labor and roof,
+heat, access, evacuation, insects, combustible contents, food/fuel and fungus
+requirements. Read-only verification adds underground_status: selective native
+roof coverage per room, actual observed door adjacency, hives/climate devices;
+unknown coverage/geometry stays unverified and no safe escape path is inferred.
+Native unavailable is not evidence of no hives. Two separate building doors
+are not two exits from the same sleeping room.
+
+Validation:11card tests passed, including4new boundaries; strategy importOK;
+three saved checkpoints produced cards/SVGs; git diff --checkOK. Prior1268-test
+full-suite result belongs to preceding audit and was not rerun after this addendum.
+Installedbacc429/fc133c9 unchanged. Only offline source, documents and saved
+observation tools changed; no orders/install/savePOST/replay/reset/new colony.
+Campaign already ended and automationlayaPAUSED; no new death announced here.
+
+Private report:outputs/laya-mountain-insects-audit-20261008.md; source index,
+definition hashes, comparison cards and verification.json in its sibling folder.
+Portable summary:docs/MOUNTAIN_INSECTS_AUDIT_20261008.md.
+
+### 2026-10-08 — systemic plan, progress and actor-ownership verification
+
+Direct user request: verify that tutorial/report lessons reach Laya and correct
+recurring failures preventing a finite ending. This is an offline engineering
+follow-up to the two audits; the Western native defeat remains recorded above.
+
+Confirmed mechanisms corrected:
+
+- A complete compact plan now survives every root domain/family/action and
+  doctrine comparison within the312-token model state window. Ending, labor,
+  shelter, clinical state, armament, research and development gaps are retained.
+- Independent bounded observations survive intervening orders and state reload.
+  Switching research targets without gaining points does not reset a stall;
+  selected research/blueprint ACKs do not count as completed work.
+- Live-threat and post-combat care preserve the exact actor while allowing
+  other safe undrafted workers to make development decisions. Fresh threats,
+  drafted actors and unresolved recurring entities retain their restrictions.
+- Holding positioning without engagement is tracked across formation and
+  wander changes, with a30-real-second AND2000-tick floor and fresh conservative
+  safe-work checks. Missing distance/active assault/near patients close it.
+- Downed patients already LayDown in bed do not receive another ineffective
+  rest-priority choice. Feeding/tending/rescue remain separate; animal medicine
+  policy is explicitly not food delivery.
+- Native ending route/site/kind and fresh saved commitment prevent a generic
+  progression label from starting a different terminal chain. Pending
+  transitions remain resolvable.
+- Mountain expansion checks exposed survey entrances and established supply;
+  two-door furnishing uses actual room power, has independent cold heat, and
+  reconciles built/queued/missing objects rather than marking furnished on ACK.
+- colony_plan.py is in the install payload; local import dependency closure is
+  checked for every packaged Python module.
+
+Final full suite:1287 tests,0 failures/errors/skips,9.863seconds; total including
+discovery/reporting10.529seconds. Native source/DLL unchanged. Route audit311
+registrations/266literalcalls/27dynamiccalls, no missing or duplicate routes.
+Actual payload staging contains the new module; live install59files retain
+their recorded hashes.
+
+Actual cached Laya CUDA/4CPU offline replay: four recorded states, both candidate
+orders,8cases/22rootcomparisons, complete plan in each, maximum208/312tokens,
+no selection_unavailable. Final choices: prioritize_plant_cutting at990966,
+2360865 and698451; harvest_food_crops_early at1225199, rice/up to40/Ondra37382.
+The priority cases have observed mature designated berry sources. Choices and
+priority availability do not prove collection, food delivery or future survival.
+An earlier ordering selected rest for an already incapacitated bed patient;
+the final candidate correction removed that ineffective policy, preserving
+other medical options. No live replay or game client was used.
+
+Portable details:docs/SYSTEMIC_COLONY_VERIFICATION_20261008.md. Private report
+outputs/laya-systemic-verification-20261008.md; tests, actual model prompts,
+source hashes, routes and payload/install records in the matching evidence
+folder. Diagnostic memory is a fresh baseline, not all prior session memory.
+
+No new colony, game restart, pawn command, savePOST, speed change, live install
+or memory reset occurred. The installed package remains bacc429/fc133c9 and
+laya remains PAUSED. Future live nutrition, treatment, armed defense, research,
+productive recruitment/trade and a completed selected ending remain unverified.
+Monument executor and infestation_burn are not supported; mountain survey
+geometry does not certify complete safe routes, thick roof or evacuation.
+
+
+## 2026-10-09 — systemic-plan candidate starts East Edbonla
+
+User requested one new colony after the systemic audit. Source/Python payload 3bf5ea8; native/DLL fc133c9 unchanged. All 60 payload/game-DLL records verified, including colony_plan.py. The prior checks passed 1287 tests and audited 311 routes. No release or tag was made.
+
+Campaign b2aafaaef8a546bfa1e6ee73c490caca, tile 82712, seed laya-systemic-plan-008-20261009, map seed 16622162, Cassandra/Medium/Permadeath, TemperateForest. One generation. Baseline tick 23; autonomy began 2026-10-09T07:16:30.737366+00:00. Starting temperature 5.72 C, growing season true. Initially forbidden supplies explain baseline food zero. Founders Lover 393, Takumi 396 and Neiman 399; original scars and role limits recorded separately.
+
+At 2026-10-09T07:22:40.155801+00:00, tick 127717: all three alive, not downed, bleeding zero. Physical 23 walls, one door, three covered beds and TorchLamp; room 30 at 16.22 C, animal sleeping spot outdoors. Research bench exists, Lover has Research job, GeothermalPower 16/3200: work began, no completed new research. Food 42 original meals, 37.8 nutrition; no growing zones or food plants yet, sustained supply remains unverified. Monkey Knuckles 2577 alive; initial training not credited as new. No verified sales, recruits, raid victories, new deaths or ending.
+
+Early risks preserved: two PollutionPump frames need Construction 3 while observed levels are 1/0/1; no power network. Five sampled material replacement choices for the starter shell, four applied: one Silver and three Steel. At tick 62439 Lover/Takumi lack a ranged weapon, Neiman has ToxGrenades; successful conventional defense unverified. Actual root narrowing contains 307 complete plan instances in 36 bounded records; context visibility is not proof of useful choices.
+
+One visible game PID 59996, director 164096 on CUDA with four CPU threads, observer 78700 and monitor 103152. Normal 3x, fresh statuses, stderr empty, force-pause false, actual ticks growing. Save XML tick 120000, mtime 2026-10-09T07:22:03.547961+00:00, same campaign and stable file; no extra save POST after technical startup saves 23/224. After autonomy no pawn orders, reset, rollback, restart or manual speed. Two PNGs viewed; card and coordinate SVG saved. First full hourly check no earlier than 2026-10-09T08:18:00+00:00. Automation laya is ACTIVE at minute 18 each hour, quiet without meaningful changes.
+
+Private details: outputs/colony-008-systemic-plan-20261009.md. Evidence: work/longrun-008-systemic-plan-20261009/closing-startup-* and final-startup-live-check.json. Earlier Western defeat belongs to a separate campaign.
+
+Late technical window check 07:36:01 UTC, tick 364587: same three founders and Knuckles alive, none downed or bleeding. Neiman has new knife-labelled Crack/Cut wounds with observed tend quality; exact treatment actor and full raid outcome unknown. Old Bite scar is separate. A Raid: Poison Gang letter and planted rows are visible; no raid victory or harvest credited from the screenshot. Minimized game window restored via sky, rendering verified, no gameplay input. Details in the private startup report and post-window-restore-live-check.json; hourly monitor remains ACTIVE, first full check at 08:18 UTC.
+
+## 2026-10-09 — focused observation of Construction botched
+
+User requested observation of the construction loop. Same campaign b2aafaaef8a546bfa1e6ee73c490caca, now Onium Planetary Concord (Permadeath). No runtime code, pawn order, speed, memory, replay, restart, rollback or save POST was changed.
+
+At 07:53:48 UTC/tick 704483, CaravanPackingSpot frame 102894 at (152,107) has native percent_complete=NaN; the adjacent (151,107) is blueprint 102895. By 07:56:51 these locations have blueprints 104840/104900, with no completed marker. Installed native fc133c9 treats only SleepingSpot, AnimalSleepingSpot and ButcherSpot as instant markers. Vanilla CaravanPackingSpot has WorkToBuild=0 and no material cost, but falls into ordinary PlaceBlueprintForBuild. The actual game JobDriver_ConstructFinishFrame divides workThisTick by WorkToBuild inside 1-Pow(ConstructSuccessChance,...): positive work with success chance below one always fails at zero work-to-build. Frame percent is 0/0; FailConstruction replaces the blueprint and emits the botched caption. No training occurs in this toil when the resource container is empty. Exact effective pawn stats, total failure count, worker time and material loss are not measured; the marker itself costs no materials. The native marker handling defect remains open.
+
+Separate blocked projects: PollutionPump 39144/39992/41080 at (152/151/153,108) remain 0%, minimum Construction 3 versus observed 1/0/2, with no working electricity network. These are not completed pollution removal or a proven source of the botched caption.
+
+Two focused read-only sampling intervals 07:56:51–07:59:50 and 08:01:01–08:03:01 UTC produced 227 samples, ticks 756006–835317. FinishFrame appears in none; all five project IDs remain stable during these intervals. Harvest, hauling, care, rest and combat are real sampled work; shorter activity between samples is not excluded. Absence of retries during this period does not repair the invalid blueprints. Raw food varies 30–80 items, sampled meals zero; real intake/food production occurred, sustained supply remains unverified.
+
+New animal loss: Knuckles 2577, native Death letter 793585 says torn to death; save 840000 confirms Dead and injuries naming a lynx. Exact wall-clock death second and final killing blow unknown. New human loss: Takumi 396 is downed during the raid at 798000; native combat at 08:01:36/tick 815275 shows Fazred 105822 with Kidnap, carrying_player_pawn=true and carrying_pawn_id=396 at (234,137). Absence from the normal map colonist list alone was not death evidence. Stable autosave 840000/mtime 08:03:16.470663 UTC/same campaign then confirms worldPawns/pawnsDead and healthState Dead/BloodLoss 1. Knife wounds name Fazred; a Gunshot combatLogText says Neiman's revolver missed Fazred and hit Takumi's left shoulder. Exact lethal tick and relative contribution of wounds versus friendly fire remain unknown. No separate Takumi Death letter appears in the sampled events/context, and kidnapped_pawns is empty; direct carry and save evidence take precedence over these omissions. Neither loss is attributed solely to construction without evidence.
+
+At 08:03:28 UTC/tick 843341, Lover and Neiman are alive/mobile/bleeding zero, food 51 raw/2.55 nutrition, native GameOver and victory false. Full raid victory is not credited. Same game and three services are running, stderr empty in captures, force-pause false and ticks growing. Real PNG 07:57:18 UTC viewed. No live correction performed. Existing hourly observation continues with explicit construction-loop, food, defense and loss checks; first full hour remains 08:18 UTC.
+
+Private report: outputs/laya-construction-botch-observation-20261009.md. Evidence: work/longrun-008-systemic-plan-20261009/construction-watch-*, construction-botch-source-evidence.json and review-20261009-075348/080134-*; raw decision reads bounded to last 8 MB and at most 100 records.
+
+Late focused check 08:13:05 UTC/tick 1002693: CaravanPackingSpot blueprints at the same two cells are now 114670/115000; earlier 104900/104840 replaced, no completed marker. The defect persists; exact actor and total attempts between checks remain unmeasured. Pumps retain original IDs/0%. Native Takumi kidnapped letter at 816124 now confirms completed abduction; later save 840000 confirms death outside the map, not an alive captive. New Rhea 113204 is downed/LayDown/hunger 0.190/bleeding zero; membership permanence and joining mechanism unverified. Lover and Neiman alive/mobile/bleeding zero. Food 186 items: 4 meals/182 raw, 12.7 nutrition; provenance and sustained production not established. Native GameOver/victory false. Live evidence construction-watch-final-live.json; visible game restored/rendering verified through sky without gameplay input. Hourly laya ACTIVE with focused construction checks and these already-reported losses.
+
+## 2026-10-09 — authorized construction API repair, technical stop
+
+The user explicitly requested stopping the game and repairing the API and current
+colony. Automation laya is PAUSED; only this run's director, observer and monitor
+launcher/worker pairs were stopped. Game pause was verified at 1136890 with the
+same campaign b2aafaaef8a546bfa1e6ee73c490caca and no subsequent tick growth.
+Disk save XML 1136890/campaign/changed mtime/stable read is verified; save, Laya
+memory, manifests, Player.log and both old DLL copies are backed up privately.
+This is a technical pause, not autonomous survival or a fresh colony.
+
+Source correction replaces the three-name instant-marker allowlist with the
+loaded vanilla WorkToBuild=0 predicate. Placement validates before canceling a
+matching legacy plan, retains normal construction and native placement hooks,
+exports instant/work metadata and finite progress, and refuses construction
+jobs on invalid instant projects. All 1287 Python tests and 33 actual native
+helper boundary cases pass; preliminary Release-1.6 build has zero warnings and
+errors; route audit remains 311 with no missing/duplicate routes. These offline
+checks do not yet establish the installed DLL or live migration result.
+
+Private pre-repair proof: construction-repair-pause.json and
+construction-repair-before.json in work/longrun-008-systemic-plan-20261009.
+Exact pending caravan blueprints at the checkpoint are 129041/129631, cells
+(151,107)/(152,107). Ordinary pump frames 39144/39992/41080 are retained;
+their separate skill/power limits are not fixed by instant marker handling.
+
+Live repair completed with DLL 1.10.0+e8a195d, source e8a195da5509393f88da0e674823a5287646e932,
+SHA256 4e13c8b3840b244344a23b76d831b3524f2d402478ac2d65e87b7698495f6681.
+Both installed DLL copies match. Same-save technical close/load was required;
+vanilla pause-on-load performs one initialization tick, 1136890 to 1136891.
+The temporary pause-on-load preference was restored. No generation, rollback,
+memory reset, pawn health edits or autonomous continuation occurred.
+
+Paused live API confirms all 13 loaded zero-work marker definitions. Two exact
+caravan blueprints 129041/129631 were migrated to completed Building markers
+132830/132831 at (151,107)/(152,107). A repeated request retains both IDs;
+projects contains no CaravanPackingSpot/instant frame. Prioritizing the old
+instant project returned applied=false without a worker job. A blocked placement
+over a normal pump frame was rejected; all three original pump IDs, progress and
+delivered materials are preserved. These are not free completions of ordinary
+buildings. Laya memory SHA256 is unchanged.
+
+First post-repair save attempt failed with SafeSaver IOException/file in use
+during rename. Retrying after a window without reading the original save verified
+changed mtime, stable XML 1136891/same campaign and both real marker defs.
+Root cause of the lock is not fully established; early polling reads could have
+contributed. The stale error dialog was acknowledged and retained in an initial
+PNG; a second unobstructed PNG was viewed. Final save mtime 08:45:56.179291 UTC,
+SHA256 7e8f690c7bcce8649d2342b37bc05f17b836ccece5ea259fa2b7c46e0acfdb78.
+RimWorld was closed again at 08:50:02 UTC after verifying pause/tick/campaign/save
+hash. Actual process checks confirm game and all three managed services absent;
+automation laya stays PAUSED until the user requests continuation. The technical
+repair interval is excluded from 3841.280059 seconds of autonomy before the pause.
+
+Private repair report: outputs/laya-construction-api-repair-20261009.md;
+proofs construction-repair-* in this run folder, including actual save XML,
+installed hashes, live API checks and construction-repair-after-visible.png.
+The observed population losses are retained; this repair is not a colony victory.
+
+
+### 2026-10-09 — new random colony after native instant-building correction
+
+At the user's request, started one new Cassandra/Medium Permadeath map,250x250:
+Northeast Banlium (Permadeath), tile55180 TemperateForest, world seed
+laya-instant-construction-008-20261009, map seed16622162,
+campaign 930653a716c14809841cfbc935c98ea0. No reroll/load/rollback. Prior Onium
+was user superseded, not declared defeated; its repaired save and memory hashes
+are retained unchanged. Python payload3bf5ea8/nativee8a195d/DLL1.10.0+e8a195d,
+package59efc53;60 installed-file hashes verified. Prior gates1287 Python tests,
+33 native boundaries,311 routes, Release1.6 zero warnings/errors remain offline.
+
+Paused baseline22; autonomy 2026-10-09T09:12:07.798139+00:00. First full hourly check no earlier than
+2026-10-09T10:15:00+00:00 (13:15 Moscow), then hourly. No technical pause after autonomy start.
+Founders Silver657/Vang660/Ryan663 alive; initial permanent scars and dog Inga5545
+old Gunshot/learned guard are baseline conditions. Snapshot59096
+at2026-10-09T09:14:52.473412+00:00, later live60020: no downed/bleeding,
+early mild hypothermia resolved.49 original survival meals/44.1 nutrition,
+medicine30; sustainable production not established, season false/no fields.
+
+Actual13 wood walls/one door/3SleepingSpot/Campfire. Room65 roof complete,
+29.487C vs outside-12.860C; native read-only catalog533defs includes13 zero-work
+instant defs; projects empty at query and starter spots are actual Buildings.
+No manual placement replay or autonomous caravan marker yet. One door and
+wooden envelope are observed, escape routes/firebreak remain unverified.
+Research/prison/commercial production/working power network/recruit/sale/repelled
+raid/new ending completion are not established. Economic purpose income_drugs
+was saved; no finished income chain or profit claimed.
+
+Visible PNG09:13:55UTC, ticks33711-33845, viewed; hide_ui left interface.
+Comparable card/layout saved privately. RimWorld179192/director163268 CUDA4 CPU
+configured/observer182276/monitor156904; three services running/fresh, stderr0,
+force_pause false, actual ticks grow, nativeGameOver/victory false. Baseline disk
+save22 and startup disk save1915/mtime09:12:14.587998UTC/campaign stable verified,
+later live3844; save predates closing snapshot. Window restored after minimization.
+No manual pawn jobs/speed, memory resets or extra save POST during closing review.
+Private report outputs/colony-008-instant-construction-20261009.md;
+evidence work/longrun-008-instant-construction-20261009/closing-startup-*.
+
+Handoff read-only check 2026-10-09T09:23:48.688446+00:00: snapshot234644, actual live236115→236509, same campaign/no native ending. Services running/ready/stderr0/no force-pause. Actual laya ACTIVE hourly at minute15 confirmed; first full check10:15UTC. Disk autosave XML180000/mtime2026-10-09T09:20:49.210378+00:00/campaign stable; no extra save POST. Fresh clinical/resource/building details remain in private final-startup-live-check.json.
+
+Later startup layout at234644 differs from closing59096:38 walls/2 doors,
+2SleepingSpot/oneBed, physical generator/electric kitchen/pen/research bench.
+Generator36579 fuel17.671/75 and1000W/net241563018; heater/lamp/stove are
+power_on=false without power_net_id, so useful powered kitchen is not verified.
+Research bench37173 usesSilver and stands outdoors157,118; current research none.
+Inga alive/follow_drafted true/Release0 of2; no combat result claimed. Later
+viewed handoff PNG09:25:16UTC/ticks263974-264044 shows expansion/no-power icons
+and UI Sad wander:Vang/Mad hare; native cause/current threat/outcome needs follow-up.
+Final card/layout use234644 snapshot; decision/event tail explicitly earlier.
+Current Player.log3492bytes has0 NullReferenceException matches; earlier startup
+NRE from another run is not a new error and no global fix is claimed.

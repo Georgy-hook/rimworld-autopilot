@@ -19,6 +19,8 @@ namespace RIMAPI.Models
 
     public class QuestsDto
     {
+        public string ReadStatus { get; set; } = "complete";
+        public Dictionary<string, string> ReadErrors { get; set; } = new Dictionary<string, string>();
         public List<QuestDto> ActiveQuests { get; set; } = new List<QuestDto>();
         public List<QuestDto> HistoricalQuests { get; set; } = new List<QuestDto>();
     }
@@ -72,16 +74,29 @@ namespace RIMAPI.Models
 
     public class QuestDto
     {
+        public string ReadStatus { get; set; } = "complete";
+        public string ReadError { get; set; }
         public int Id { get; set; }
         public string QuestDef { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public string State { get; set; }
-        public float ExpiryHours { get; set; }
+        public float? ExpiryHours { get; set; }
+        public bool HasOfferExpiry { get; set; }
+        public float? AcceptedHoursAgo { get; set; }
         public List<string> Reward { get; set; }
         public bool EverAccepted { get; set; }
         public bool RequiresAccepter { get; set; }
         public bool IncreasesPopulation { get; set; }
+        public bool CanAccept { get; set; }
+        public string AcceptanceReason { get; set; }
+        public string OfferVersion { get; set; }
+        public bool PopulationRewardPossible { get; set; }
+        public List<QuestRewardGroupDto> RewardGroups { get; set; } = new List<QuestRewardGroupDto>();
+        public List<QuestAccepterDto> EligibleAccepters { get; set; } = new List<QuestAccepterDto>();
+        public List<QuestDiplomacyDto> AcceptanceDiplomacy { get; set; } = new List<QuestDiplomacyDto>();
+        public List<string> Requirements { get; set; } = new List<string>();
+        public string Disclosure { get; set; }
         public List<string> Tags { get; set; } = new List<string>();
         public List<string> InvolvedFactions { get; set; } = new List<string>();
         public List<QuestTargetDto> LookTargets { get; set; } = new List<QuestTargetDto>();

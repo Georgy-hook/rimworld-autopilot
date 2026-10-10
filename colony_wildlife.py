@@ -166,6 +166,8 @@ def plan_facts(plan):
     gear=' '.join(f"{label}:{span(key)}" for label,key in [('AP','armor_penetration'),('worn','apparel_sharp_weighted'),
         ('skill','shooting'),('hp','health'),('range','range')])
     gear+=f" needs:{span('rest')}/{span('food')}"
+    if any(a.get('malnutrition') is not None for a in actors):
+        gear+=f" malnutrition:{span('malnutrition')} consciousness:{span('consciousness')} manipulation:{span('manipulation')}"
     return {'prey':target.get('def'),'mode':plan['mode'],'ids':','.join(str(a['pawn_id']) for a in actors),
             'chance_per_hit':risk.get('chance'),'harm':risk['label'],'pack':risk.get('pack_candidates'),
             'gear':gear,'unknown':'heuristic; no guarantee'}

@@ -7,10 +7,12 @@ CARE_JOBS = {"tendpatient", "rescue", "feedpatient"}
 
 def helpers(snapshot, patient_id, doctor=False):
     combat = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
+    retreating = bridge.combat_planner.protected_care_retreat_ids(snapshot)
     rows = []
     for pawn in snapshot.get("colonists") or []:
         live = combat.get(str(pawn.get("id"))) or {}
-        if (str(pawn.get("id")) == str(patient_id) or pawn.get("downed") or pawn.get("dead")
+        if (str(pawn.get("id")) == str(patient_id) or pawn.get("downed") or live.get("is_downed") or pawn.get("dead") or live.get("is_dead")
+                or pawn.get("id") in retreating
                 or pawn.get("in_mental_state") or live.get("is_in_mental_state")
                 or pawn.get("is_drafted") or live.get("is_drafted")
                 or float((pawn.get("capacities") or {}).get("moving", 1)) <= 0
@@ -36,7 +38,11 @@ def offered_care_yield(snapshot, row):
     binding = care_order_fields(row)
     if not binding or not row.get("care_yield_reason") or row.get("kind") not in {"feed", "rescue"}:
         return None
-    if row.get("food_feasible") is not True:
+    thermal = (row.get("thermal_rescue") is True and row.get("kind") == "rescue"
+               and row.get("care_yield_reason") == "nonbleeding_tend_to_thermal_rescue_same_patient"
+               and binding["expected_current_job"] == "TendPatient"
+               and binding["expected_care_patient_id"] == row.get("target_id"))
+    if row.get("food_feasible") is not True and not thermal:
         return None
     detail = next((p for p in snapshot.get("colonists") or [] if str(p.get("id")) == str(row.get("worker_id"))), None)
     live = next((p for p in snapshot.get("combat", {}).get("colonists") or [] if str(p.get("id")) == str(row.get("worker_id"))), {})
@@ -56,7 +62,10 @@ def offered_care_yield(snapshot, row):
         return None
     if str(worker.get("id")) == str(row.get("target_id")):
         return None
-    old = next((p for p in snapshot.get("colonists") or []
+    patients = list(snapshot.get("colonists") or [])
+    if thermal:
+        patients += list(snapshot.get("animals") or [])  # This collection contains owned animals; wildlife is separate.
+    old = next((p for p in patients
                 if str(p.get("id")) == str(binding["expected_care_patient_id"])), None)
     native_patients = snapshot.get("development", {}).get("resilience", {}).get("patients") or []
     old_native = next((p for p in native_patients if str(p.get("pawn_id")) == str(binding["expected_care_patient_id"])), {})
@@ -65,7 +74,8 @@ def offered_care_yield(snapshot, row):
     conditions = old.get("health_conditions", old_native.get("conditions"))
     if not isinstance(conditions, list) or any(not isinstance(h, dict) for h in conditions):
         return None
-    if any(h.get("def_name") not in {"BloodLoss", "Malnutrition"} and (
+    exempt = {"BloodLoss", "Malnutrition"} | ({"Hypothermia", "Heatstroke", "Frostbite"} if thermal else set())
+    if any(h.get("def_name") not in exempt and (
             (h.get("immunity_can_develop") is not False and h.get("immunity") is not None and float(h["immunity"]) < 1)
             or h.get("life_threatening") or h.get("tendable_now") and (
                 float(h.get("lethal_severity") or 0) > 0 or "infection" in str(h.get("def_name") or "").lower()))
@@ -73,6 +83,13 @@ def offered_care_yield(snapshot, row):
         return None
     rate = old.get("bleeding_rate", old_native.get("bleeding_total"))
     if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+        return None
+    if thermal and (rate != 0 or float(worker.get('bleeding_rate') or 0) > 0 or not (old.get("downed") or old_native.get("downed"))
+                    or row.get("bed_id") == old_native.get("current_bed_id")
+                    or not any(h.get("def_name") in {"Hypothermia", "Heatstroke"} and float(h.get("severity") or 0) >= .1 for h in conditions)
+                    or not isinstance(row.get("bed_id"), int)
+                    or not all(isinstance(row.get(k), (int, float)) for k in ("current_temperature", "destination_temperature"))
+                    or abs(row["destination_temperature"] - row["current_temperature"]) < 5):
         return None
     if binding["expected_current_job"] == "TendPatient" and rate > 0:
         return None
@@ -133,7 +150,7 @@ def build_options(client, snapshot, map_state):
         yield_worker = offered_care_yield(snapshot, row)
         if (row.get("expected_current_job") is not None or row.get("expected_care_patient_id") is not None) and yield_worker is None:
             continue
-        if action is None or patient is None or (pid in active and not (yield_worker and row.get("kind") == "feed"
+        if action is None or patient is None or (pid in active and not (yield_worker and (row.get("kind") == "feed" or row.get("thermal_rescue") is True)
                 and str(row.get("expected_care_patient_id")) == pid)):
             continue
         eligible = {str(p["id"]): p for p in helpers(snapshot, pid, doctor=action in {"tend_colonist", "feed_hungry_colonist", "rescue_downed_colonist"})}
@@ -337,6 +354,12 @@ def focus(snapshot, actions):
     if not food or not (recovery or waiting or active):
         return actions
     dev["patient_recovery_focus"] = sorted(recovery)
+    # A care job owns its actor, not every worker on the map. Once the
+    # required care is already underway, let spare workers replenish food.
+    # Every executor still protects the exact active clinical job.
+    if not recovery and helpers(snapshot, None):
+        dev["patient_recovery_parallel_work"] = True
+        return actions
     urgent = recovery | {"resilience_tend", "tend_colonist", "care_for_injured_animal", "feed_hungry_animal",
                          "rescue_downed_animal", "open_blocked_food_path", "resilience_rescue", "resilience_feed",
                          "prioritize_firefighting", "resilience_temperature", "hold_survival"}
@@ -383,6 +406,22 @@ def post_combat_job_observed(combat, plan):
             and (plan.get('kind') != 'rescue' or actor.get('current_job_target_id_b') == plan.get('bed_id')))
 
 
+def care_failure_state(snapshot, plan):
+    """Material clinical changes reopen a failed pair; walking and tiny severity changes do not."""
+    live = {str(p.get('id')): p for p in snapshot.get('combat', {}).get('colonists') or []}
+    detail = {str(p.get('id')): p for p in snapshot.get('colonists') or []}
+    people = []
+    for pid in (plan.get('patient_id'), plan.get('doctor_id')):
+        p = {**detail.get(str(pid), {}), **live.get(str(pid), {})}
+        people.append((pid, *(bool(p.get(k)) for k in ('downed', 'is_downed', 'dead', 'is_dead', 'is_drafted', 'is_in_mental_state')),
+                       p.get('current_job'), p.get('current_job_target_id'), p.get('carrying_pawn_id'),
+                       float(p.get('bleeding_rate') or 0) > 0,
+                       int(float(p.get('bleeding_rate') or 0) * 2),
+                       tuple(sorted((h.get('def_name') or '', bool(h.get('tendable_now')), bool(h.get('life_threatening')))
+                                    for h in detail.get(str(pid), {}).get('health_conditions') or []))))
+    return repr((snapshot.get('map', {}).get('id'), people, plan.get('bed_id')))
+
+
 def validate_post_combat_plan(client, snapshot, plan, options_for):
     """Repeat the existing planner with fresh combat facts; preserve an exact current job."""
     combat = client.get('/api/v1/combat/state', map_id=snapshot['map']['id'])
@@ -393,16 +432,24 @@ def validate_post_combat_plan(client, snapshot, plan, options_for):
     if (not actor or not patient or patient.get('is_dead') or actor.get('is_dead')
             or actor.get('is_downed') or actor.get('is_in_mental_state') or actor.get('is_drafted')):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_or_patient_changed'}, combat
+    if actor.get('id') in bridge.combat_planner.protected_care_retreat_ids({'combat': combat}):
+        return {'applied': False, 'assignment_accepted': False, 'job_observed': False,
+                'escape_job_observed': True, 'in_progress': True, 'completion': 'unverified',
+                'reason': 'care_escape_in_progress'}, combat
     if post_combat_job_observed(combat, plan):
         return {'applied': False, 'assignment_accepted': False, 'job_observed': True,
                 'in_progress': True, 'completion': 'unverified', 'reason': 'exact_care_job_in_progress'}, combat
     if (str(actor.get('current_job') or '').casefold() in CARE_JOBS
             and not (plan.get('kind') == 'tend' and actor.get('current_job') == 'TendPatient'
                      and plan.get('reassign_from_patient_id') is not None
-                     and actor.get('current_job_target_id') == plan['reassign_from_patient_id'])):
+                     and actor.get('current_job_target_id') == plan['reassign_from_patient_id'])
+                 and not (plan.get('kind') == 'tend' and actor.get('current_job') == 'Rescue'
+                          and plan.get('reassign_from_rescue_patient_id') == patient.get('id')
+                          and actor.get('current_job_target_id') == patient.get('id')
+                          and not actor.get('carrying_pawn_id') and not actor.get('carrying_player_pawn'))):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_is_providing_other_care'}, combat
     fresh = {**snapshot, 'combat': combat}
-    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id')
+    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id', 'reassign_from_rescue_patient_id')
     if not any(all(row.get(k) == plan.get(k) for k in identity) for row in options_for(fresh).values()):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_selection_changed'}, combat
     return None, combat

@@ -11,13 +11,19 @@ namespace RIMAPI.Helpers {
  public static class WildlifeHuntHelper {
   private static readonly WorkTypeDef Hunting = DefDatabase<WorkTypeDef>.GetNamedSilentFail("Hunting");
   private static bool Wild(Pawn p) => p != null && p.Spawned && p.RaceProps.Animal && !p.RaceProps.Humanlike && p.Faction == null && !p.Dead && !p.Downed && !p.InMentalState && !p.Position.Fogged(p.Map);
+  public static bool RecoveryBlocksHunt(float health,float bleeding,float consciousness,float manipulation,float rest,float food,bool starving,bool diseaseProtected) =>
+   diseaseProtected || bleeding > (starving ? 0f : .05f) || health < (starving ? .5f : .8f)
+   || consciousness < (starving ? .5f : .8f) || manipulation < (starving ? .4f : .65f)
+   || rest < (starving ? .15f : .3f) || !starving && food < .2f;
   private static string ActorReason(Pawn p) {
    if(p==null || !p.IsColonistPlayerControlled || !p.Spawned || p.Dead || p.Downed || p.InMentalState || p.drafter==null)return "actor_unavailable";
    if(p.CurJobDef==JobDefOf.Hunt)return "already_hunting";
    if(p.WorkTagIsDisabled(WorkTags.Violent))return "violence_incapable";
    if(CombatNativeHelper.Protected(p) || CombatNativeHelper.HasCareJob(p) || p.CurJobDef==JobDefOf.Ingest || p.CurJobDef==JobDefOf.DoBill)return "actor_protected_care_or_production";
-   if(p.health.summaryHealth.SummaryHealthPercent<.8f || p.health.hediffSet.BleedRateTotal>.05f || p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness)<.8f || p.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation)<.65f)return "actor_recovering";
-   if((p.needs.rest?.CurLevelPercentage ?? 1)<.3f || (p.needs.food?.CurLevelPercentage ?? 1)<.2f)return "actor_exhausted_or_hungry";
+   bool starving=p.health.hediffSet.HasHediff(HediffDefOf.Malnutrition) && (p.needs.food?.CurLevelPercentage ?? 1)<.2f;
+   if(RecoveryBlocksHunt(p.health.summaryHealth.SummaryHealthPercent,p.health.hediffSet.BleedRateTotal,
+      p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness),p.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation),
+      p.needs.rest?.CurLevelPercentage ?? 1,p.needs.food?.CurLevelPercentage ?? 1,starving,CareTriageHelper.DiseaseCareProtected(p)))return "actor_recovering";
    if(!WorkGiver_HunterHunt.HasHuntingWeapon(p) || WorkGiver_HunterHunt.HasShieldAndRangedWeapon(p))return "no_usable_nonexplosive_ranged_weapon";
    return null;
   }
@@ -76,6 +82,8 @@ namespace RIMAPI.Helpers {
     shooting=p.skills?.GetSkill(SkillDefOf.Shooting)?.Level ?? 0,shooting_accuracy=p.GetStatValue(StatDefOf.ShootingAccuracyPawn),
     hunting_stealth=p.GetStatValue(StatDefOf.HuntingStealth),armor_sharp=p.GetStatValue(StatDefOf.ArmorRating_Sharp),
     health=p.health.summaryHealth.SummaryHealthPercent,rest=p.needs.rest?.CurLevelPercentage,food=p.needs.food?.CurLevelPercentage,
+    consciousness=p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness),manipulation=p.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation),
+    malnutrition=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.Malnutrition)?.Severity,
     move_speed=p.GetStatValue(StatDefOf.MoveSpeed),current_job=p.CurJobDef?.defName,distance=distance,
     firing_position=feasible?(object)new {x=cell.x,z=cell.z}:null,
     firing_distance=feasible?cell.DistanceTo(t.Position):0,

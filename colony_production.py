@@ -2,6 +2,7 @@
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 import json
+import colony_husbandry as husbandry
 
 DESCRIPTIONS = {"production_utilities": "Choose a building's power switch or automatic refueling policy. Compare fuel stocks, production, room temperature and loss of service. Switches require colonist work; disabling refueling preserves unallocated fuel but does not extinguish existing fuel.",
                 "production_feed_batch": "Choose an existing usable table for one researched kibble batch, or defer to preserve food. Uses live protein/greens nutrition and produces the loaded recipe's animal feed. A bill is accepted work, not produced food; loaded recipe filters can consume human meat or fertilized eggs; compare ideology and breeding costs."}
@@ -381,7 +382,9 @@ def choose(agent, state, action, snapshot):
         effects={alias:effect(plan) for alias,(_,plan) in indexed.items()}
         choices['defer']='Keep current services, fuel and food; defer'
         effects['defer']={"benefit":"Preserve services/resources", "risk":"Existing shortages/rot/fuel burn continue", "cost":"No added labor/resources", "inaction":"Current policies continue", "uncertainty":"No produced feed/restored service"}
-        selected,raw=ask_laya_choice(agent,{"decision_facts": {**utility_facts(snapshot), **_facts(state, question)} if action == "production_utilities" else _facts(state, question),"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
+        facts={**utility_facts(snapshot),**_facts(state,question)} if action=="production_utilities" else {
+            "livestock":husbandry.brief(snapshot), **_facts(state,question)}
+        selected,raw=ask_laya_choice(agent,{"decision_facts":facts,"option_effects":effects},question,DESCRIPTIONS[action],choices,detailed=True)
         stages.append(raw)
         if selected not in choices: raise ValueError('Unverified production policy')
         return None if selected=='defer' else indexed[selected][0]

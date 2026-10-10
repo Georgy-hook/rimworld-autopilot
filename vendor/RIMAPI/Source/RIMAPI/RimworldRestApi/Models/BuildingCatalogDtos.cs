@@ -28,6 +28,8 @@ namespace RIMAPI.Models
         public float NominalPowerConsumption { get; set; }
         public float GrowthLightRadius { get; set; }
         public int MinimumConstructionSkill { get; set; }
+        public float WorkToBuild { get; set; }
+        public bool IsInstantBuilding { get; set; }
         public float LightRadius { get; set; }
         public List<string> BuildingTags { get; set; }
         public List<string> RecipeSkills { get; set; }

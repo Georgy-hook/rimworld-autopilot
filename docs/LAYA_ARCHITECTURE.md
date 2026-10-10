@@ -28,6 +28,14 @@ oversized context before encoding; an input that still cannot fit is rejected.
 The comparison log records the actual visible state. Exact animal, worker, research and building details are
 presented only after Laya selects the corresponding operation.
 
+Quest and consequential letter review now uses [complete bounded pages](modules/quests.md)
+instead of clipping a broad event prefix. Small fields share a page; every long
+public field reaches inference in full, beside current colony and ending facts.
+Any quest-page defer blocks acceptance; disagreeing letter replies remain pending.
+Two actual cached CUDA diagnostics on 7 October deferred the recorded deserter
+crisis and accepted an illustrative prepared trade. These fixtures establish
+those choices only, without game commands or a survival benchmark.
+
 The official model card also says the English base checkpoint is weak on
 unseen typed-decision workflows before specialization, that its probabilities
 need domain calibration, and that large option sets lose resolution. An actual

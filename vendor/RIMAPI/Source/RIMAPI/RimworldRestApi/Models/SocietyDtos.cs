@@ -6,6 +6,7 @@ namespace RIMAPI.Models
         public bool Available { get; set; } = true;
         public List<SocietyPersonDto> People { get; set; } = new List<SocietyPersonDto>();
         public Dictionary<string, int> Medicine { get; set; } = new Dictionary<string, int>();
+        public List<SocietyMedicineDto> MedicineCatalog { get; set; } = new List<SocietyMedicineDto>();
         public List<SocietyNativeOptionDto> NativeOptions { get; set; } = new List<SocietyNativeOptionDto>();
         public List<object> GrowthMoments { get; set; } = new List<object>();
         public List<object> DrugPolicies { get; set; } = new List<object>();
@@ -13,7 +14,25 @@ namespace RIMAPI.Models
         public object Facilities { get; set; }
     }
     public class SocietyNeedDto { public string DefName { get; set; } public float Level { get; set; } public string Description { get; set; } }
-    public class SocietyConditionDto { public string DefName { get; set; } public float Severity { get; set; } public float? Immunity { get; set; } public bool LifeThreatening { get; set; } }
+    public class SocietyMedicineDto
+    {
+        public string DefName { get; set; }
+        public int Count { get; set; }
+        public float Potency { get; set; }
+        public float QualityMax { get; set; }
+        public List<string> AllowedCare { get; set; } = new List<string>();
+    }
+    public class SocietyConditionDto
+    {
+        public string DefName { get; set; }
+        public string Part { get; set; }
+        public float Severity { get; set; }
+        public float? Immunity { get; set; }
+        public bool ImmunityCanDevelop { get; set; }
+        public bool LifeThreatening { get; set; }
+        public float? TendQuality { get; set; }
+        public int? TendTicksLeft { get; set; }
+    }
     public class SocietyThoughtDto { public string DefName { get; set; } public string Label { get; set; } public float MoodOffset { get; set; } }
     public class SocietyPersonDto
     {
@@ -28,6 +47,7 @@ namespace RIMAPI.Models
         public List<SocietyThoughtDto> Thoughts { get; set; } = new List<SocietyThoughtDto>();
         public bool MedicalAttention { get; set; }
         public string MedicalCare { get; set; }
+        public float BleedingRate { get; set; }
         public List<string> CareOptions { get; set; } = new List<string>();
         public List<SocietyNeedDto> Needs { get; set; } = new List<SocietyNeedDto>();
         public List<SocietyConditionDto> Conditions { get; set; } = new List<SocietyConditionDto>();

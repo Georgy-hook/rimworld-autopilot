@@ -44,7 +44,11 @@ def collect(client: Any, snapshot: dict) -> dict:
         return {"available": False, "reason": str(exc)}
 
 def _delay(action):
-    return 600 if action in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'} else 2500 if action in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'} else 15000
+    if action in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'}:
+        return 600
+    if action in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'}:
+        return 2500
+    return 30000 if action == 'society_medical_care' else 15000
 
 
 def _subject(action, row):
@@ -67,6 +71,72 @@ def _clinical(row):
                  int(float((genes.get('hemogen') or {}).get('level') or 0) * 4),
                  (p.get('development') or {}).get('lesson_pending'),
                  tuple(p.get('timetable') or []), p.get('medical_care'), p.get('prisoner_mode')))
+
+
+CARE_LEVELS = {'NoCare': 0, 'NoMeds': 1, 'HerbalOrWorse': 2, 'NormalOrWorse': 3, 'Best': 4}
+
+
+def _medicine_catalog(context):
+    """Use native permissions for every loaded medicine, with a vanilla legacy fallback."""
+    catalog = context.get('medicine_catalog')
+    if isinstance(catalog, list):
+        return [m for m in catalog if isinstance(m, dict) and float(m.get('count') or 0) > 0]
+    minimum = {'MedicineHerbal': 2, 'MedicineIndustrial': 3, 'MedicineUltratech': 4}
+    return [{'def_name': name, 'count': count,
+             'allowed_care': [care for care, rank in CARE_LEVELS.items() if rank >= minimum[name]]}
+            for name, count in (context.get('medicine') or {}).items()
+            if name in minimum and isinstance(count, (int, float)) and count > 0]
+
+
+def _critical_medical(person):
+    return bool(person.get('downed')) or float(person.get('bleeding_rate') or 0) > 0 or any(
+        h.get('life_threatening') or (h.get('immunity_can_develop') is not False
+            and h.get('immunity') is not None and float(h['immunity']) < 1)
+        for h in person.get('conditions') or [])
+
+
+def medical_policy_options(person, context):
+    """Offer a real access improvement or an actual medicine scarcity tradeoff.
+
+    A medicine ceiling already admitting all stocked types is not an unmet
+    treatment task. Keep every native ceiling in context without repeatedly
+    inviting pointless downgrades for a critically ill patient.
+    """
+    current = person.get('medical_care')
+    catalog = _medicine_catalog(context)
+    permitted = {m['def_name'] for m in catalog if current in m.get('allowed_care', [])}
+    patients = sum(bool(p.get('medical_attention')) and not p.get('dead') for p in context.get('people') or [])
+    scarcity = sum(float(m.get('count') or 0) for m in catalog) < max(2, patients * 2)
+    result = []
+    for care in person.get('care_options') or []:
+        if care == current or care not in CARE_LEVELS:
+            continue
+        allowed = {m['def_name'] for m in catalog if care in m.get('allowed_care', [])}
+        if (current == 'NoCare' and CARE_LEVELS[care] > 0
+                or allowed - permitted
+                or (scarcity and permitted - allowed and current in CARE_LEVELS
+                    and CARE_LEVELS[care] < CARE_LEVELS[current])):
+            result.append(care)
+    return result
+
+
+def _medical_guard(person, context):
+    # Hunger, recreation and work hours do not change medicine eligibility.
+    conditions = sorted((str(h.get('def_name')), str(h.get('part')), bool(h.get('life_threatening')),
+                         tuple(float(h.get('severity') or 0) >= s for s in (.5, .75, .9)),
+                         h.get('immunity') is not None and h.get('immunity_can_develop') is not False
+                         and float(h['immunity']) < float(h.get('severity') or 0))
+                        for h in person.get('conditions') or [])
+    patients = sum(bool(p.get('medical_attention')) and not p.get('dead') for p in context.get('people') or [])
+    medicines = sorted((str(m.get('def_name')), tuple(sorted(m.get('allowed_care') or [])),
+                        float(m.get('count') or 0) >= max(2, patients * 2)) for m in _medicine_catalog(context))
+    return repr((person.get('medical_care'), bool(person.get('downed')),
+                 float(person.get('bleeding_rate') or 0) > 0, conditions, medicines,
+                 tuple(medical_policy_options(person, context))))
+
+
+def _defer_state(action, row, context):
+    return _medical_guard(row.get('person') or {}, context) if action == 'society_medical_care' else _clinical(row)
 
 
 def drug_policy_relevant(person):
@@ -121,9 +191,8 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         if pid is None or p.get("dead"):
             continue
         if p.get("medical_attention") and p.get("care_options"):
-            for care in p["care_options"]:
-                if care != p.get("medical_care"):
-                    plans["society_medical_care"][f"{pid}:{care}"] = {"pawn_id": pid, "kind": "medical", "value": care, "person": p}
+            for care in medical_policy_options(p, context):
+                plans["society_medical_care"][f"{pid}:{care}"] = {"pawn_id": pid, "kind": "medical", "value": care, "person": p}
         for mode in p.get("prisoner_options") or []:
             if mode != p.get("prisoner_mode"):
                 plans["society_prisoner_policy"][f"{pid}:{mode}"] = {"pawn_id": pid, "kind": "prisoner", "value": mode, "person": p}
@@ -179,7 +248,7 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
                 if old:
                     del semantic[subject]
             if (_recent((memory.get('issued') or {}).get(subject, {}), tick, _delay(action))
-                    or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == _clinical(row))
+                    or (_recent(deferred, tick, _delay(action)) and deferred.get('state') == _defer_state(action, row, context))
                     or _recent((memory.get('failed') or {}).get(_option(row), {}), tick, 60)):
                 del rows[key]
     eligible = [a for a, rows in plans.items() if rows]
@@ -211,9 +280,13 @@ def _effects(row: dict, action: str, context: dict) -> dict:
     needs = {n.get('def_name'): n.get('level') for n in p.get('needs') or []}
     result = assess(action, {})
     if row['kind'] == 'medical':
-        result['benefit'] = f"{h.get('def_name')} s={h.get('severity')} i={h.get('immunity')}; {row['value']}"
-        result['risk'] = f"beliefs={','.join(p.get('beliefs') or [])}; ceiling not timely treatment"
-        result['cost'] = f"stock={context.get('medicine')}; medicine and doctor time"
+        result['benefit'] = (f"ceiling {p.get('medical_care')} -> {row['value']}; {h.get('def_name')} "
+                             f"s={h.get('severity')} i={h.get('immunity')} immunity_can_develop={h.get('immunity_can_develop')}; "
+                             f"last tend={h.get('tend_quality')} remaining ticks={h.get('tend_ticks_left')}")
+        result['risk'] = (f"beliefs={','.join(p.get('beliefs') or [])}; critical_patient={_critical_medical(p)}; "
+                          "lowering a ceiling saves permitted stocked medicine but can worsen treatment and kill a critical patient; "
+                          "permission does not assign a doctor or improve their skill")
+        result['cost'] = f"native medicine permissions/potency={_medicine_catalog(context)}; stock is not proof of reachability or use"
     elif row['kind'] == 'prisoner':
         result['benefit'] = f"{row['value']}; resistance={p.get('resistance')} certainty={p.get('certainty')}"
         result['risk'] = f"ideology={p.get('ideology')}; replaces {p.get('prisoner_mode')}; prison breaks"
@@ -334,7 +407,9 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
                 memory.setdefault('drug_deferred', {})[_subject(action, row)] = {
                     'tick': tick, 'map_id': snapshot['map']['id'], 'state': _drug_guard(action, row.get('person') or {}, context)}
             else:
-                memory.setdefault('deferred', {})[_subject(action, row)] = {'tick': tick, 'state': _clinical(row)}
+                record = failure_record(tick, seconds=120) if action == 'society_medical_care' else {'tick': tick}
+                memory.setdefault('deferred', {})[_subject(action, row)] = {
+                    **record, 'state': _defer_state(action, row, context)}
         return {"applied": False, "reason": "laya_deferred"}
     live = collect(client, snapshot)
     fresh = {"map": snapshot["map"], "development": {"society": live}}

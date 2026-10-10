@@ -6,6 +6,7 @@ ACTION_DESCRIPTIONS = {
     "plan_architecture": "Choose a needed building program first, then let Laya select one procedurally generated, resource- and technology-aware layout. Housing alone provides 24 varied designs without storing 24 rigid blueprints.",
     "build_catalog_building": "Choose any currently unlocked and affordable building from RimWorld's live catalog, including DLC and modded definitions. Laya selects its category, exact building and compatible material; the game checks the site before an order is placed.",
     "build_research_bench": "Build the first affordable research bench so the colony can start research. Choose a compatible material from current stock; the game validates the site before placing its blueprint.",
+    "repair_research_bench": "Replace one unfinished material-blocked research bench at its original site with an affordable compatible material. Native placement and full replacement budget must pass before cancelling the old project; refunds, construction completion and research progress remain unverified.",
     "improve_room_lighting": "Add a real light source to one dark high-value room selected by Laya; work rooms and hospital treatment should not operate in darkness.",
     "develop_colonist_skill": "Choose a colonist, skill and matching live WorkType using current level, small/large passion flames, learning traits, health and the colony's strategic gaps.",
     "optimize_night_owl_schedule": "Move one Night Owl colonist's sleep to 11:00-18:59 and leave the night flexible for work and recreation.",
@@ -132,6 +133,7 @@ ACTION_DESCRIPTIONS = {
 }
 
 ACTION_LABELS = {
+    "repair_research_bench": "замена материала исследовательского стола",
     "plan_architecture": "архитектурный проект",
     "build_catalog_building": "постройка из полного каталога",
     "connect_power_consumer": "подключить прибор к электросети",
@@ -262,6 +264,7 @@ ACTION_LABELS = {
 }
 
 ACTION_LABELS_EN = {
+    "repair_research_bench": "Replace blocked research bench material",
     "prepare_patient_bed": "Prepare a patient sleeping spot",
     "plan_architecture": "Design a building", "unforbid_supplies": "Unforbid supplies",
     "build_catalog_building": "Choose a catalog building",

@@ -25,7 +25,7 @@ $log = Join-Path $logDir 'decisions.jsonl'
 $state = Join-Path $logDir 'colony-state.json'
 $pidFile = Join-Path $logDir 'director.pid'
 $runtimeStatus = Join-Path $logDir 'runtime-status.json'
-$device = if ($config -and $config.device) { [string]$config.device } else { 'cuda' }
+$device = if ($config -and $config.device) { [string]$config.device } else { 'auto' }
 $apiUrl = if ($config -and $config.api_url) { [string]$config.api_url } else { 'http://localhost:8765' }
 $interval = if ($config -and $config.interval) { [int]$config.interval } else { 10 }
 

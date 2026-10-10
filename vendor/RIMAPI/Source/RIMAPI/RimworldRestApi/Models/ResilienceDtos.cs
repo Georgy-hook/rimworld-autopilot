@@ -22,6 +22,9 @@ namespace RIMAPI.Models
         public string ExpectedCurrentJob { get; set; }
         public int? ExpectedCarePatientId { get; set; }
         public string CareYieldReason { get; set; }
+        public bool ThermalRescue { get; set; }
+        public int? BedId { get; set; }
+        public float? DestinationTemperature { get; set; }
         public float? TravelDistance { get; set; }
         public float? StarvationTicks { get; set; }
         public float? MalnutritionSeverity { get; set; }

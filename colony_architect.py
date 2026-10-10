@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import random
 import math
+import colony_husbandry as husbandry
 from collections import Counter
 from typing import Any
 import colony_retry as retry
@@ -372,17 +373,7 @@ def _furnished_room(
         add("Table1x2c", width // 2, height - 2, stuff="WoodLog", rotation=1)
         add("DiningChair", width // 2 - 1, height - 2, stuff="WoodLog", rotation=1)
     elif program == "barn":
-        # Swap the human door for an animal flap when loaded.
-        if _available(index, "AnimalFlap"):
-            for item in items:
-                if item["def_name"] == "Door":
-                    item["def_name"] = "AnimalFlap"
-                    break
-        for i in range(min(10, max(3, int(context.get("animal_count") or 3) + variant))):
-            add("AnimalSleepingSpot", 1 + (i % 4) * 2, 2 + (i // 4) * 2)
-        if "StrawMatting" in index and int(item_counts.get("Hay") or item_counts.get("HayGrass") or 0) >= interior_area:
-            floors = _interior_floor(width, height, "StrawMatting")
-        items.extend(_climate_items(index, climate, powered, width - 2, 2))
+        raise ValueError("Barns require validated animal_shelter_variants")
     elif program == "nursery":
         for x in range(2, width - 2, 3):
             add("Crib", x, 3, stuff="WoodLog")
@@ -681,6 +672,8 @@ def generate_royal_variants(program: str, context: dict[str, Any]) -> dict[str, 
 
 
 def generate_program_variants(program: str, context: dict[str, Any], *, seed: int = 0) -> dict[str, dict[str, Any]]:
+    if program == "barn":
+        return animal_shelter_variants(context)
     if program == "royal_bedroom" or (program == "throne_room" and any(
             row.get("throne_room_required_things") for row in royal_people(context))):
         return generate_royal_variants(program, context)
@@ -1124,6 +1117,118 @@ def resolve_layout_materials(layout: dict[str, Any], catalog: dict[str, dict[str
             return None
         resolved_items.append({**item, "stuff_def_name": material})
     return {**layout, "buildings": resolved_items}
+
+
+def animal_shelter_layout(material, count, *, mode="indoor_pen", flap_stuff=None,
+                          thermal_control=None, straw_floor=False):
+    """A closed indoor pen, or a roofed barn joined to its own enclosed run.
+
+    An animal flap in the outside boundary would make an indoor pen unenclosed.
+    Here it only joins the barn to the fenced run; the human entrance is a door.
+    """
+    minimum = 5 if mode == "pet_shelter" else 7
+    count=max(1,int(count)); width=min(11,max(minimum,2*math.ceil(math.sqrt(count))+3))
+    per_row=(width-2+1)//2
+    barn_height=max(minimum,2*math.ceil(count/per_row)+3)
+    items=_shell(width,barn_height,material,"south",width//2)
+    for i in range(count):
+        items.append(building("AnimalSleepingSpot",1+2*(i%per_row),2+2*(i//per_row)))
+    if thermal_control=="Cooler":
+        z=barn_height//2
+        items=[row for row in items if not (row["rel_x"]==width-1 and row["rel_z"]==z)]
+        items.append(building("Cooler",width-1,z,rotation=1))
+    elif thermal_control:
+        items.append(building(thermal_control,width-2,barn_height-2))
+    height=barn_height
+    if mode=="barn_run":
+        if not flap_stuff: raise ValueError("An animal flap needs an explicitly selected textile/leather")
+        x=width//2
+        items=[row for row in items if not (row["rel_x"]==x and row["rel_z"]==barn_height-1)]
+        items.append(building("AnimalFlap",x,barn_height-1,stuff=flap_stuff))
+        height+=6
+        for z in range(barn_height,height-1):
+            items.extend((building("Fence",0,z,stuff=material),building("Fence",width-1,z,stuff=material)))
+        for xx in range(width):
+            items.append(building("FenceGate" if xx==x else "Fence",xx,height-1,stuff=material))
+        items.append(building("PenMarker",2,barn_height+2,stuff=material))
+    elif mode=="indoor_pen":
+        items.append(building("PenMarker",2,1,stuff=material))
+    elif mode!="pet_shelter": raise ValueError("Unsupported animal shelter mode")
+    floors=_interior_floor(width,barn_height,"StrawMatting") if straw_floor else []
+    return {**blueprint(items,width,height,floors), "barn_roof_bounds":{"x":0,"z":0,"width":width,"height":barn_height},
+            "animal_places":count, "mode":mode}
+
+
+def animal_shelter_variants(context):
+    index=catalog_index(context.get("building_catalog") or [])
+    stock=context.get("item_counts") or {}
+    material=str(context.get("material") or "WoodLog")
+    animals=context.get("animals") or []
+    comfort=husbandry.comfort_intersection(animals)
+    if comfort and comfort[0]>comfort[1]:
+        # A single thermostat cannot satisfy disjoint species limits. Offer
+        # separate cohorts instead of advertising one safe shared building.
+        groups=[]
+        for animal in animals:
+            joined=False
+            for group in groups:
+                limits=husbandry.comfort_intersection(group+[animal])
+                if limits and limits[0]<=limits[1]: group.append(animal);joined=True;break
+            if not joined:groups.append([animal])
+        result={}
+        for i,group in enumerate(groups):
+            for key,plan in animal_shelter_variants({**context,"animals":group}).items():
+                key=f"cohort_{i+1}:{key}"
+                result[key]={**plan,"id":key,"summary":f"Separate cohort {[a.get('id') for a in group]}; marker/area assignment pending; "+plan["summary"]}
+        return result
+    count=max(1,len(animals) or int(context.get("animal_count") or 1))
+    needs_pen=any(a.get("requires_pen") is True or a.get("needs_pen") is True for a in animals)
+    modes=["indoor_pen","barn_run"] if needs_pen else ["pet_shelter"]
+    climate=str(context.get("climate") or "temperate")
+    outside = context.get("outside_c")
+    seasonal = ((context.get("sustenance") or {}).get("husbandry") or {}).get("seasonal_means") or []
+    temperatures = [outside] if isinstance(outside, (int, float)) else []
+    temperatures += [p["mean_c"] for p in seasonal if isinstance(p.get("mean_c"), (int, float))
+                     and float(p.get("offset_days") or 0) <= 15]
+    unsafe_unheated = bool(comfort and temperatures and
+        any(t < comfort[0] or t > comfort[1] for t in temperatures))
+    controls=[] if unsafe_unheated else [None]
+    for name in (["Campfire","Heater"] if climate=="cold" else ["PassiveCooler","Cooler"] if climate=="hot" else []):
+        if _available(index,name): controls.append(name)
+    flap=index.get("AnimalFlap") or {}
+    flap_materials=[m for m in flap.get("allowed_stuff_defs") or []
+        if all(stock.get(resource,0)>=amount for resource,amount in effective_building_cost(flap,m).items())]
+    result={}
+    snapshot={"development":{"sustenance":context.get("sustenance") or {}}}
+    forecast=husbandry.brief(snapshot)
+    for mode in modes:
+        if mode!="pet_shelter" and not _available(index,"PenMarker"): continue
+        if mode=="barn_run" and not all(_available(index,name) for name in ("AnimalFlap","Fence","FenceGate")): continue
+        for flap_material in (flap_materials if mode=="barn_run" else [None]):
+            for control in controls:
+                for straw in (False,True):
+                    layout=animal_shelter_layout(material,count,mode=mode,flap_stuff=flap_material,
+                        thermal_control=control,straw_floor=straw)
+                    if straw:
+                        tile=index.get("StrawMatting") or {}
+                        costs=effective_building_cost(tile)
+                        hay=costs.get("Hay",0)*len(layout["floors"])
+                        if not tile.get("available_now") or hay<=0 or stock.get("Hay",0)<hay or not husbandry.straw_feeding_safe(snapshot,hay): continue
+                    if any(not _available(index,row["def_name"]) for row in layout["buildings"]): continue
+                    resolved=resolve_layout_materials(layout,index,stock)
+                    if resolved is None or layout_anchor_conflicts(resolved): continue
+                    cost=estimated_stuff_cost(resolved,list(index.values()))
+                    if any(stock.get(name,0)<amount for name,amount in cost.items()): continue
+                    key=f"{mode}:{flap_material or 'door'}:{control or 'no_heater'}:{'straw' if straw else 'bare'}"
+                    result[key]={"id":key,"program":"barn","style":mode,"name":mode.replace('_',' '),
+                        "housing_cohort":[a.get("id") for a in animals],"comfort_intersection":comfort,
+                        "layout":resolved,"width":resolved["width"],"height":resolved["height"],
+                        "estimated_stuff_cost":cost,
+                        "summary":f"{mode}; {count} animal places; heat/cooling {control or 'none'}; {cost}; "
+                            f"flap {flap_material}; {'straw reduces filth, burns easily, consumes feed' if straw else 'bare floor preserves feed'}; "
+                            f"forecast {forecast}; roof, fuel/power connection, room temperature, feed delivery and animal transfer remain pending. "
+                            "Fence contains livestock but does not exclude predators. Indoor pen needs stored compatible feed; open run needs safe growing weather."}
+    return result
 
 
 # Saved plans retain intent; physical evidence decides what remains to place.

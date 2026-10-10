@@ -215,14 +215,14 @@ namespace RIMAPI.Core
         {
             try
             {
+                // Finish serialization before committing HTTP headers. A
+                // serializer failure must not masquerade as 200/empty JSON.
+                var json = JsonConvert.SerializeObject(data, _jsonSettings);
                 // Ensure the response status code is set correctly
                 response.StatusCode = (int)statusCode;
 
                 // Set Content-Type header for JSON responses
                 response.ContentType = "application/json; charset=utf-8";
-
-                // Serialize the data to a JSON string
-                var json = JsonConvert.SerializeObject(data, _jsonSettings);
 
                 // Log the response for debugging (truncate long responses)
                 var logJson = json.Length > 1000 ? json.Substring(0, 1000) + "..." : json;
@@ -241,14 +241,20 @@ namespace RIMAPI.Core
             }
             catch (Exception ex)
             {
-                LogApi.Error($"Error writing response: {ex.Message}");
+                LogApi.Error($"Error writing response: {ex}");
                 try
                 {
-                    response.Abort();
+                    var failure = JsonConvert.SerializeObject(ApiResult.Fail("response_serialization_or_write_failed: " + ex.Message), _jsonSettings);
+                    var bytes = Encoding.UTF8.GetBytes(failure);
+                    response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                    response.ContentType = "application/json; charset=utf-8";
+                    response.ContentLength64 = bytes.Length;
+                    await response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+                    response.Close();
                 }
                 catch
                 {
-                    // Ignore any errors on response abort
+                    response.Abort();
                 }
             }
         }

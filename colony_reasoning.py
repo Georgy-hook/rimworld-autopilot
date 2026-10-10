@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 import colony_modules
+import colony_growth
 
 
 FIELDS = ("benefit", "risk", "cost", "inaction", "uncertainty")
@@ -192,12 +193,22 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
                           and number(p.get("hunger")) is not None and number(p.get("hunger")) <= .1
                           for p in care_people)
     recreation = recreation_pressure(snapshot)
+    animals = [a for a in snapshot.get("animals") or [] if not a.get("dead")]
+    animal_bleed = max((number(a.get("bleeding_rate")) or 0 for a in animals), default=0)
     care_risks = None
-    if thermal or bleed_rate >= .05 or malnutrition >= .15 or dependent_hungry or recreation:
+    food_stock = number(resources.get("nutrition"))
+    food_days = round(food_stock / (1.6 * len(care_people)), 1) if food_stock is not None and care_people else None
+    if thermal or bleed_rate >= .05 or animal_bleed >= .05 or malnutrition >= .15 or dependent_hungry or recreation or (food_days is not None and food_days < 5):
         care_risks = {"meals": resources.get("meals"), "least_food_level": least_food,
                       "bleed_rate_max": bleed_rate,
                       "downed": sum(bool(p.get("downed") or p.get("is_downed")) for p in care_people),
                       "threats": (snapshot.get("map") or {}).get("enemies", 0)}
+        if food_days is not None and food_days < 5:
+            care_risks["food_days"] = food_days
+            care_risks["stored_nutrition"] = food_stock
+        if animal_bleed >= .05:
+            care_risks["animal_bleed_max"] = animal_bleed
+            care_risks["downed_animals"] = sum(bool(a.get("downed")) for a in animals)
         if malnutrition:
             care_risks["malnutrition_max"] = malnutrition
         if dependent_hungry:
@@ -218,6 +229,7 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
                                         if isinstance(fire, dict))}
     facts = {
         "care_risks": care_risks,
+        "development": colony_growth.development_briefing(snapshot),
         "threats": (snapshot.get("map") or {}).get("enemies", 0),
         "downed": sum(bool(p.get("downed")) for p in people),
         "people": len(people),
@@ -252,6 +264,16 @@ def parameter_facts(snapshot: dict[str, Any], action: str,
         temperature = round(temperature, 1)
     else:
         temperature = None
+    if action=="build_animal_barn":
+        import colony_husbandry as husbandry
+        plan=husbandry.planning_context(snapshot)
+        return {"action":action,"outside_c":temperature,"people":len(people),
+            "downed":sum(bool(p.get("downed")) for p in people),
+            "animal_comfort":husbandry.comfort_intersection(snapshot.get("animals") or []),
+            "feed_reserve_target":plan.get("reserve_target_nutrition"),
+            "feed_cover_days":plan.get("stock_cover_days_if_delivered"),
+            "hay":stock.get("Hay") if "item_counts" in dev else None,
+            "unfinished":len(dev.get("construction_projects") or [])}
     return {
         "action": action,
         "wood": stock.get("WoodLog", 0) if "item_counts" in dev else None,
