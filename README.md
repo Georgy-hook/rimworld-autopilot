@@ -4,7 +4,7 @@
 
 ![Windows 10 1809+ / 11](https://img.shields.io/badge/Windows-10%201809%2B%20%2F%2011-0078D4?style=flat-square)
 ![RimWorld 1.6](https://img.shields.io/badge/RimWorld-1.6-B78B54?style=flat-square)
-![Laya 0.3.7](https://img.shields.io/badge/Laya-0.3.7-8B5CF6?style=flat-square)
+![Laya 0.3.4](https://img.shields.io/badge/Laya-0.3.4-8B5CF6?style=flat-square)
 ![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10%20to%203.12-3776AB?style=flat-square&logo=python&logoColor=white)
 ![C# / .NET](https://img.shields.io/badge/C%23%20%2F%20.NET-RIMAPI-512BD4?style=flat-square&logo=dotnet&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-local%20AI-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
@@ -75,6 +75,17 @@ The yellow bars show how Laya weighs the choices in front of it. The same view i
 ## Quick install
 
 You need **64-bit Windows 10 (version 1809 or newer) or Windows 11**, **RimWorld 1.6**, **Harmony**, and **Python 3.10–3.12**. An NVIDIA GPU is recommended for faster decisions; CPU mode is available. The first setup downloads Laya's model files, so it needs an internet connection and free disk space.
+
+The unpublished `0.0.8` candidate defaults to **Automatic**. It executes a small
+CUDA compatibility check before loading the model; an unavailable driver,
+unsupported GPU or GPU memory failure uses **CPU** instead. AMD graphics and
+computers without a discrete GPU can run the model on their processor. This
+Windows package does not provide AMD GPU acceleration through ROCm or DirectML.
+An older NVIDIA card is used only when the installed PyTorch build can execute
+its kernels. CPU speed and memory use depend on the PC; running RimWorld still
+requires its own supported graphics hardware. **Settings → Laya device** selects
+the device for the next launch and shows actual model placement and CPU fallback.
+See [hardware compatibility and verification](docs/audits/model-hardware-compatibility-2026-10-10.md).
 
 1. Download and run the [latest Windows installer](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest/download/RimWorld-Autopilot-Installer.exe). Choose your install folder and whether you want a desktop shortcut.
 2. On the final setup page, leave **Configure Python, the local model and the RimWorld mod now** selected. Check **RimWorld folder** in the assistant. It checks your saved selection and Steam's registered libraries, including other drives; use **Browse…** for a standalone installation or a game it cannot find. Select the folder containing `RimWorldWin64.exe` and `Data\Core`, not `Mods` or your saves. The assistant prepares Python, downloads Laya, and installs the bundled RIMAPI mod into that game's `Mods\RIMAPI`.

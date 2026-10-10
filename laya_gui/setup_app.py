@@ -48,6 +48,7 @@ SETUP_TEXT = {
         "install_dir": "Куда установить приложение", "game": "Где установлен RimWorld", "browse": "Выбрать…",
         "game_help": "Любая папка игры, в том числе на другом диске. Нужны RimWorldWin64.exe и Data\\Core. В Steam: RimWorld → Управление → Просмотреть локальные файлы.",
         "device": "Как запускать модель", "auto": "Автоматически", "cuda": "Видеокарта NVIDIA", "cpu": "Процессор",
+        "device_help": "Авто проверяет CUDA и при несовместимости использует процессор. AMD и ПК без видеокарты работают на CPU. На процессоре решения могут занимать больше времени.",
         "shortcut": "Добавить ярлык на рабочий стол", "install": "Установить Autopilot", "working": "Установка…",
         "ready": "Всё готово. Настройки можно изменить позже.",
         "python_missing": "Python 3.10–3.12 не найден. Открыть страницу загрузки Python?",
@@ -56,6 +57,7 @@ SETUP_TEXT = {
         "error": "Не удалось завершить установку", "step_copy": "Размещаю приложение и иллюстрации…",
         "step_python": "Создаю отдельное окружение Python…", "step_packages": "Устанавливаю необходимые пакеты…",
         "step_model": "Загружаю Laya для первого запуска… Это может занять несколько минут.",
+        "step_device": "Проверяю совместимость устройства для Laya…",
         "model_failed": "Не удалось загрузить Laya. Проверьте интернет и свободное место, затем повторите установку.",
         "step_mod": "Подключаю игровой мод…", "step_config": "Сохраняю настройки и создаю ярлык…",
         "privacy": "Модель работает локально. Установщик не просит ключ API и не отправляет сохранения в интернет.",
@@ -66,6 +68,7 @@ SETUP_TEXT = {
         "install_dir": "Application folder", "game": "RimWorld folder", "browse": "Browse…",
         "game_help": "Any game folder, including another drive. It must contain RimWorldWin64.exe and Data\\Core. In Steam: RimWorld → Manage → Browse local files.",
         "device": "Run the model using", "auto": "Automatic", "cuda": "NVIDIA GPU", "cpu": "CPU",
+        "device_help": "Automatic checks CUDA and uses the CPU if it is incompatible. AMD and PCs without a GPU use CPU mode. Decisions may take longer on a CPU.",
         "shortcut": "Add a desktop shortcut", "install": "Install Autopilot", "working": "Installing…",
         "ready": "Everything is ready. You can change these settings later.",
         "python_missing": "Python 3.10–3.12 was not found. Open the Python download page?",
@@ -74,6 +77,7 @@ SETUP_TEXT = {
         "error": "Setup could not finish", "step_copy": "Installing the application and artwork…",
         "step_python": "Creating an isolated Python environment…", "step_packages": "Installing the required packages…",
         "step_model": "Downloading Laya for first launch… This may take several minutes.",
+        "step_device": "Checking the local Laya device…",
         "model_failed": "Could not download Laya. Check your Internet connection and free disk space, then retry setup.",
         "step_mod": "Connecting the game mod…", "step_config": "Saving settings and creating the shortcut…",
         "privacy": "The model runs locally. Setup does not ask for an API key or upload save files.",
@@ -156,7 +160,9 @@ class SetupWindow(tk.Tk):
         self.device_var.set(device_labels.get(self.device_code, self.t("auto")))
         self.device = ttk.Combobox(card.body, state="readonly", textvariable=self.device_var, values=tuple(device_labels.values()), width=31)
         self.device.bind("<<ComboboxSelected>>", lambda _event: setattr(self, "device_code", next((key for key, value in device_labels.items() if value == self.device_var.get()), "auto")))
-        self.device.pack(anchor="w", pady=(8, 12))
+        self.device.pack(anchor="w", pady=(8, 5))
+        tk.Label(card.body, text=self.t("device_help"), bg=COLORS["panel"], fg=COLORS["muted"],
+                 font=FONTS["small"], justify="left", wraplength=490).pack(anchor="w", pady=(0, 10))
         ttk.Checkbutton(card.body, text=self.t("shortcut"), variable=self.shortcut_var).pack(anchor="w", pady=(0, 12))
         tk.Label(card.body, text=self.t("privacy"), bg=COLORS["panel"], fg=COLORS["muted"], font=FONTS["small"], justify="left", wraplength=490).pack(anchor="w", pady=(0, 12))
         self.progress = ttk.Progressbar(card.body, mode="indeterminate")
@@ -290,7 +296,12 @@ class SetupWindow(tk.Tk):
                 self._run([str(python), "-m", "venv", str(venv)], install_dir)
             self._emit("status", self.t("step_packages"))
             self._run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], install_dir)
+            if device == "cpu":
+                self._run([str(venv_python), "-m", "pip", "install", "torch", "--index-url", "https://download.pytorch.org/whl/cpu"], install_dir)
             self._run([str(venv_python), "-m", "pip", "install", "-r", str(install_dir / "requirements.txt")], install_dir)
+            self._emit("status", self.t("step_device"))
+            self._run([str(venv_python), str(install_dir / "laya_runtime.py"), "--device", device,
+                       "--output", str(install_dir / "model-device.json")], install_dir)
             self._emit("status", self.t("step_model"))
             try:
                 self._run([str(venv_python), str(install_dir / "rimworld_laya.py"), "download-model"], install_dir)

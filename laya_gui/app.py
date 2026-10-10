@@ -23,7 +23,7 @@ from .i18n import PRIORITY_TEXT, QUESTION_TEXT, doctrine_view, humanize, risk_te
 from .services import (
     APP_NAME, BASE_DIR, DATA_DIR, FEEDBACK_PATH, PREFERENCES_PATH, RESOURCE_DIR,
     active_map_key, append_feedback, export_bundle, export_history, load_config, read_director_health, read_pid, request_json, resolve_log_dir,
-    start_director, start_observer as launch_observer, stop_director, tail_jsonl,
+    save_config, start_director, start_observer as launch_observer, stop_director, tail_jsonl,
     timestamped_export_name,
 )
 from .theme import (
@@ -384,6 +384,22 @@ class ControlCenter(tk.Tk):
                  font=FONTS["small"], justify="left", wraplength=940).pack(anchor="w", pady=(0, 10))
         FancyButton(installation.body, text=tr(self.language, "run_installer"), width=250, variant="soft", command=self.open_setup).pack(anchor="w")
 
+        runtime = ShadowCard(page)
+        runtime.pack(fill="x", pady=(14, 0))
+        tk.Label(runtime.body, text=tr(self.language, "model_device"), bg=COLORS["panel"], fg=COLORS["cyan"], font=FONTS["heading"]).pack(anchor="w")
+        device_labels = {key: tr(self.language, f"device_{key}") for key in ("auto", "cuda", "cpu")}
+        self.model_device_var = tk.StringVar(value=device_labels.get(self.config_data.get("device"), device_labels["auto"]))
+        device_box = ttk.Combobox(runtime.body, state="readonly", textvariable=self.model_device_var,
+                                  values=tuple(device_labels.values()), width=31)
+        device_box.pack(anchor="w", pady=(8, 6))
+        device_box.bind("<<ComboboxSelected>>", lambda _event: self.save_model_device(
+            next(key for key, label in device_labels.items() if label == self.model_device_var.get())))
+        tk.Label(runtime.body, text=tr(self.language, "model_device_help"), bg=COLORS["panel"], fg=COLORS["muted"],
+                 font=FONTS["small"], justify="left", wraplength=940).pack(anchor="w", pady=(0, 8))
+        self.model_runtime_label = tk.Label(runtime.body, text=tr(self.language, "device_not_loaded"), bg=COLORS["panel"],
+                                           fg=COLORS["text"], font=FONTS["small"], justify="left", wraplength=940)
+        self.model_runtime_label.pack(anchor="w")
+
         overlay = ShadowCard(page)
         overlay.pack(fill="x", pady=(14, 0))
         tk.Label(overlay.body, text=tr(self.language, "overlay_title"), bg=COLORS["panel"], fg=COLORS["amber"], font=FONTS["heading"]).pack(anchor="w")
@@ -501,6 +517,18 @@ class ControlCenter(tk.Tk):
             self.footer.configure(text=f"{tr(self.language, 'laya_online')} · PID {pid}", fg=COLORS["green"])
         except (OSError, FileNotFoundError) as exc:
             messagebox.showerror(APP_NAME, f"{tr(self.language, 'error')}: {exc}")
+
+    def save_model_device(self, device: str) -> None:
+        if device not in {"auto", "cpu", "cuda"}:
+            raise ValueError(f"Unknown model device: {device!r}")
+        config = dict(self.config_data, device=device)
+        try:
+            save_config(config)
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"{tr(self.language, 'error')}: {exc}")
+            return
+        self.config_data = config
+        self.footer.configure(text=tr(self.language, "device_saved"), fg=COLORS["cyan"])
 
     def stop_laya(self) -> None:
         try:
@@ -636,6 +664,17 @@ class ControlCenter(tk.Tk):
         color = COLORS["green"] if state == "running" else COLORS["amber"] if state in {"starting", "waiting"} else COLORS["red"]
         status_text = tr(self.language, status_key)
         self.laya_chip.configure(text=status_text, fg=color)
+        if hasattr(self, "model_runtime_label"):
+            runtime = health.get("model_runtime") or {}
+            actual = str(runtime.get("actual_device") or "")
+            runtime_text = tr(self.language, "device_not_loaded")
+            if actual and runtime.get("model_loaded"):
+                label = tr(self.language, "device_cpu") if actual == "cpu" else f"NVIDIA {runtime.get('gpu_name') or actual}"
+                runtime_text = tr(self.language, "device_actual").format(device=label, threads=runtime.get("cpu_threads", "—"))
+                reason = runtime.get("fallback_reason")
+                if reason and actual == "cpu":
+                    runtime_text += "\n" + tr(self.language, "device_fallback").format(reason=tr(self.language, f"device_reason_{reason}"))
+            self.model_runtime_label.configure(text=runtime_text)
         observer_health = read_director_health(self.observer_pid_path, self.observer_status_path)
         observer_state = str(observer_health.get("state") or "stopped")
         observer_key = {"running": "observer_online", "waiting": "observer_waiting", "starting": "observer_waiting",

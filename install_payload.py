@@ -49,6 +49,7 @@ RUNTIME_FILES = (
     "colony_professions.py",
     "colony_strategy.py",
     "laya_decisions.py",
+    "laya_runtime.py",
     "laya_preferences.py",
     "rimworld_laya.py",
     "stream_observer.py",

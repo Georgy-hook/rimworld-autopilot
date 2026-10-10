@@ -37,7 +37,7 @@ DEFAULT_CONFIG = {
     "python_exe": str(BASE_DIR / ".venv" / "Scripts" / "python.exe"),
     "director_script": str(BASE_DIR / "colony_director.py"),
     "api_url": "http://localhost:8765",
-    "device": "cuda",
+    "device": "auto",
     "interval": 10,
 }
 
@@ -234,7 +234,7 @@ def start_director(config: dict[str, Any], log_path: Path, state_path: Path, pid
     stderr = (log_path.parent / "director.stderr.log").open("ab")
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     args = [
-        str(python_exe), "-u", str(director), "--device", str(config.get("device", "cuda")),
+        str(python_exe), "-u", str(director), "--device", str(config.get("device") or "auto"),
         "--interval", str(config.get("interval", 10)), "--api-url", str(config.get("api_url", "http://localhost:8765")),
         "--log", str(log_path), "--state", str(state_path), "--pid-file", str(pid_path),
         "--runtime-status", str(runtime_status_path),

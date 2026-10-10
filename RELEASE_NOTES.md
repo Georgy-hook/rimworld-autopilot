@@ -1,5 +1,13 @@
 # Unreleased corrections after 0.0.7
 
+- Default model startup to Automatic, test real CUDA kernels, retry device
+  failures once on CPU and expose actual model placement in GUI settings.
+  AMD computers and machines without a discrete GPU use CPU mode in this
+  Windows package; ROCm/DirectML acceleration is not provided.
+- Corrected the unavailable `laya==0.3.7` dependency to the tested `0.3.4`
+  package used by the cached runtime. These candidate changes do not alter the
+  running colony's installation or the published stable release.
+
 - Fixed zero-work markers becoming construction frames: blueprint placement now
   follows the loaded vanilla WorkToBuild rule, including caravan and DLC spots.
   Validated placement repairs matching legacy plans, retains completed-marker

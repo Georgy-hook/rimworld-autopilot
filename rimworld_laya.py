@@ -2423,24 +2423,18 @@ def resolve_model_source(model: str) -> str:
 
 
 def load_agent(model: str, device: str) -> Any:
+    from laya_runtime import load_model, select_device
     try:
         import torch
     except ModuleNotFoundError:
         torch = None  # Lightweight clients can load a mocked or remote agent.
-    if torch is not None:
-        # A 20-thread CPU pool saturated the host during each short decision.
-        cpu_threads = max(1, min(8, int(os.environ.get("LAYA_CPU_THREADS", "4"))))
-        torch.set_num_threads(cpu_threads)
-        try:
-            torch.set_num_interop_threads(1)
-        except RuntimeError:
-            pass  # PyTorch allows this setting only before the first inference.
     import laya
-
-    selected = None if device == "auto" else device
     model_source = resolve_model_source(model)
-    print(f"Loading Laya model {model!r} on {selected or 'auto'}...", flush=True)
-    return SafeDecisionAgent(laya.load(model_source, device=selected))
+    if torch is None:
+        return SafeDecisionAgent(laya.load(model_source, device=None if device == "auto" else device))
+    info = select_device(torch, device)
+    print(f"Loading Laya model {model!r} on {info['selected_device']}...", flush=True)
+    return SafeDecisionAgent(load_model(laya.load, model_source, torch, info))
 
 
 

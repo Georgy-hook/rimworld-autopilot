@@ -154,6 +154,14 @@ class GameInstallationTests(unittest.TestCase):
             user_config = root / "Локальные данные" / "RimWorld Autopilot" / "rimworld-autopilot.json"
             self.assertEqual(json.loads(user_config.read_text(encoding="utf-8")), config)
             self.assertTrue((game / "Mods/RIMAPI/1.6/Assemblies/RIMAPI.dll").is_file())
+            commands = [call.args[0] for call in window._run.call_args_list]
+            cpu_install = next(command for command in commands if "--index-url" in command)
+            self.assertEqual(cpu_install[-1], "https://download.pytorch.org/whl/cpu")
+            probe = next(command for command in commands if any(str(part).endswith("laya_runtime.py") for part in command))
+            self.assertEqual(probe[probe.index("--device") + 1], "cpu")
+            model_download = next(command for command in commands if "download-model" in command)
+            self.assertLess(commands.index(cpu_install), commands.index(probe))
+            self.assertLess(commands.index(probe), commands.index(model_download))
             # Elevation may use another account: the forwarded original user's
             # config must remain the source and destination for reconfiguration.
             original_data = root / "Original GUI user"

@@ -11746,7 +11746,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Long-horizon Laya colony director for RimWorld")
     p.add_argument("--api-url", default=bridge.DEFAULT_API_URL)
     p.add_argument("--model", default=bridge.DEFAULT_MODEL)
-    p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="cuda")
+    p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     p.add_argument("--interval", type=float, default=10.0)
     p.add_argument("--state", type=Path, default=Path(__file__).with_name("logs") / "colony-state.json")
     p.add_argument("--log", type=Path, default=Path(__file__).with_name("logs") / "decisions.jsonl")
@@ -11755,7 +11755,7 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def write_runtime_status(path: Path, state: str, detail: str = "") -> bool:
+def write_runtime_status(path: Path, state: str, detail: str = "", *, model_runtime: dict[str, Any] | None = None) -> bool:
     """Publish health without ever letting a Windows file-sharing race stop Laya."""
     payload = {
         "pid": os.getpid(),
@@ -11763,6 +11763,8 @@ def write_runtime_status(path: Path, state: str, detail: str = "") -> bool:
         "detail": detail[:500],
         "updated_at": bridge.utc_now(),
     }
+    if model_runtime is not None:
+        payload["model_runtime"] = model_runtime
     serialized = json.dumps(payload, ensure_ascii=False)
     temporary = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -13154,6 +13156,11 @@ def main() -> int:
     except Exception as exc:
         write_runtime_status(args.runtime_status, "error", f"Model startup failed: {exc}")
         raise
+    model_runtime = getattr(agent, "runtime_info", lambda: None)
+
+    def publish_status(state: str, detail: str = "") -> bool:
+        return write_runtime_status(args.runtime_status, state, detail, model_runtime=model_runtime())
+
     last_wait_message = 0.0
     last_combat_signature: tuple[Any, ...] | None = None
     last_combat_record: dict[str, Any] | None = None
@@ -13181,7 +13188,7 @@ def main() -> int:
             # Refresh the heartbeat without erasing a waiting/error state.  The
             # GUI must not briefly claim that a failing director is healthy
             # merely because another retry has started.
-            write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
+            publish_status(runtime_state, runtime_detail)
             try:
                 # The retry gate covers native world/modal reads too. Those
                 # run before a map snapshot and can fail while no map exists.
@@ -13202,7 +13209,7 @@ def main() -> int:
                     except bridge.RimApiError:
                         pass  # Credits may already have left the playable map.
                     runtime_state, runtime_detail = "completed", "Run ended: " + terminal["result"]["reason"]
-                    write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
+                    publish_status(runtime_state, runtime_detail)
                     return 0
                 # Colony sales can temporarily remove every map. Resolve native
                 # world/settlement choices before requesting a map snapshot.
@@ -13613,7 +13620,7 @@ def main() -> int:
                 runtime_detail = "Last decision cycle completed"
                 consecutive_cycle_errors = 0
                 retry_not_before = 0.0
-                write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
+                publish_status(runtime_state, runtime_detail)
             except (bridge.RimApiError, OSError, ValueError, RuntimeError) as exc:
                 now = time.monotonic()
                 detail = str(exc)
@@ -13624,7 +13631,7 @@ def main() -> int:
                 if runtime_state != "waiting":
                     runtime_detail = f"{runtime_detail} Retrying in {retry_delay:.0f}s."
                 retry_not_before = time.monotonic() + retry_delay
-                write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
+                publish_status(runtime_state, runtime_detail)
                 if now - last_wait_message >= 60:
                     print(f"[{bridge.utc_now()}] {prefix}: {exc}", flush=True)
                     last_wait_message = now
@@ -13636,7 +13643,7 @@ def main() -> int:
                 retry_not_before = time.monotonic() + retry_delay
                 runtime_state = "error"
                 runtime_detail = f"Unexpected cycle error: {exc}. Retrying in {retry_delay:.0f}s."
-                write_runtime_status(args.runtime_status, runtime_state, runtime_detail)
+                publish_status(runtime_state, runtime_detail)
                 traceback.print_exc()
                 bridge.append_log(args.log, {"timestamp": bridge.utc_now(), "mode": "error", "error": repr(exc)})
             elapsed = time.monotonic() - started
@@ -13646,8 +13653,8 @@ def main() -> int:
         return 0
     finally:
         try:
-            write_runtime_status(args.runtime_status, runtime_state if runtime_state == "completed" else "stopped",
-                                 runtime_detail if runtime_state == "completed" else "Director stopped")
+            publish_status(runtime_state if runtime_state == "completed" else "stopped",
+                           runtime_detail if runtime_state == "completed" else "Director stopped")
         except OSError:
             pass
         try:
