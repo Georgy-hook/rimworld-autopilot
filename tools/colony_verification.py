@@ -182,6 +182,11 @@ def evidence_card(snapshot, evidence, metadata, timeline, decisions, events, rev
               for row in letters if row.get("letter_def") == "Death"]
     clinical = [{**project(p, ("id", "name", "health", "hunger", "mood", "downed", "bleeding_rate",
                                "current_job", "health_conditions"))} for p in snapshot.get("colonists") or []]
+    # Native collections carry read-status metadata alongside quest groups.
+    # Keep that status visible; only list rows are quest observations.
+    quest_collection = dev.get("quests")
+    quest_groups = ({key: rows for key, rows in quest_collection.items() if isinstance(rows, list)}
+                    if isinstance(quest_collection, dict) else {})
     # The ledger is the observed transactions, not the doctrine's economy label.
     ledger = evidence.get("trade_ledger")
     if ledger is None and timeline:
@@ -205,8 +210,12 @@ def evidence_card(snapshot, evidence, metadata, timeline, decisions, events, rev
                       "stock_zero_samples": sum(s.get("food") == 0 for s in food_samples),
                       "max_meals": max((s["meals"] for s in food_samples if s.get("meals") is not None), default=None)},
         "population": {"on_map": clinical, "caravans": dev.get("caravans"),
+                       "quest_read_status": quest_collection.get("read_status", "legacy_groups")
+                           if isinstance(quest_collection, dict) else "unavailable",
+                       "quest_read_errors": quest_collection.get("read_errors", {})
+                           if isinstance(quest_collection, dict) else evidence.get("read_errors", {}),
                        "quests": {group: [project(q, ("id", "quest_def", "name", "state", "ever_accepted"))
-                                          for q in rows] for group, rows in (dev.get("quests") or {}).items()},
+                                          for q in rows] for group, rows in quest_groups.items()},
                        "verified_status_changes": review.get("population_changes", [])},
         "animals": {"current": snapshot.get("animals"), "verified_losses": review.get("animal_losses", []),
                     "coverage": review.get("animal_loss_coverage", "Only supplied evidence; not a complete lifetime count")},
