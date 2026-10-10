@@ -1,0 +1,30 @@
+{
+  "verified_at_utc": "2026-10-10T07:08:09.143072+00:00",
+  "candidate_version": "0.0.8",
+  "source_commit": "70486e27b4f9a8856c582ba3f956167fce997971",
+  "native_version": "1.10.0+70486e2",
+  "native_sha256": "b2bb45b75bb92fcb0e62cff2a11b81e718027764c2ae2e26701826b0d09da2e9",
+  "native_bytes": 2592256,
+  "source_committed_before_build": true,
+  "python_tests_passed": 1304,
+  "registered_routes": 313,
+  "missing_literal_routes": [],
+  "duplicate_routes": [],
+  "native_build_warnings": 0,
+  "native_build_errors": 0,
+  "native_boundary_cases": 88,
+  "native_reward_mutation_scenarios": 1,
+  "startup_model_replay": "exited equipment loop",
+  "thermal_model_replay": "two rescue choices persisted across eight cycles each",
+  "mining_welfare_model_replay": "four valid typed deferrals; dispatch not proven",
+  "offline_game_mutations": 0,
+  "live_survival_verified": false,
+  "payload_hashes_matched": 62,
+  "new_runtime_modules_present": [
+    "colony_labor.py",
+    "colony_storage.py",
+    "colony_mining.py"
+  ],
+  "installed_runtime_modified": false,
+  "release_published": false
+}

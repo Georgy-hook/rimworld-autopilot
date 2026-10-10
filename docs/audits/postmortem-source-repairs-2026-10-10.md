@@ -64,3 +64,12 @@ Tests and builds do not establish autonomous survival, optimal economic choices,
 completed native work, defense outcomes or a victory. Actual sustained food,
 animal heat/feed, care, research, trades and finite ending progress remain live
 gates for a separately authorized future run. Raw playtest data stays private.
+
+## Native package verification
+
+Source commit: `70486e27b4f9a8856c582ba3f956167fce997971`, committed before
+the final native build. Distributed DLL: `1.10.0+70486e2`, 2,592,256 bytes,
+SHA-256 `b2bb45b75bb92fcb0e62cff2a11b81e718027764c2ae2e26701826b0d09da2e9`.
+The isolated install-payload copy matched all **62** source-file hashes and
+included all three new runtime modules. It did not replace the game installation.
+See [the package record](postmortem-native-package-2026-10-10.json).
