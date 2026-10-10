@@ -11,6 +11,8 @@ RUNTIME_FILES = (
     "VERSION",
     "app_version.py",
     "RimWorld-Autopilot.exe",
+    "RimWorld-Autopilot-Setup.exe",
+    "rimworld_installation.py",
     "colony_architect.py",
     "colony_actions.py",
     "colony_capabilities.py",
@@ -74,7 +76,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
         return
     for name in RUNTIME_FILES:
         candidate = source / name
-        if name == "RimWorld-Autopilot.exe" and not candidate.is_file():
+        if name.endswith(".exe") and not candidate.is_file():
             candidate = source / "dist" / name
         if not candidate.is_file():
             raise FileNotFoundError(candidate)
@@ -89,7 +91,7 @@ def copy_install_payload(source: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for name in RUNTIME_FILES:
         candidate = source / name
-        if name == "RimWorld-Autopilot.exe" and not candidate.is_file():
+        if name.endswith(".exe") and not candidate.is_file():
             candidate = source / "dist" / name
         shutil.copy2(candidate, destination / name)
     destination_mod = destination / "vendor" / "RIMAPI"

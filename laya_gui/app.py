@@ -17,10 +17,11 @@ from typing import Any
 
 import colony_strategy as strategy
 import laya_preferences
+from rimworld_installation import validate_game_path
 
 from .i18n import PRIORITY_TEXT, QUESTION_TEXT, doctrine_view, humanize, risk_text, tr
 from .services import (
-    APP_NAME, BASE_DIR, FEEDBACK_PATH, PREFERENCES_PATH, RESOURCE_DIR,
+    APP_NAME, BASE_DIR, DATA_DIR, FEEDBACK_PATH, PREFERENCES_PATH, RESOURCE_DIR,
     active_map_key, append_feedback, export_bundle, export_history, load_config, read_director_health, read_pid, request_json, resolve_log_dir,
     start_director, start_observer as launch_observer, stop_director, tail_jsonl,
     timestamped_export_name,
@@ -114,6 +115,7 @@ class ControlCenter(tk.Tk):
         overlay = self.preferences.get("overlay") or {}
         self.overlay_enabled_var = tk.BooleanVar(value=bool(overlay.get("enabled", True)))
         self.overlay_compact_var = tk.BooleanVar(value=bool(overlay.get("compact", True)))
+        self.game_folder_var = tk.StringVar(value=str(self.config_data.get("rimworld_path") or tr(self.language, "game_folder_unset")))
 
     def _load_shared_images(self) -> None:
         self.flag_images = {
@@ -373,6 +375,15 @@ class ControlCenter(tk.Tk):
         ttk.Checkbutton(logging.body, text=tr(self.language, "technical_logging"), variable=self.tech_var, command=self.toggle_technical).pack(anchor="w")
         tk.Label(logging.body, text=tr(self.language, "technical_help"), bg=COLORS["panel"], fg=COLORS["muted"], font=FONTS["small"], justify="left", wraplength=440).pack(anchor="w", pady=(8, 0))
 
+        installation = ShadowCard(page)
+        installation.pack(fill="x", pady=(14, 0))
+        tk.Label(installation.body, text=tr(self.language, "game_folder"), bg=COLORS["panel"], fg=COLORS["cyan"], font=FONTS["heading"]).pack(anchor="w")
+        tk.Entry(installation.body, textvariable=self.game_folder_var, state="readonly", readonlybackground=COLORS["panel_alt"],
+                 fg=COLORS["text"], relief="flat", font=FONTS["body"]).pack(fill="x", pady=(8, 8), ipady=6)
+        tk.Label(installation.body, text=tr(self.language, "game_folder_help"), bg=COLORS["panel"], fg=COLORS["muted"],
+                 font=FONTS["small"], justify="left", wraplength=940).pack(anchor="w", pady=(0, 10))
+        FancyButton(installation.body, text=tr(self.language, "run_installer"), width=250, variant="soft", command=self.open_setup).pack(anchor="w")
+
         overlay = ShadowCard(page)
         overlay.pack(fill="x", pady=(14, 0))
         tk.Label(overlay.body, text=tr(self.language, "overlay_title"), bg=COLORS["panel"], fg=COLORS["amber"], font=FONTS["heading"]).pack(anchor="w")
@@ -573,7 +584,41 @@ class ControlCenter(tk.Tk):
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"{tr(self.language, 'error')}: {exc}")
 
+    def open_setup(self) -> None:
+        for pid_path, status_path in ((self.pid_path, self.runtime_status_path),
+                                      (self.observer_pid_path, self.observer_status_path)):
+            health = read_director_health(pid_path, status_path)
+            if health.get("pid") and health.get("state") not in {"stopped", "completed"}:
+                messagebox.showinfo(APP_NAME, tr(self.language, "setup_stop_first"))
+                return
+        arguments = ["--installed-dir", str(BASE_DIR), "--user-data-dir", str(DATA_DIR)]
+        game = self.config_data.get("rimworld_path")
+        if game:
+            try:
+                arguments += ["--rimworld-dir", str(validate_game_path(str(game)))]
+            except (ValueError, OSError, RuntimeError):
+                pass  # Let setup rediscover a moved game from its current metadata.
+        executable = BASE_DIR / "RimWorld-Autopilot-Setup.exe"
+        try:
+            if executable.is_file():
+                # The assistant writes Program Files / game Mods. Popen cannot
+                # launch its administrator manifest from a non-elevated GUI.
+                os.startfile(str(executable), "runas", subprocess.list2cmdline(arguments), str(BASE_DIR))
+            elif not getattr(sys, "frozen", False) and (BASE_DIR / "autopilot_setup.py").is_file():
+                subprocess.Popen([sys.executable, str(BASE_DIR / "autopilot_setup.py"), *arguments], cwd=BASE_DIR,
+                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            else:
+                raise FileNotFoundError(tr(self.language, "setup_missing"))
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"{tr(self.language, 'error')}: {exc}")
+
+    def _refresh_game_folder(self) -> None:
+        game = load_config().get("rimworld_path") or ""
+        self.config_data["rimworld_path"] = game
+        self.game_folder_var.set(str(game) or tr(self.language, "game_folder_unset"))
+
     def refresh_all(self) -> None:
+        self._refresh_game_folder()
         self.refresh_views()
         threading.Thread(target=self._probe_game, daemon=True).start()
         self.after(2000, self.refresh_all)

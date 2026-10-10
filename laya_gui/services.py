@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -64,10 +65,14 @@ def active_map_key(maps_response: dict[str, Any]) -> str | None:
                     for field in ("seed", "tile_id", "id"))
 
 
-def load_config() -> dict[str, Any]:
+def load_config(application_dir: Path | None = None, *, config_path: Path | None = None) -> dict[str, Any]:
+    application_dir = application_dir or BASE_DIR
     config = dict(DEFAULT_CONFIG)
+    config.update(python_exe=str(application_dir / ".venv" / "Scripts" / "python.exe"),
+                  director_script=str(application_dir / "colony_director.py"))
     try:
-        source = next((path for path in (CONFIG_PATH, PACKAGED_CONFIG_PATH, LEGACY_CONFIG_PATH) if path.exists()), CONFIG_PATH)
+        paths = (config_path or CONFIG_PATH, application_dir / "rimworld-autopilot.json", application_dir / "laya-control.json")
+        source = next((path for path in paths if path.exists()), CONFIG_PATH)
         loaded = json.loads(source.read_text(encoding="utf-8-sig"))
         if isinstance(loaded, dict):
             config.update(loaded)
@@ -76,8 +81,22 @@ def load_config() -> dict[str, Any]:
     for key in ("python_exe", "director_script"):
         value = Path(str(config[key]))
         if not value.is_absolute():
-            config[key] = str((BASE_DIR / value).resolve())
+            config[key] = str((application_dir / value).resolve())
     return config
+
+
+def save_config(config: dict[str, Any], path: Path | None = None) -> None:
+    path = path or CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(config, handle, ensure_ascii=False, indent=2)
+        temporary.replace(path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
 
 
 def process_running(pid: int) -> bool:

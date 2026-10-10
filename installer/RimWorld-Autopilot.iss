@@ -61,7 +61,6 @@ russian.LaunchNow=Открыть RimWorld Autopilot
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
-Type: files; Name: "{app}\RimWorld-Autopilot-Setup.exe"
 Type: files; Name: "{app}\Laya-Setup.exe"
 ; Remove files installed by older broad payloads without touching configuration,
 ; model environments, logs, or user preferences.
@@ -99,7 +98,6 @@ Type: files; Name: "{app}\requirements-promo.txt"
 
 [Files]
 Source: "..\dist\RimWorld-Autopilot-{#AppVersion}-install\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\dist\RimWorld-Autopilot-Setup.exe"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
@@ -107,5 +105,5 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{tmp}\RimWorld-Autopilot-Setup.exe"; Parameters: "--installed-dir ""{app}"""; Description: "{cm:ConfigureNow}"; Flags: postinstall skipifsilent runascurrentuser waituntilterminated
+Filename: "{app}\RimWorld-Autopilot-Setup.exe"; Parameters: "--installed-dir ""{app}"""; Description: "{cm:ConfigureNow}"; Flags: postinstall skipifsilent runascurrentuser waituntilterminated
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchNow}"; WorkingDir: "{app}"; Flags: postinstall skipifsilent unchecked nowait runasoriginaluser

@@ -77,13 +77,28 @@ The yellow bars show how Laya weighs the choices in front of it. The same view i
 You need **64-bit Windows 10 (version 1809 or newer) or Windows 11**, **RimWorld 1.6**, **Harmony**, and **Python 3.10–3.12**. An NVIDIA GPU is recommended for faster decisions; CPU mode is available. The first setup downloads Laya's model files, so it needs an internet connection and free disk space.
 
 1. Download and run the [latest Windows installer](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest/download/RimWorld-Autopilot-Installer.exe). Choose your install folder and whether you want a desktop shortcut.
-2. On the final setup page, leave **Configure Python, the local model and the RimWorld mod now** selected. The assistant finds RimWorld, prepares the Python environment, downloads Laya, and installs the bundled RIMAPI mod.
+2. On the final setup page, leave **Configure Python, the local model and the RimWorld mod now** selected. Check **RimWorld folder** in the assistant. It checks your saved selection and Steam's registered libraries, including other drives; use **Browse…** for a standalone installation or a game it cannot find. Select the folder containing `RimWorldWin64.exe` and `Data\Core`, not `Mods` or your saves. The assistant prepares Python, downloads Laya, and installs the bundled RIMAPI mod into that game's `Mods\RIMAPI`.
 3. In RimWorld's mod list, enable **Harmony** before **RIMAPI — RimWorld Autopilot**, then restart the game.
 4. Load a colony, open **RimWorld Autopilot**, and click **Start Laya**. Use **Stop** in the app whenever you want to take over again.
 
 Windows may identify the installer as an unknown publisher because this open-source build is unsigned. Download it from the [GitHub release](https://github.com/Georgy-hook/rimworld-autopilot/releases/latest) and check the file before running it. A copy of your save is a good starting point for trying new priorities.
 
 The first setup fetches the public `convaiinnovations/laya` checkpoint; later runs use the local cache. If the cache is empty, the app can download the files again. Model weights are not packed into the installer.
+
+If you move RimWorld later, stop Laya and the observer, close the game, then use
+**Settings → Open setup assistant** to choose the new game folder and install
+the mod there. The candidate keeps the assistant installed for this purpose.
+Your selected folder is stored in local `rimworld-autopilot.json`; configuring a
+new location preserves the active run/log folder. Previous mod copies are backed
+up under the Autopilot application's `mod-backups`, outside RimWorld's `Mods`.
+These discovery/reconfiguration improvements are in the unpublished `0.0.8`
+candidate; the stable `0.0.7` assistant supports manual folder selection.
+
+Laya connects to the running game's local RIMAPI endpoint, normally
+`http://localhost:8765`. The game folder tells setup where to install the mod;
+it is not a path the decision model must guess. Choosing a folder does not launch
+RimWorld, load a save or enable the mod. For another Steam library location, see
+[Steam's official moving/installing guide](https://help.steampowered.com/en/faqs/view/4BD4-4528-6B2E-8327).
 
 ### Uninstalling
 

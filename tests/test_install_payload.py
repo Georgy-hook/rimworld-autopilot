@@ -73,12 +73,13 @@ class InstallPayloadTests(unittest.TestCase):
             destination = root / "installed"
             source.mkdir()
             for name in RUNTIME_FILES:
-                if name == "RimWorld-Autopilot.exe":
+                if name.endswith(".exe"):
                     continue
                 (source / name).write_text(name, encoding="utf-8")
             build_executable = source / "dist" / "RimWorld-Autopilot.exe"
             build_executable.parent.mkdir()
             build_executable.write_text("built", encoding="utf-8")
+            (build_executable.parent / "RimWorld-Autopilot-Setup.exe").write_text("setup built", encoding="utf-8")
             mod = source / "vendor" / "RIMAPI"
             for name in MOD_FILES:
                 item = mod / name
@@ -90,6 +91,7 @@ class InstallPayloadTests(unittest.TestCase):
             copy_install_payload(source, destination)
 
             self.assertEqual((destination / "RimWorld-Autopilot.exe").read_text(encoding="utf-8"), "built")
+            self.assertEqual((destination / "RimWorld-Autopilot-Setup.exe").read_text(encoding="utf-8"), "setup built")
 
 
 if __name__ == "__main__":

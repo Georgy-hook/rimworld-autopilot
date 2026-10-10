@@ -7,6 +7,7 @@ revision and scenario; it does not establish the current build's runtime result.
 
 ## Current contracts
 
+- [Game folder discovery, custom installations and repeatable GUI setup](audits/gui-installation-paths-2026-10-10.md)
 - [Animal shelters, compatible feed reserves and husbandry decisions](audits/animal-husbandry-contract-2026-10-10.md)
 - [Instant construction markers and legacy-frame migration](API_INSTANT_CONSTRUCTION.md)
 - [Repository architecture and ownership](../ARCHITECTURE.md)

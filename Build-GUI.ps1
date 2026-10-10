@@ -59,7 +59,7 @@ try {
     New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
     Get-ChildItem -LiteralPath $projectRoot -File |
         Where-Object { ($_.Extension -in @(".py", ".ps1", ".cmd", ".md", ".txt")) -or ($_.Name -in @("LICENSE", "RIMAPI_UPSTREAM_COMMIT", "VERSION")) } |
-        Where-Object { $_.Name -notin @("laya-control.json", "laya-preferences.json", "rimworld-autopilot.json", "autopilot-preferences.json") } |
+        Where-Object { $_.Name -notin @("PLAYTEST_REPORT.md", "laya-control.json", "laya-preferences.json", "rimworld-autopilot.json", "autopilot-preferences.json") } |
         Copy-Item -Destination $releaseDirectory -Force
     foreach ($folder in @("assets", "docs", "laya_gui", "tools", "vendor")) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $folder) -Destination $releaseDirectory -Recurse -Force

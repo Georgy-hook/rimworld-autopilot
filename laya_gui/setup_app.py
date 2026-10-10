@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import queue
 import shutil
@@ -9,13 +8,13 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
-from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from install_payload import copy_install_payload
 from app_version import APP_VERSION
-from .services import BASE_DIR, RESOURCE_DIR
+from rimworld_installation import discover_game_paths, install_mod, prepare_mod_directory, validate_application_path, validate_game_path
+from .services import BASE_DIR, RESOURCE_DIR, load_config, save_config
 from .theme import COLORS, FONTS, FancyButton, ShadowCard, configure_styles, render_photo
 
 
@@ -23,12 +22,9 @@ PRODUCT_NAME = "RimWorld Autopilot"
 DEFAULT_INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / PRODUCT_NAME
 
 
-def _default_rimworld() -> Path:
-    candidates = (
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Steam/steamapps/common/RimWorld",
-        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Steam/steamapps/common/RimWorld",
-    )
-    return next((path for path in candidates if (path / "RimWorldWin64.exe").exists()), candidates[0])
+def _default_rimworld(saved_path: str = "") -> Path | None:
+    candidates = discover_game_paths(saved_path)
+    return candidates[0] if candidates else None
 
 
 def _source_root() -> Path:
@@ -38,7 +34,7 @@ def _source_root() -> Path:
     return BASE_DIR
 
 
-def _argument_path(name: str, fallback: Path) -> Path:
+def _argument_path(name: str, fallback: Path | None) -> Path | None:
     try:
         index = sys.argv.index(name)
         return Path(sys.argv[index + 1]).expanduser().resolve()
@@ -46,18 +42,17 @@ def _argument_path(name: str, fallback: Path) -> Path:
         return fallback
 
 
-DEFAULT_RIMWORLD = _default_rimworld()
-
 SETUP_TEXT = {
     "ru": {
         "title": "Установка RimWorld Autopilot", "subtitle": "Красивый и понятный запуск локальной Laya — без командной строки.",
         "install_dir": "Куда установить приложение", "game": "Где установлен RimWorld", "browse": "Выбрать…",
+        "game_help": "Любая папка игры, в том числе на другом диске. Нужны RimWorldWin64.exe и Data\\Core. В Steam: RimWorld → Управление → Просмотреть локальные файлы.",
         "device": "Как запускать модель", "auto": "Автоматически", "cuda": "Видеокарта NVIDIA", "cpu": "Процессор",
         "shortcut": "Добавить ярлык на рабочий стол", "install": "Установить Autopilot", "working": "Установка…",
         "ready": "Всё готово. Настройки можно изменить позже.",
         "python_missing": "Python 3.10–3.12 не найден. Открыть страницу загрузки Python?",
         "done": "RimWorld Autopilot установлен. Включите Harmony и RIMAPI — RimWorld Autopilot в списке модов, перезапустите игру и откройте приложение с рабочего стола.",
-        "invalid": "В выбранной папке не найден RimWorldWin64.exe.", "invalid_install": "Выберите отдельную папку установки.",
+        "invalid": "Выберите папку игры с RimWorldWin64.exe и Data\\Core, а не папку сохранений или Mods.", "invalid_install": "Выберите отдельную папку приложения вне RimWorld и исходного пакета.",
         "error": "Не удалось завершить установку", "step_copy": "Размещаю приложение и иллюстрации…",
         "step_python": "Создаю отдельное окружение Python…", "step_packages": "Устанавливаю необходимые пакеты…",
         "step_model": "Загружаю Laya для первого запуска… Это может занять несколько минут.",
@@ -69,12 +64,13 @@ SETUP_TEXT = {
     "en": {
         "title": "Install RimWorld Autopilot", "subtitle": "A friendly local Laya setup with no command line required.",
         "install_dir": "Application folder", "game": "RimWorld folder", "browse": "Browse…",
+        "game_help": "Any game folder, including another drive. It must contain RimWorldWin64.exe and Data\\Core. In Steam: RimWorld → Manage → Browse local files.",
         "device": "Run the model using", "auto": "Automatic", "cuda": "NVIDIA GPU", "cpu": "CPU",
         "shortcut": "Add a desktop shortcut", "install": "Install Autopilot", "working": "Installing…",
         "ready": "Everything is ready. You can change these settings later.",
         "python_missing": "Python 3.10–3.12 was not found. Open the Python download page?",
         "done": "RimWorld Autopilot is installed. Enable Harmony and RIMAPI — RimWorld Autopilot in RimWorld's mod list, restart the game, then open the desktop shortcut.",
-        "invalid": "RimWorldWin64.exe was not found in the selected folder.", "invalid_install": "Choose a separate installation folder.",
+        "invalid": "Choose the game folder containing RimWorldWin64.exe and Data\\Core, not saves or Mods.", "invalid_install": "Choose a separate application folder outside RimWorld and the source package.",
         "error": "Setup could not finish", "step_copy": "Installing the application and artwork…",
         "step_python": "Creating an isolated Python environment…", "step_packages": "Installing the required packages…",
         "step_model": "Downloading Laya for first launch… This may take several minutes.",
@@ -98,10 +94,18 @@ class SetupWindow(tk.Tk):
         self.resizable(False, False)
         self.configure(bg=COLORS["window"])
         configure_styles(self)
-        self.install_var = tk.StringVar(value=str(_argument_path("--installed-dir", DEFAULT_INSTALL_DIR)))
-        self.rimworld_var = tk.StringVar(value=str(_argument_path("--rimworld-dir", DEFAULT_RIMWORLD)))
+        application_dir = _argument_path("--installed-dir", DEFAULT_INSTALL_DIR)
+        self.user_data_dir = _argument_path("--user-data-dir", Path(os.environ.get("LOCALAPPDATA", str(application_dir))) / PRODUCT_NAME)
+        saved_config = load_config(application_dir, config_path=self.user_data_dir / "rimworld-autopilot.json")
+        saved_path = saved_config.get("rimworld_path") or ""
+        game = _argument_path("--rimworld-dir", _default_rimworld(str(saved_path)))
+        self.install_var = tk.StringVar(value=str(application_dir))
+        self.rimworld_var = tk.StringVar(value=str(game) if game else "")
         self.shortcut_var = tk.BooleanVar(value=True)
-        self.device_code = "auto"
+        user_config = self.user_data_dir / "rimworld-autopilot.json"
+        has_config = any(path.is_file() for path in (user_config, application_dir / "rimworld-autopilot.json", application_dir / "laya-control.json"))
+        saved_device = str(saved_config.get("device") or "auto") if has_config else "auto"
+        self.device_code = saved_device if saved_device in {"auto", "cuda", "cpu"} else "auto"
         self.device_var = tk.StringVar(value="")
         self.ui_images: dict[str, tk.PhotoImage] = {}
         self._build()
@@ -145,6 +149,8 @@ class SetupWindow(tk.Tk):
         card.pack(fill="both", expand=True)
         self._folder_field(card.body, "install_dir", self.install_var, self._browse_install)
         self._folder_field(card.body, "game", self.rimworld_var, self._browse_game)
+        tk.Label(card.body, text=self.t("game_help"), bg=COLORS["panel"], fg=COLORS["muted"],
+                 font=FONTS["small"], justify="left", wraplength=490).pack(anchor="w", pady=(0, 10))
         tk.Label(card.body, text=self.t("device"), bg=COLORS["panel"], fg=COLORS["text"], font=FONTS["heading"]).pack(anchor="w")
         device_labels = {"auto": self.t("auto"), "cuda": self.t("cuda"), "cpu": self.t("cpu")}
         self.device_var.set(device_labels.get(self.device_code, self.t("auto")))
@@ -188,43 +194,50 @@ class SetupWindow(tk.Tk):
             self.install_var.set(selected)
 
     def _browse_game(self) -> None:
-        selected = filedialog.askdirectory(initialdir=self.rimworld_var.get() or str(DEFAULT_RIMWORLD))
+        current = Path(self.rimworld_var.get()) if self.rimworld_var.get().strip() else Path.home()
+        selected = filedialog.askdirectory(initialdir=str(current if current.is_dir() else Path.home()))
         if selected:
             self.rimworld_var.set(selected)
 
     def _begin(self) -> None:
-        rimworld = Path(self.rimworld_var.get()).resolve()
-        install_dir = Path(self.install_var.get()).resolve()
-        if not (rimworld / "RimWorldWin64.exe").exists():
+        try:
+            rimworld = validate_game_path(self.rimworld_var.get())
+        except (ValueError, OSError, RuntimeError):
             messagebox.showerror(self.t("title"), self.t("invalid"))
             return
         source = _source_root().resolve()
-        if source in install_dir.parents:
+        try:
+            if not self.install_var.get().strip():
+                raise ValueError("Empty application folder")
+            install_dir = validate_application_path(Path(os.path.expandvars(self.install_var.get())).expanduser(), source, rimworld)
+        except (ValueError, OSError, RuntimeError):
             messagebox.showerror(self.t("title"), self.t("invalid_install"))
             return
-        python = self._find_python()
+        python = self._find_python(install_dir / ".venv" / "Scripts" / "python.exe")
         if not python:
             if messagebox.askyesno(self.t("title"), self.t("python_missing")):
                 webbrowser.open("https://www.python.org/downloads/windows/")
             return
         self.install_button.configure(state="disabled", text=self.t("working"))
         self.progress.start(12)
-        threading.Thread(target=self._install, args=(python, rimworld, install_dir, self.device_code, self.shortcut_var.get()), daemon=True).start()
+        threading.Thread(target=self._install, args=(python, rimworld, install_dir, self.device_code, self.shortcut_var.get(), self.user_data_dir), daemon=True).start()
 
     @staticmethod
-    def _find_python() -> Path | None:
-        candidates = []
+    def _find_python(existing_env: Path | None = None) -> Path | None:
+        candidates = [existing_env] if existing_env and existing_env.is_file() else []
         if not getattr(sys, "frozen", False):
             candidates.append(Path(sys.executable))
         for name in ("py", "python"):
             executable = shutil.which(name)
             if not executable:
                 continue
-            command = [executable, "-3.12", "-c", "import sys;print(sys.executable)"] if name == "py" else [executable, "-c", "import sys;print(sys.executable)"]
-            try:
-                candidates.append(Path(subprocess.check_output(command, text=True, creationflags=subprocess.CREATE_NO_WINDOW).strip()))
-            except (OSError, subprocess.SubprocessError):
-                pass
+            versions = ("-3.12", "-3.11", "-3.10") if name == "py" else (None,)
+            for version in versions:
+                command = [executable, *([version] if version else []), "-c", "import sys;print(sys.executable)"]
+                try:
+                    candidates.append(Path(subprocess.check_output(command, text=True, creationflags=subprocess.CREATE_NO_WINDOW).strip()))
+                except (OSError, subprocess.SubprocessError):
+                    pass
         for candidate in candidates:
             try:
                 version = subprocess.check_output([str(candidate), "-c", "import sys;print(f'{sys.version_info.major}.{sys.version_info.minor}')"], text=True, creationflags=subprocess.CREATE_NO_WINDOW).strip()
@@ -260,10 +273,13 @@ class SetupWindow(tk.Tk):
         script = "$w=New-Object -ComObject WScript.Shell;$s=$w.CreateShortcut($env:RWA_LINK);$s.TargetPath=$env:RWA_TARGET;$s.Arguments=$env:RWA_ARGS;$s.WorkingDirectory=$env:RWA_WORK;if(Test-Path -LiteralPath $env:RWA_ICON){$s.IconLocation=$env:RWA_ICON};$s.Save()"
         subprocess.run(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script], check=True, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
 
-    def _install(self, python: Path, rimworld: Path, install_dir: Path, device: str, shortcut: bool) -> None:
+    def _install(self, python: Path, rimworld: Path, install_dir: Path, device: str, shortcut: bool, user_data_dir: Path | None = None) -> None:
         try:
+            rimworld = validate_game_path(rimworld)
             installed_payload = (install_dir / "requirements.txt").exists() and (install_dir / "vendor" / "RIMAPI").exists()
             source_root = install_dir if installed_payload else _source_root().resolve()
+            install_dir = validate_application_path(install_dir, source_root, rimworld)
+            prepare_mod_directory(rimworld)
             self._emit("status", self.t("step_copy"))
             if source_root != install_dir:
                 self._copy_payload(source_root, install_dir)
@@ -282,25 +298,18 @@ class SetupWindow(tk.Tk):
                 raise RuntimeError(self.t("model_failed")) from exc
             self._emit("status", self.t("step_mod"))
             source = (install_dir / "vendor" / "RIMAPI").resolve()
-            mods = (rimworld / "Mods").resolve()
-            target = (mods / "RIMAPI").resolve()
-            if mods not in target.parents or not source.exists():
-                raise RuntimeError("Invalid RIMAPI source or target path")
-            if target.exists():
-                backup = mods / f"RIMAPI.backup-{datetime.now():%Y%m%d-%H%M%S}"
-                shutil.move(str(target), str(backup))
-            shutil.copytree(source, target)
+            install_mod(source, rimworld, install_dir / "mod-backups")
             self._emit("status", self.t("step_config"))
-            config = {
+            user_data = user_data_dir or Path(os.environ.get("LOCALAPPDATA", str(install_dir))) / PRODUCT_NAME
+            config = load_config(install_dir, config_path=user_data / "rimworld-autopilot.json")
+            config.update({
                 "python_exe": str(venv_python), "director_script": str(install_dir / "colony_director.py"),
-                "api_url": "http://localhost:8765", "device": device, "interval": 10,
+                "device": device,
                 "rimworld_path": str(rimworld),
-            }
-            serialized = json.dumps(config, ensure_ascii=False, indent=2)
-            (install_dir / "rimworld-autopilot.json").write_text(serialized, encoding="utf-8")
-            user_data = Path(os.environ.get("LOCALAPPDATA", str(install_dir))) / PRODUCT_NAME
+            })
+            save_config(config, install_dir / "rimworld-autopilot.json")
             user_data.mkdir(parents=True, exist_ok=True)
-            (user_data / "rimworld-autopilot.json").write_text(serialized, encoding="utf-8")
+            save_config(config, user_data / "rimworld-autopilot.json")
             if shortcut:
                 self._create_shortcut(install_dir, venv_python)
             self._emit("done", self.t("done"))
