@@ -776,6 +776,10 @@ namespace RIMAPI.Helpers
             return room.Cells.Select(c => new PositionDto { X = c.x, Y = 0, Z = c.z }).ToList();
         }
 
+        private static bool StockpileCellAvailable(Map map, IntVec3 cell) => cell.InBounds(map)
+            && !cell.Fogged(map) && cell.Standable(map) && cell.GetZone(map) == null
+            && !cell.GetThingList(map).Any(t => t is Blueprint || t is Frame);
+
         public static MapTerrainDto GetMapTerrain(int mapId)
         {
             var map = GetMapByID(mapId);
@@ -933,6 +937,19 @@ namespace RIMAPI.Helpers
                 compressedEdificeGrid.Add(previousEdifice);
             }
 
+            var stockpileGrid = new List<int>();
+            int stockpilePrevious = -1, stockpileRun = 0;
+            for (int index = 0; index < width * height; index++)
+            {
+                int value = StockpileCellAvailable(map, map.cellIndices.IndexToCell(index)) ? 1 : 0;
+                if (value == stockpilePrevious) stockpileRun++;
+                else
+                {
+                    if (stockpileRun > 0) { stockpileGrid.Add(stockpileRun); stockpileGrid.Add(stockpilePrevious); }
+                    stockpilePrevious = value; stockpileRun = 1;
+                }
+            }
+            if (stockpileRun > 0) { stockpileGrid.Add(stockpileRun); stockpileGrid.Add(stockpilePrevious); }
             return new MapTerrainDto
             {
                 Width = width,
@@ -941,7 +958,8 @@ namespace RIMAPI.Helpers
                 Grid = compressedGrid,
                 FloorPalette = floorPalette,
                 FloorGrid = compressedFloorGrid,
-                EdificeGrid = compressedEdificeGrid
+                EdificeGrid = compressedEdificeGrid,
+                StockpileAvailableGrid = stockpileGrid
             };
         }
 
@@ -1119,7 +1137,7 @@ namespace RIMAPI.Helpers
                 bool animalCorpses = request.AllowedItemCategories?.Contains("CorpsesAnimal") == true;
                 var pens = map.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>())
                     .Where(p=>p?.PenState?.Enclosed == true).ToArray();
-                if (rect.Any(c => c.Fogged(map) || !c.Standable(map) || c.GetZone(map)!=null
+                if (rect.Any(c => !StockpileCellAvailable(map,c)
                     || animalCorpses && (pens.Any(p=>p.PenState.ContainsConnectedRegion(c.GetRegion(map)))
                         || map.listerBuildings.allBuildingsColonist.Any(b=>(b is Building_Bed || b is Building_WorkTable)
                             && b.GetRoom()==c.GetRoom(map) && c.Roofed(map)))))

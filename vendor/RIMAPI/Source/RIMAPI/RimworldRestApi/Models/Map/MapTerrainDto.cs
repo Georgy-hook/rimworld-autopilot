@@ -11,5 +11,6 @@ namespace RIMAPI.Models
         public List<string> FloorPalette { get; set; }  // Constructed floor types (wood, concrete, etc.)
         public List<int> FloorGrid { get; set; }  // RLE compressed grid for floors
         public List<int> EdificeGrid { get; set; }  // RLE: 1 where a rock, ruin or other edifice occupies the cell
+        public List<int> StockpileAvailableGrid { get; set; }  // RLE: visible, standable, unzoned and not a construction footprint
     }
 }

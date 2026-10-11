@@ -29,7 +29,7 @@ ACTION_DESCRIPTIONS = {
     "care_for_injured_animal": "Tend a colony animal only when a wound or disease is currently treatable; low health, pain, anesthesia and paralysis alone are not tend jobs.",
     "feed_hungry_animal": "Immediately feed the hungriest resting colony animal before starvation becomes critical.",
     "feed_hungry_colonist": "Immediately feed the hungriest downed colonist who cannot walk to available food.",
-    "refuel_building": "Send an available hauler to refuel one completed cooler, cooking station or generator with existing fuel. A built but empty cooler cannot prevent heatstroke.",
+    "refuel_building": "Deliver existing fuel to a completed campfire, cooler, cooking station or generator. An empty campfire cannot warm bedbound patients; frostbite tending does not remove cold exposure. Preserve feeding, rescue, bleeding and infection care; a verified routine caregiver may maintain the exact cold patient's room.",
     "eat_available_meal": "Send a mobile hungry colonist to eat an actual unlocked meal now. Other work can wait; delay risks malnutrition even when the colony owns food.",
     "create_nearby_food_cache": "Make a high-priority meal stockpile at the settlement because all available meals are far away; a hauler must then bring food within easy walking distance.",
     "open_sealed_food_store": "Meals are trapped inside a legacy freezer built without a door. Send a builder to deconstruct one exact wall tile; this restores food access without destroying the room.",

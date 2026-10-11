@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using RIMAPI.Core;
 using RIMAPI.Models;
 using RimWorld;
@@ -9,6 +10,39 @@ namespace RIMAPI.Helpers
 {
     public static class BuildingMaintenanceHelper
     {
+        public static bool ThermalMaintenanceDue(float fuel, float capacity, float temperature, float comfortableMin)
+            => capacity > 0f && fuel <= Math.Max(1f, capacity * .25f) && temperature < comfortableMin;
+
+        private static bool CanYieldRoutineTend(Pawn worker, Building building, CompRefuelable fuel,
+                                                BuildingRefuelRequestDto request)
+        {
+            if (worker == null || worker.CurJobDef != JobDefOf.TendPatient
+                || request.ExpectedCurrentJob != "TendPatient" || !request.ExpectedCarePatientId.HasValue
+                || !(worker.CurJob.targetA.Thing is Pawn patient)
+                || patient.thingIDNumber != request.ExpectedCarePatientId.Value
+                || !patient.IsColonistPlayerControlled || patient.Dead || !patient.Spawned || patient.Map != worker.Map
+                || worker.carryTracker?.CarriedThing != null || CareTriageHelper.QueuedCare(worker)
+                || worker.CurJob.def.forceCompleteBeforeNextJob || !worker.jobs.IsCurrentJobPlayerInterruptible()
+                || worker.health.hediffSet.BleedRateTotal != 0f || patient.health.hediffSet.BleedRateTotal != 0f
+                || CareTriageHelper.DiseaseCareProtected(worker, thermalTransfer:true)
+                || CareTriageHelper.DiseaseCareProtected(patient, thermalTransfer:true)
+                || worker.health.capacities.GetLevel(PawnCapacityDefOf.Moving) < .5f
+                || !worker.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation)
+                || (CareTriageHelper.Malnutrition(patient)?.Severity ?? 0f) >= .75f
+                || (CareTriageHelper.Malnutrition(worker)?.Severity ?? 0f) >= .75f
+                || building.def != ThingDefOf.Campfire || !patient.InBed()
+                || patient.GetRoom() != building.GetRoom() || building.GetRoom() == null
+                || !building.OccupiedRect().All(c => c.Roofed(worker.Map))
+                || !patient.CurrentBed().OccupiedRect().All(c => c.Roofed(worker.Map))
+                || !patient.health.hediffSet.hediffs.Any(h => h.def == HediffDefOf.Hypothermia && h.Severity >= .1f)
+                || !ThermalMaintenanceDue(fuel.Fuel, fuel.Props.fuelCapacity,
+                    patient.Position.GetTemperature(patient.Map), patient.GetStatValue(StatDefOf.ComfyTemperatureMin))) return false;
+            // A different reachable bleeding/infected patient still owns the doctor.
+            return !worker.Map.mapPawns.FreeColonists.Any(p => p != worker && p != patient && !p.Dead
+                && (p.health.hediffSet.BleedRateTotal > 0f || CareTriageHelper.DiseaseCareProtected(p,thermalTransfer:true))
+                && worker.CanReach(p,PathEndMode.Touch,Danger.Some));
+        }
+
         public static ApiResult<BuildingRefuelResultDto> Refuel(BuildingRefuelRequestDto request)
         {
             var result = new BuildingRefuelResultDto {
@@ -22,12 +56,15 @@ namespace RIMAPI.Helpers
                 if (fuel == null)
                     return ApiResult<BuildingRefuelResultDto>.Fail("Selected building does not use fuel.");
                 var worker = PawnHelper.FindPawnById(request.WorkerPawnId);
+                bool scopedYield = CanYieldRoutineTend(worker,building,fuel,request);
                 if (worker == null || worker.Dead || worker.Downed || worker.Drafted
                     || worker.InMentalState || !worker.Spawned || worker.Map != building.Map
                     || worker.WorkTypeIsDisabled(WorkTypeDefOf.Hauling))
                     result.Reason = "no_available_hauler";
-                else if (worker.CurJobDef == JobDefOf.TendPatient || worker.CurJobDef == JobDefOf.FeedPatient
-                         || worker.CurJobDef == JobDefOf.Rescue)
+                else if ((request.ExpectedCurrentJob != null || request.ExpectedCarePatientId.HasValue) && !scopedYield)
+                    result.Reason = "care_job_or_patient_temperature_changed";
+                else if (!scopedYield && (worker.CurJobDef == JobDefOf.TendPatient || worker.CurJobDef == JobDefOf.FeedPatient
+                         || worker.CurJobDef == JobDefOf.Rescue))
                     result.Reason = "worker_providing_patient_care";
                 else if (fuel.IsFull)
                     result.Reason = "already_fueled";
@@ -55,7 +92,9 @@ namespace RIMAPI.Helpers
                         if (!ResilienceAutomationHelper.RefuelRouteSafe(worker, stock, shortThermal && stock.Position.DistanceToSquared(building.Position) <= 144))
                         { result.Reason = "unsafe_fuel_route"; return ApiResult<BuildingRefuelResultDto>.Ok(result); }
                     }
-                    result.Applied = job != null && worker.jobs.TryTakeOrderedJob(job);
+                    result.Applied = job != null && worker.jobs.TryTakeOrderedJob(job)
+                        && worker.CurJobDef == job.def && worker.CurJob.targetA.Thing == building;
+                    if (!result.Applied && job != null) worker.jobs.jobQueue.RemoveAll(worker,j => j == job);
                     result.Reason = result.Applied ? "refuel_job_assigned" : "fuel_unavailable_or_building_reserved";
                 }
                 return ApiResult<BuildingRefuelResultDto>.Ok(result);

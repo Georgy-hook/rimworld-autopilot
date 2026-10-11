@@ -363,6 +363,8 @@ def focus(snapshot, actions):
     urgent = recovery | {"resilience_tend", "tend_colonist", "care_for_injured_animal", "feed_hungry_animal",
                          "rescue_downed_animal", "open_blocked_food_path", "resilience_rescue", "resilience_feed",
                          "prioritize_firefighting", "resilience_temperature", "hold_survival"}
+    if dev.get("cold_start_focus") == "refuel_occupied_room":
+        urgent.add("refuel_building")
     filtered = [action for action in actions if action in urgent]
     return filtered or ["hold_survival"]
 

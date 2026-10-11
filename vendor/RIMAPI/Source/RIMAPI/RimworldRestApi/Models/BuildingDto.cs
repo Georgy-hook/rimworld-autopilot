@@ -52,6 +52,8 @@ namespace RIMAPI.Models
         public int BuildingId { get; set; }
         public int WorkerPawnId { get; set; }
         public bool AllowShortThermalErrand { get; set; }
+        public string ExpectedCurrentJob { get; set; }
+        public int? ExpectedCarePatientId { get; set; }
     }
 
     public class BuildingRefuelResultDto

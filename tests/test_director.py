@@ -1661,6 +1661,8 @@ class DirectorTests(unittest.TestCase):
                             ]},
         }
         state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        snapshot['development']['food_cache_terrain'] = {'width': 120, 'height': 120,
+            'stockpile_available_grid': [14400, 1]}
         candidates, details = director.candidate_actions(None, snapshot, state)
         self.assertIn("create_nearby_food_cache", candidates)
         self.assertNotIn("eat_available_meal", candidates)
