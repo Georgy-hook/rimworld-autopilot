@@ -109,7 +109,7 @@ class StorageTests(unittest.TestCase):
         self.assertNotIn('allowed_item_categories', body)
 
     def test_new_profile_and_cooling_policies_are_freshly_revalidated(self):
-        for kind in ('profile', 'cooling'):
+        for kind in ('profile', 'cooling', 'shelf_restrict'):
             option={'key': kind+':1', 'kind': kind, 'target_id': 1, 'value': 'medicine' if kind == 'profile' else '-10'}
             snapshot={'map': {'id': 0}, 'game': {'tick': 100}, 'development': {'production': {'logistics_context': {'available': True, 'options': [option]}}}}
             class Client:

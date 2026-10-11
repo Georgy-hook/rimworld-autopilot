@@ -216,9 +216,13 @@ namespace RIMAPI.Services
                 string siteBlocker = StorageProfileHelper.SiteBlocker(map, request);
                 if (siteBlocker != null) return ApiResult.Fail(siteBlocker);
                 if ((request.Blueprint.Buildings ?? new List<SavedBuildingDto>()).Any(b =>
-                    !string.IsNullOrEmpty(b.StorageProfile) && (StorageProfileHelper.Definitions(b.StorageProfile).Count == 0
-                        || b.StorageProfile == "bulk_materials" || b.StorageProfile == "construction")))
+                    !string.IsNullOrEmpty(b.StorageProfile) && StorageProfileHelper.ShelfDefinitions(b.StorageProfile).Count == 0))
                     return ApiResult.Fail("Unknown storage profile in blueprint.");
+                if ((request.Blueprint.Buildings ?? new List<SavedBuildingDto>()).Any(b =>
+                    string.IsNullOrEmpty(b.StorageProfile)
+                    && DefDatabase<ThingDef>.GetNamedSilentFail(b.DefName)?.thingClass is Type storageClass
+                    && typeof(Building_Storage).IsAssignableFrom(storageClass)))
+                    return ApiResult.Fail("A storage building requires an explicit reviewed shelf profile.");
 
                 // 1. Paste Floors
                 foreach (var floorDto in request.Blueprint.Floors)

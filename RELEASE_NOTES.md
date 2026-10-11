@@ -1,3 +1,15 @@
+# 0.0.9 — unreleased
+
+- Keep wood, metals and stone on ground rather than shelves, including loaded
+  material derivatives. Separate hay, incubation, corpses, unfinished work,
+  hazardous goods and special biological/anomaly items from ordinary shelves.
+- Replace arbitrary shelf widening with reviewed profiles and a freshly
+  validated restriction that preserves safe existing settings. Require an
+  explicit profile for paid storage blueprints.
+- Reviewed 449 installed XML item definitions; passed 75 native assertions and
+  1414 Python tests. These changes are source changes, not a live campaign
+  migration. See the [shelf policy audit](docs/audits/shelf-item-policy-2026-10-11.md).
+
 # 0.0.8 — 11 October 2026
 
 - Recover locally from oversized comparisons while preserving complete protected

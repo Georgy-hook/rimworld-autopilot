@@ -276,7 +276,7 @@ def logistics_options(context):
     active = {row.get("target_id") for row in native.get("active_orders") or []
               if isinstance(row, dict) and row.get("kind") == "haul"}
     return {p["key"]: p for p in native.get("options") or [] if isinstance(p, dict)
-            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul", "profile", "cooling"}
+            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul", "profile", "cooling", "shelf_restrict"}
             and not (p.get("kind") == "haul" and p.get("target_id") in active)}
 
 def logistics_choose(agent, context, state=None):
@@ -286,7 +286,7 @@ def logistics_choose(agent, context, state=None):
         return {"benefit": str(plan.get("label")), "risk": str(plan.get("risk")), "cost": str(plan.get("cost")), "inaction": "Forbidden/exposed/unstored stock and delivery delays continue", "uncertainty": "Ordinary policy/job only; no delivered materials yet"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan["kind"], []).append((key, plan))
-    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose logistics or a dedicated shelf profile; keep kitchen, medicine and workshop filters distinct. Buffers outrank overflow; policy is not hauling.")
+    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose logistics, a dedicated shelf profile or a safe restriction of an existing filter. Bulk wood/metals/stone stay on ground; animal feed is separate from human food, hazardous/special items need separate handling. Keep kitchen, medicine and workshop purposes distinct. Policy is not hauling.")
     stages.append(raw)
     if kind is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     subjects = {}

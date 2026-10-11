@@ -1,5 +1,9 @@
 # Storage and decision recovery — 11 October 2026
 
+The subsequent **0.0.9 candidate** [shelf-item review](shelf-item-policy-2026-10-11.md)
+corrects wood and the remaining generic shelf rules. It is separate from the
+published 0.0.8 package and the already loaded campaign payload.
+
 ## Changes included in 0.0.8
 
 The decision head has 312 tokens for state. Equal clinical facts are shared;

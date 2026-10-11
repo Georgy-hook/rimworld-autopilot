@@ -36,7 +36,7 @@ namespace RIMAPI.Helpers
 
         private static bool Material(Thing thing)
         {
-            return thing.Spawned && thing.def.category == ThingCategory.Item && thing.def.ingestible == null
+            return thing.Spawned && thing.def.category == ThingCategory.Item && thing.def.EverStorable(false) && thing.def.ingestible == null
                 && !thing.IsBurning() && !thing.Position.Fogged(thing.Map)
                 && (thing.TryGetComp<CompRottable>() == null || thing.TryGetComp<CompRottable>().Stage == RotStage.Fresh);
         }
@@ -101,7 +101,6 @@ namespace RIMAPI.Helpers
                     risk = "Previously forbidden stock becomes usable; no hostile within 30 cells, but route safety remains uncertain"
                 });
             }
-            Building_Storage[] storages = map.listerBuildings.allBuildingsColonist.OfType<Building_Storage>().ToArray();
             Zone_Stockpile[] zones = map.zoneManager.AllZones.OfType<Zone_Stockpile>().ToArray();
             var capacityCache = new Dictionary<Thing, bool>();
             Func<Thing, bool> hasCapacity = t => {
@@ -113,28 +112,14 @@ namespace RIMAPI.Helpers
                 .ToDictionary(g => g.Key, g => g.ToArray());
             ThingDef[] unstoredDefs = needingStorage.Where(g => !g.Value.Any(hasCapacity))
                 .Select(g => g.Key).ToArray();
-            foreach (var linked in storages.GroupBy(b => b.GetStoreSettings()))
-            {
-                if (StorageProfileHelper.Specialized(linked.Key)) continue;
-                foreach (ThingDef def in unstoredDefs)
-                {
-                    if (StorageProfileHelper.IsGroundBulk(def)) continue;
-                    Building_Storage storage = linked.FirstOrDefault(b => !b.GetStoreSettings().AllowedToAccept(def)
-                        && (b.GetParentStoreSettings()?.AllowedToAccept(def) ?? true)
-                        && needingStorage[def].Any(t => CellCapacity(map, b.GetSlotGroup().CellsList, t)));
-                    if (storage == null) continue;
-                    options.Add(new Choice
-                    {
-                        key = $"shelf:{storage.thingIDNumber}:{def.defName}", kind = "shelf", target_id = storage.thingIDNumber,
-                        value = def.defName, label = storage.LabelShortCap + ": allow " + def.LabelCap,
-                        cost = "Storage capacity and hauling labor", risk = "Linked shelves sharing settings affected=" + linked.Count() + "; other allowances compete for capacity; existing quality/special filters remain"
-                    });
-                }
-            }
+            // Shelves use a reviewed purpose or a restriction of their existing
+            // safe filter. A missing destination is not a reason to add arbitrary
+            // material to every mixed shelf, even if the parent filter permits it.
             foreach (Zone_Stockpile zone in zones)
             {
                 if (StorageProfileHelper.Specialized(zone.settings)) continue;
-                foreach (ThingDef def in unstoredDefs.Where(d => !zone.settings.AllowedToAccept(d) && needingStorage[d].Any(t => CellCapacity(map, zone.Cells, t))))
+                foreach (ThingDef def in unstoredDefs.Where(d => GeneralGroundMaterial(d)
+                    && !zone.settings.AllowedToAccept(d) && needingStorage[d].Any(t => CellCapacity(map, zone.Cells, t))))
                     options.Add(new Choice
                     {
                         key = $"stockpile:{zone.ID}:{def.defName}", kind = "stockpile", target_id = zone.ID,
@@ -146,7 +131,7 @@ namespace RIMAPI.Helpers
             {
                 IntVec3[] cells = StorageCells(table);
                 if (cells.Length < 3 || hostiles.Any(p => p.GetRoom() == table.GetRoom())) continue;
-                foreach (ThingDef def in unstoredDefs.Where(d => needingStorage[d].Any(t => CellCapacity(map, cells, t))))
+                foreach (ThingDef def in unstoredDefs.Where(d => GeneralGroundMaterial(d) && needingStorage[d].Any(t => CellCapacity(map, cells, t))))
                     options.Add(new Choice
                     {
                         key = $"zone:{table.thingIDNumber}:{def.defName}:{string.Join(";", cells.Select(c => c.x + "," + c.z))}",
@@ -207,6 +192,13 @@ namespace RIMAPI.Helpers
             return ApiResult<object>.Ok(new { available = true, options, blocked, active_orders = activeOrders });
         }
 
+        private static bool GeneralGroundMaterial(ThingDef d)
+        {
+            string reason = StorageProfileHelper.ShelfExclusionReason(d);
+            return reason == null || reason == "bulk_resource_use_ground" || reason == "unfinished_or_minified_use_ground"
+                || reason == "native_ground_only_category";
+        }
+
         public static ApiResult<object> Policy(ProductionRecipePolicyDto request)
         {
             Map map = MapHelper.GetMapByID(request.MapId);
@@ -218,6 +210,7 @@ namespace RIMAPI.Helpers
             {
                 case "cooling": target.TryGetComp<CompTempControl>().TargetTemperature = -10f; break;
                 case "profile": StorageProfileHelper.Apply((Building_Storage)target, choice.value); break;
+                case "shelf_restrict": StorageProfileHelper.RestrictShelf((Building_Storage)target); break;
                 case "allow": target.SetForbidden(false); break;
                 case "shelf":
                     var shelf = (Building_Storage)target;
