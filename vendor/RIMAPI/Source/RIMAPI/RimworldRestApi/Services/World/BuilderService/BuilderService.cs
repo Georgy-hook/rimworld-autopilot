@@ -213,6 +213,11 @@ namespace RIMAPI.Services
 
                 int anchorX = request.Position.X;
                 int anchorZ = request.Position.Z;
+                string siteBlocker = StorageProfileHelper.SiteBlocker(map, request);
+                if (siteBlocker != null) return ApiResult.Fail(siteBlocker);
+                if ((request.Blueprint.Buildings ?? new List<SavedBuildingDto>()).Any(b =>
+                    !string.IsNullOrEmpty(b.StorageProfile) && StorageProfileHelper.Definitions(b.StorageProfile).Count == 0))
+                    return ApiResult.Fail("Unknown storage profile in blueprint.");
 
                 // 1. Paste Floors
                 foreach (var floorDto in request.Blueprint.Floors)
@@ -490,7 +495,7 @@ namespace RIMAPI.Services
                     }
 
                     // Create Blueprint
-                    GenConstruct.PlaceBlueprintForBuild(
+                    var planned = GenConstruct.PlaceBlueprintForBuild(
                         thingDef,
                         pos,
                         map,
@@ -499,6 +504,8 @@ namespace RIMAPI.Services
                         stuffDef,
                         styleSource
                     );
+                    if (!string.IsNullOrEmpty(buildDto.StorageProfile) && planned is IStoreSettingsParent storageOwner)
+                        StorageProfileHelper.Apply(storageOwner, buildDto.StorageProfile);
                     if (pos.GetThingList(map).Any(t => t is Blueprint && t.def.entityDefToBuild == thingDef)) count++;
                     else warnings.Add($"{buildDto.DefName}: no building blueprint was created.");
                     }

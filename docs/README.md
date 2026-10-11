@@ -1,11 +1,12 @@
-# Documentation index — 0.0.8 candidate
+# Documentation index — 0.0.8
 
-The working branch is `feature/0.0.8`, targeting `developing` through the candidate pull request.
-Tag `v0.0.7` records the 6 October release; this working branch contains later
-corrections. A dated test result describes its tested
+Version `0.0.8` follows the 6 October `v0.0.7` release with later corrections.
+A dated test result describes its tested
 revision and scenario; it does not establish the current build's runtime result.
 
 ## Current contracts
+
+- [Storage layouts, floors, conditional insect heat enclosure and decision recovery](audits/storage-and-decision-recovery-2026-10-11.md)
 
 - [CPU, AMD computers and older NVIDIA: model device selection](audits/model-hardware-compatibility-2026-10-10.md)
 

@@ -15,10 +15,10 @@
 
 ## See Laya at work
 
-**Source branch status:** 0.0.7 is an unreleased candidate. The download link
-above points to the published stable release. Current contracts, offline audits
-and remaining runtime gates are indexed in [docs](docs/README.md). The candidate
-has not demonstrated an autonomous complete victory.
+**Release status:** 0.0.8 includes the current survival, decision-context and
+storage corrections. Current contracts, offline audits and remaining runtime
+gates are indexed in [docs](docs/README.md). An autonomous complete victory
+has not been demonstrated.
 
 | Combat | Building |
 |:--:|:--:|
@@ -76,7 +76,7 @@ The yellow bars show how Laya weighs the choices in front of it. The same view i
 
 You need **64-bit Windows 10 (version 1809 or newer) or Windows 11**, **RimWorld 1.6**, **Harmony**, and **Python 3.10–3.12**. An NVIDIA GPU is recommended for faster decisions; CPU mode is available. The first setup downloads Laya's model files, so it needs an internet connection and free disk space.
 
-The unpublished `0.0.8` candidate defaults to **Automatic**. It executes a small
+Version `0.0.8` defaults to **Automatic**. It executes a small
 CUDA compatibility check before loading the model; an unavailable driver,
 unsupported GPU or GPU memory failure uses **CPU** instead. AMD graphics and
 computers without a discrete GPU can run the model on their processor. This
@@ -102,8 +102,8 @@ the mod there. The candidate keeps the assistant installed for this purpose.
 Your selected folder is stored in local `rimworld-autopilot.json`; configuring a
 new location preserves the active run/log folder. Previous mod copies are backed
 up under the Autopilot application's `mod-backups`, outside RimWorld's `Mods`.
-These discovery/reconfiguration improvements are in the unpublished `0.0.8`
-candidate; the stable `0.0.7` assistant supports manual folder selection.
+Version `0.0.8` includes these discovery/reconfiguration improvements and
+retains manual folder selection.
 
 Laya connects to the running game's local RIMAPI endpoint, normally
 `http://localhost:8765`. The game folder tells setup where to install the mod;

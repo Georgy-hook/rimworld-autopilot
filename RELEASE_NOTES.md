@@ -1,12 +1,29 @@
-# Unreleased corrections after 0.0.7
+# 0.0.8 — 11 October 2026
+
+- Recover locally from oversized comparisons while preserving complete protected
+  clinical facts and recording the budget failure. Keep the director ready.
+- Repeat food, shared fuel, room climate and public weather duration through
+  quest/reward choices; expose neutral pod patients to native rescue and tending.
+- Preserve mood causes, Brawler and observed ideological weapon penalties;
+  distinguish unavailable mining workers from an explicit model refusal.
+- Expose manufacturing prerequisites and finite goals without claiming crafted
+  products. Preserve funded materials and actual component demand.
+- Add filtered storage roles, specialized shelves, facility-adjacent warehouse
+  plans and floor alternatives. Reject bogs, unknown cells and ordinary storage
+  under thick mountain roofs. Remove heaters/campfires from freezer templates.
+- Add a conditional cooler-exhaust insect enclosure with native terrain, builder,
+  material and power checks. Infestation placement and heat kills remain unproved.
+- Passed 1414 Python tests, isolated native boundaries and 313 offline routes;
+  real cached CUDA replay recovered the recorded budget failure. See the
+  [decision and storage audit](docs/audits/storage-and-decision-recovery-2026-10-11.md)
+  for measured results and limitations.
 
 - Default model startup to Automatic, test real CUDA kernels, retry device
   failures once on CPU and expose actual model placement in GUI settings.
   AMD computers and machines without a discrete GPU use CPU mode in this
   Windows package; ROCm/DirectML acceleration is not provided.
 - Corrected the unavailable `laya==0.3.7` dependency to the tested `0.3.4`
-  package used by the cached runtime. These candidate changes do not alter the
-  running colony's installation or the published stable release.
+  package used by the cached runtime.
 
 - Fixed zero-work markers becoming construction frames: blueprint placement now
   follows the loaded vanilla WorkToBuild rule, including caravan and DLC spots.

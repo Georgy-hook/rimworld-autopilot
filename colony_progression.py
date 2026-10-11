@@ -262,13 +262,15 @@ def prepare(snapshot, map_state):
     context["chosen_ending_route"] = chosen_route
     context["chosen_route_support"] = (context.get("support_research") or {}).get(chosen_route) or {}
     support_frontier = set(context["chosen_route_support"].get("frontier") or [])
+    manufacturing_frontier = set((context.get('manufacturing_support') or {}).get('frontier') or [])
     for name, row in context["options"].items():
         row["ending_support"] = name in support_frontier
+        row['manufacturing_support'] = name in manufacturing_frontier
     pursuing_ship = chosen_route == "ship_escape" or (not chosen_route and (
         doctrine.get("primary_direction") == "research_starflight" or doctrine.get("technology") == "starflight"))
     # Only add a decision when the route exposes an actionable prerequisite.
     # Ordinary research selection already belongs to the director.
-    actions = ["progression_research"] if (pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values())) or any(r.get("ending_support") for r in context["options"].values()) else []
+    actions = ["progression_research"] if (pursuing_ship and any(r["ship_prerequisite"] for r in context["options"].values())) or any(r.get("ending_support") or r.get('manufacturing_support') for r in context["options"].values()) else []
     if ship_options(context):
         actions.append("progression_ship")
     if boarding_options(context):
@@ -456,12 +458,13 @@ def comparison(action, context):
                  "cost": "More colony time before escape.", "inaction": "Reactor/launch command stays unissued.", "uncertainty": "Waiting does not guarantee improved readiness."}
     else:
         candidates = _options(context)
-        effects = {name: {"benefit": f"{r['label']}; unlocks {r['unlocks']}; ship prerequisite {r['ship_prerequisite']}; chosen-route infrastructure support {r['ending_support']}.",
+        effects = {name: {"benefit": f"Manufacturing path {name in set((context.get('manufacturing_support') or {}).get('frontier') or [])}; {r['label']}; unlocks {r['unlocks']}; ship prerequisite {r['ship_prerequisite']}; chosen-route infrastructure support {r['ending_support']}.",
                           "risk": "Research labor competes with survival; switching delays the current unlock.",
                           "cost": f"{r['remaining_points']} remaining research points, researcher time and bench power.",
                           "inaction": "Keep current project; selected technology remains unavailable.",
                           "uncertainty": "Points measure work, not days; no victory inferred from research."} for name, r in candidates.items()}
         facts = {"journey_needs": journey_summary(context), "current_project": (context.get('current') or {}).get('name'), "chosen_ending_route": context.get("chosen_ending_route"),
+                 'manufacturing_goal': context.get('manufacturing_product'),
                  "route_gate_note": (context.get("endings") or {}).get("research_gate_note"), "time": "Research points are work, not completion days."}
         defer = {"benefit": "Keep current research and labor flexibility.", "risk": "Missing technology unlocks delayed.", "cost": "No target change; current work continues.",
                  "inaction": "Prerequisite frontier remains unresolved.", "uncertainty": "Current project may still require staff, power and inputs."}

@@ -959,8 +959,23 @@ namespace RIMAPI.Helpers
                 FloorPalette = floorPalette,
                 FloorGrid = compressedFloorGrid,
                 EdificeGrid = compressedEdificeGrid,
-                StockpileAvailableGrid = stockpileGrid
+                StockpileAvailableGrid = stockpileGrid,
+                DryFoundationGrid = CellValues(map, c => StorageProfileHelper.DryFoundation(map, c) ? 1 : 0),
+                MountainRoofGrid = CellValues(map, c => c.Fogged(map) ? -1 : c.GetRoof(map)?.isThickRoof == true ? 1 : 0)
             };
+        }
+
+        private static List<int> CellValues(Map map, Func<IntVec3, int> value)
+        {
+            var result = new List<int>(); int previous = int.MinValue, count = 0;
+            for (int i = 0; i < map.Size.x * map.Size.z; i++)
+            {
+                int current = value(map.cellIndices.IndexToCell(i));
+                if (current == previous) count++;
+                else { if (count > 0) { result.Add(count); result.Add(previous); } previous = current; count = 1; }
+            }
+            if (count > 0) { result.Add(count); result.Add(previous); }
+            return result;
         }
 
         public static List<ThingDto> GetMapThingsInRadius(int mapId, int centerX, int centerZ, int radius)
@@ -1060,7 +1075,7 @@ namespace RIMAPI.Helpers
 
         static bool FreshnessDefsAvailable(bool? fresh,bool? rotten) => (!fresh.HasValue || DefDatabase<SpecialThingFilterDef>.GetNamedSilentFail("AllowFresh")!=null)
             && (!rotten.HasValue || DefDatabase<SpecialThingFilterDef>.GetNamedSilentFail("AllowRotten")!=null);
-        static void SetFreshness(ThingFilter filter,bool? fresh,bool? rotten)
+        internal static void SetFreshness(ThingFilter filter,bool? fresh,bool? rotten)
         {
             if(fresh.HasValue)filter.SetAllow(DefDatabase<SpecialThingFilterDef>.GetNamed("AllowFresh"),fresh.Value);
             if(rotten.HasValue)filter.SetAllow(DefDatabase<SpecialThingFilterDef>.GetNamed("AllowRotten"),rotten.Value);
@@ -1133,6 +1148,9 @@ namespace RIMAPI.Helpers
                     };
                 }
 
+                if (!string.IsNullOrEmpty(request.StorageProfile) && (StorageProfileHelper.Definitions(request.StorageProfile).Count == 0
+                    || rect.Any(c => !StorageProfileHelper.DryFoundation(map, c) || c.GetRoof(map)?.isThickRoof == true)))
+                    return new StockpileResponseDto { Success = false, Message = "Invalid profile or unsafe dry-storage footprint." };
                 // Validate the complete footprint before registering any cells.
                 bool animalCorpses = request.AllowedItemCategories?.Contains("CorpsesAnimal") == true;
                 var pens = map.listerBuildings.allBuildingsColonist.Select(b=>b.TryGetComp<CompAnimalPenMarker>())
@@ -1223,6 +1241,7 @@ namespace RIMAPI.Helpers
                 }
 
                 SetFreshness(stockpile.settings.filter,request.AllowFresh,request.AllowRotten);
+                if (!string.IsNullOrEmpty(request.StorageProfile)) StorageProfileHelper.Apply(stockpile, request.StorageProfile);
                 // Set hit points filter
                 float minHpPercent = request.MinHitPointsPercent ?? 0.0f;
                 float maxHpPercent = request.MaxHitPointsPercent ?? 1.0f;

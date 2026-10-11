@@ -1,5 +1,7 @@
 """Live fuel allocation and electricity choices; policy changes use vanilla controls."""
 from laya_decisions import ask_laya_choice
+import colony_decision_context as observations
+import colony_manufacturing as manufacturing
 from colony_retry import failure_record, recent as retry_recent
 import json
 import colony_husbandry as husbandry
@@ -8,9 +10,11 @@ DESCRIPTIONS = {"production_utilities": "Choose a building's power switch or aut
                 "production_feed_batch": "Choose an existing usable table for one researched kibble batch, or defer to preserve food. Uses live protein/greens nutrition and produces the loaded recipe's animal feed. A bill is accepted work, not produced food; loaded recipe filters can consume human meat or fertilized eggs; compare ideology and breeding costs."}
 DESCRIPTIONS["production_recipe_batch"] = "Choose one loaded non-food recipe/material at an available completed worktable: medicines, components, equipment, drugs, subcores, mech gestation or loaded recycling. Enabled skilled worker, prerequisites and reachable ingredients checked; one finite vanilla bill."
 DESCRIPTIONS["production_material_logistics"] = "Choose a real material logistics workflow: allow one forbidden safe-site resource stack, permit a missing material in existing storage, create an actual roofed indoor stockpile near a completed table, or start a vanilla hauling job. Compare exposure, floor space and competing labor; delivery remains ordinary work."
+DESCRIPTIONS['production_plan'] = 'Choose a loaded weapon/component manufacturing goal or keep existing goods. Compare stock and weapons with research, builder, table, power, recipe skill, materials and survival duties. This records a finite goal; it creates no building, bill or product.'
 LABELS = {"production_utilities": "распределение топлива и энергии", "production_feed_batch": "ограниченный заказ корма"}
 LABELS["production_recipe_batch"] = "производство по доступным рецептам"
 LABELS["production_material_logistics"] = "material storage and delivery"
+LABELS['production_plan'] = 'plan weapon or component manufacturing'
 ACTIONS = set(DESCRIPTIONS)
 DOMAINS = {a: "work_orders" for a in ACTIONS}
 
@@ -272,7 +276,7 @@ def logistics_options(context):
     active = {row.get("target_id") for row in native.get("active_orders") or []
               if isinstance(row, dict) and row.get("kind") == "haul"}
     return {p["key"]: p for p in native.get("options") or [] if isinstance(p, dict)
-            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul"}
+            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul", "profile", "cooling"}
             and not (p.get("kind") == "haul" and p.get("target_id") in active)}
 
 def logistics_choose(agent, context, state=None):
@@ -282,7 +286,7 @@ def logistics_choose(agent, context, state=None):
         return {"benefit": str(plan.get("label")), "risk": str(plan.get("risk")), "cost": str(plan.get("cost")), "inaction": "Forbidden/exposed/unstored stock and delivery delays continue", "uncertainty": "Ordinary policy/job only; no delivered materials yet"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan["kind"], []).append((key, plan))
-    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose ordinary material logistics purpose or defer; compare labor, exposure and lost floor space.")
+    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose logistics or a dedicated shelf profile; keep kitchen, medicine and workshop filters distinct. Buffers outrank overflow; policy is not hauling.")
     stages.append(raw)
     if kind is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     subjects = {}
@@ -335,6 +339,8 @@ def prepare(snapshot, map_state):
         available.append("production_recipe_batch")
     if logistics_options(context):
         available.append("production_material_logistics")
+    if manufacturing.prepare(snapshot, map_state):
+        available.append('production_plan')
     # Retire old category utility locks when loading a persisted pre-scope state.
     for action in ACTIONS:
         (map_state.get("issued") or {}).pop("production:" + action, None)
@@ -354,6 +360,8 @@ def utility_facts(snapshot):
 
 def choose(agent, state, action, snapshot):
     context = snapshot["development"]["production"]
+    if action == 'production_plan':
+        return manufacturing.choose(agent, snapshot, state)
     if action == "production_recipe_batch":
         return recipe_choose(agent, context, state)
     if action == "production_material_logistics":
@@ -404,6 +412,8 @@ def choose(agent, state, action, snapshot):
 def execute(client, snapshot, map_state, action, selected):
     if action not in ACTIONS:
         return {"applied": False, "reason": "unsupported_action"}
+    if action == 'production_plan':
+        return manufacturing.execute(client, snapshot, map_state, selected)
     key = selected.get("production_policy")
     if key == "defer":
         if action == "production_utilities":
@@ -493,6 +503,12 @@ def execute(client, snapshot, map_state, action, selected):
     return {"applied": True, "reason": response.get("reason"), "response": response}
 
 def assess(action, snapshot):
+    if action == 'production_plan':
+        return {'benefit': 'Expose a selected finite weapon/component manufacturing path.',
+                'cost': 'Research, construction, power, ingredients and skilled labor remain prerequisites.',
+                'risk': 'Competes with shelter, food, treatment and existing equipment.',
+                'inaction': 'Keep current resources and other goals.',
+                'uncertainty': 'Planning creates no bill or product; output must be observed.'}
     if action == "production_material_logistics":
         return {"benefit": "Make actual stored materials available and route ordinary hauling.", "cost": "Hauling work, storage capacity and indoor floor space.", "risk": "Forbidden intention, route exposure and competing human care/labor.", "inaction": "Materials stay forbidden, exposed or without allowed destination.", "uncertainty": "Native job validation and exact footprint revalidation; delivery remains pending."}
     if action == "production_recipe_batch":

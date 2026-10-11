@@ -114,6 +114,9 @@ namespace RIMAPI.Models
     // --- The Blueprint Data Structure ---
     public class BlueprintDto
     {
+        public bool RequireDryGround { get; set; }
+        public bool AvoidMountainRoof { get; set; }
+        public bool HeatLure { get; set; }
         public bool Roof { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
@@ -130,6 +133,7 @@ namespace RIMAPI.Models
 
     public class SavedBuildingDto
     {
+        public string StorageProfile { get; set; }
         public string DefName { get; set; }
         public string StuffDefName { get; set; } // Material (Wood, Steel, etc)
         public int RelX { get; set; }

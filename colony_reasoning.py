@@ -7,6 +7,7 @@ outcomes stay unknown and an accepted command is never labelled completed.
 from __future__ import annotations
 
 import math
+import colony_decision_context as observations
 from typing import Any
 import colony_modules
 import colony_growth
@@ -242,6 +243,13 @@ def attention_facts(snapshot: dict[str, Any], *, roofed_sleeping_places: int | N
         "outside_c": (dev.get("weather") or {}).get("temperature"),
         "endgame": (dev.get("doctrine") or {}).get("endgame"),
     }
+    pressure = observations.mood_pressure(snapshot)
+    if pressure:
+        facts['development']['mood'] = {'people': len(pressure), 'lowest': min(p['mood'] for p in pressure),
+            'causes': sorted({c['thought'] for p in pressure for c in p['causes']})}
+    neutral = observations.neutral_urgency(snapshot)
+    if neutral:
+        facts['development']['neutral_patient'] = neutral
     return {key: value for key, value in facts.items() if value is not None}
 
 

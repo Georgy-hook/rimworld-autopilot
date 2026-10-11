@@ -71,7 +71,17 @@ namespace RIMAPI.Helpers {
   }
   public static ApiResult<object> Context(int mapId) {
    var m=MapHelper.GetMapByID(mapId);if(m==null)return ApiResult<object>.Fail("map_missing");
-   return ApiResult<object>.Ok(new{available=true,options=Plans(m),product_stocks=m.listerThings.AllThings.Where(t=>t.Spawned && !t.Position.Fogged(m) && t.def.category==ThingCategory.Item).GroupBy(t=>t.def).Select(g=>new{product_def=g.Key.defName,count=g.Sum(t=>t.stackCount)}).ToArray(),completion="visible ore and prospective ordinary work; not mined goods or income"});
+   var plans=Plans(m);
+   var workers=m.mapPawns.FreeColonistsSpawned.Select(p=>new{pawn_id=p.thingIDNumber,current_job=p.CurJobDef?.defName,
+    blocker=OrdinaryWorkSafety.WorkerBlocker(p,WorkTypeDefOf.Mining) ?? (p.needs?.food==null || p.needs.food.CurCategory>=HungerCategory.UrgentlyHungry ? "urgently_hungry_or_food_unknown" : null),
+    comfortable_min=p.GetStatValue(StatDefOf.ComfyTemperatureMin),temperature=p.Position.GetTemperature(m)}).ToArray();
+   var ores=m.listerThings.AllThings.OfType<Mineable>().Where(t=>!t.Position.Fogged(m) && t.def.building?.mineableThing!=null)
+    .GroupBy(t=>t.def).Select(g=>new{ore_def=g.Key.defName,product_def=g.Key.building.mineableThing.defName,visible_cells=g.Count(),
+     designated_cells=g.Count(t=>m.designationManager.DesignationAt(t.Position,DesignationDefOf.Mine)!=null),
+     ready_plans=plans.Count(p=>p.Kind=="extract" && p.OreDef==g.Key.defName)}).ToArray();
+   return ApiResult<object>.Ok(new{available=true,options=plans,diagnostics=new{workers,ores,
+    no_options_meaning="No fresh ordinary worker/reservation/route/whole-batch roof plan. This is not a model decision to reject a mineral; undelivered output is not stock."},
+    product_stocks=m.listerThings.AllThings.Where(t=>t.Spawned && !t.Position.Fogged(m) && t.def.category==ThingCategory.Item).GroupBy(t=>t.def).Select(g=>new{product_def=g.Key.defName,count=g.Sum(t=>t.stackCount)}).ToArray(),completion="visible ore and prospective ordinary work; not mined goods or income"});
   }
   public static ApiResult<object> Order(MiningOrderDto request) {
    var m=MapHelper.GetMapByID(request.MapId);if(m==null)return ApiResult<object>.Fail("map_missing");

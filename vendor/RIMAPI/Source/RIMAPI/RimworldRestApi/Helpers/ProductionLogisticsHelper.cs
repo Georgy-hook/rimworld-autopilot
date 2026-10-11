@@ -21,6 +21,10 @@ namespace RIMAPI.Helpers
             public string label;
             public string cost;
             public string risk;
+            public string storage_role;
+            public string[] allowed_defs;
+            public int priority;
+            public int displaced_stacks;
             // IntVec3 exposes recursive Unity vector properties. Keep game
             // coordinates internal and serialize only the primitive DTO.
             [Newtonsoft.Json.JsonIgnore]
@@ -84,7 +88,7 @@ namespace RIMAPI.Helpers
         {
             var activeHauls = new HashSet<int>((activeOrders ?? ResilienceAutomationHelper.ActiveOrders(map))
                 .Where(o => o.Kind == "haul").Select(o => o.TargetId));
-            var options = new List<Choice>();
+            var options = StorageProfileHelper.Options(map);
             Thing[] materials = map.listerThings.AllThings.Where(Material).ToArray();
             Pawn[] hostiles = map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToArray();
             foreach (Thing thing in materials.Where(t => t.IsForbidden(Faction.OfPlayer) && !hostiles.Any(p => p.Position.DistanceTo(t.Position) < 30)).GroupBy(t => t.def)
@@ -111,6 +115,7 @@ namespace RIMAPI.Helpers
                 .Select(g => g.Key).ToArray();
             foreach (var linked in storages.GroupBy(b => b.GetStoreSettings()))
             {
+                if (StorageProfileHelper.Specialized(linked.Key)) continue;
                 foreach (ThingDef def in unstoredDefs)
                 {
                     Building_Storage storage = linked.FirstOrDefault(b => !b.GetStoreSettings().AllowedToAccept(def)
@@ -127,6 +132,7 @@ namespace RIMAPI.Helpers
             }
             foreach (Zone_Stockpile zone in zones)
             {
+                if (StorageProfileHelper.Specialized(zone.settings)) continue;
                 foreach (ThingDef def in unstoredDefs.Where(d => !zone.settings.AllowedToAccept(d) && needingStorage[d].Any(t => CellCapacity(map, zone.Cells, t))))
                     options.Add(new Choice
                     {
@@ -209,6 +215,8 @@ namespace RIMAPI.Helpers
             Thing target = map.listerThings.AllThings.FirstOrDefault(t => t.thingIDNumber == choice.target_id);
             switch (choice.kind)
             {
+                case "cooling": target.TryGetComp<CompTempControl>().TargetTemperature = -10f; break;
+                case "profile": StorageProfileHelper.Apply((Building_Storage)target, choice.value); break;
                 case "allow": target.SetForbidden(false); break;
                 case "shelf":
                     var shelf = (Building_Storage)target;

@@ -1,5 +1,6 @@
 """Choose a visible connected vein and ordinary miner; observe output separately."""
 from laya_decisions import ask_laya_choice
+import colony_decision_context as observations
 from colony_retry import failure_record, recent
 import colony_labor as labor
 
@@ -44,6 +45,12 @@ def prepare(snapshot, memory):
         plan['preferred_product'] = token(preferred) in {token(plan.get('product_def')), token(plan.get('ore_def'))}
     # A new vein has its own subject even if an older income doctrine was deferred.
     context['prepared_options'] = {k: p for k, p in ready.items() if k not in history}
+    context['material_needs'] = {product: observations.material_need(snapshot, product)
+        for product in {p['product_def'] for p in ready.values()} | {'ComponentIndustrial', 'Steel'}}
+    context['availability_observation'] = {'native_options': len(context.get('options') or []),
+        'python_ready': len(ready), 'deferred_or_failed': len(history),
+        'native_diagnostics': context.get('diagnostics'),
+        'meaning': 'No option is not a model rejection. Visible ore is not an available safe job.'}
     prior = memory.get('mining_intent') or {}
     if prior and prior.get('map_id') == snapshot['map']['id'] and tick >= prior.get('tick', tick):
         # Options omit designated blocks. Only the general visible ore observation
@@ -86,7 +93,13 @@ def choose(agent, state, action, snapshot):
         pawn = people.get(plan['worker_id'], {})
         conditions=pawn.get('health_conditions')
         malnutrition=max((h.get('severity') or 0 for h in conditions or [] if h.get('def_name')=='Malnutrition'),default=0) if conditions is not None else None
-        return {'product': plan['product_def'], 'yield': plan.get('base_yield'),
+        use = observations.material_need(snapshot, plan['product_def'])
+        material = {'stock':use['stock'], 'needed':use['remaining_build_need'] + use['selected_recipe_need']
+                    if use['remaining_build_need'] is not None else None}
+        # Product is the option's exact key here; the actor/vein stage repeats
+        # its one selected product in shared facts rather than in every row.
+        return {'yield': plan.get('base_yield'),
+                **({'material':material} if material['stock'] is not None or material['needed'] is not None else {}),
                 'nominal_value': plan.get('nominal_market_value'), 'hp': plan.get('remaining_hp'),
                 'skill': plan.get('mining_skill'), 'speed': plan.get('mining_speed'),
                 'yield_factor': plan.get('mining_yield'), 'travel': plan.get('travel_distance'),
@@ -98,7 +111,7 @@ def choose(agent, state, action, snapshot):
     defer_effect = {'benefit':'Retain worker on current job', 'cost':'No mining labor',
                     'risk':'No mineral output or new trade goods', 'inaction':'Current food/care work continues',
                     'uncertainty':'No income from this vein'}
-    instruction = 'Compare mineral value, work, travel, food and care. Choose an available plan or defer.'
+    instruction = 'Compare remaining construction/selected recipe need with existing stock, mineral value, work, travel, food and care. Delivered frame materials are already paid. Mining produces no electricity or income by itself. Choose an available plan or defer.'
     # Product selection is a comparison, not a dispatch. The final exact
     # worker/vein comparison includes waiting once; no action is preselected.
     product, first = ask_laya_choice(agent, {'comparison_facts':{'shared':facts,'options':product_facts},
@@ -112,7 +125,7 @@ def choose(agent, state, action, snapshot):
     if action=='mining_haul':
         criteria = {alias:f"Haul {p.get('base_yield')} {p['product_def']} with {p.get('worker')}" for alias,(_,p) in indexed.items()}
     criteria['defer'] = 'Keep worker on observed current job; leave goods uncollected'
-    chosen, raw = ask_laya_choice(agent, {'comparison_facts':{'shared':facts,
+    chosen, raw = ask_laya_choice(agent, {'comparison_facts':{'shared':{**facts, 'product':product},
         'options':{a:numbers(p) for a,(_,p) in indexed.items()}},
         'option_effects':{**{a:effects(p) for a,(_,p) in indexed.items()}, 'defer':defer_effect}},
                                   'mining_vein_and_worker', instruction, criteria, detailed=True)

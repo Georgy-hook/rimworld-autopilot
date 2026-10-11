@@ -16,6 +16,8 @@ class OpportunityContextTests(unittest.TestCase):
             agent = parameters.ParameterContextTests().agent()
             snapshot = mine_snapshot()
             snapshot['map']['resources']['nutrition'] = 32
+            snapshot['development']['item_counts'] = {'Steel':346, 'ComponentIndustrial':29}
+            snapshot['development']['construction_projects'] = []
             snapshot['colonists'][0].update(hunger=.9, health_conditions=[])
             first = snapshot['development']['mining']['options'][0]
             other = copy.deepcopy(first)
@@ -30,6 +32,8 @@ class OpportunityContextTests(unittest.TestCase):
                     if key=='defer': continue
                     self.assertEqual((row['hp'],row['speed'],row['worker_food']), (3000,1.2,.9))
                     self.assertIn(row['nominal_value'],(400,76))
+                    self.assertEqual(row['material']['needed'], 0)
+                    self.assertIsInstance(row['material']['stock'], (int,float))
                 self.assertLessEqual(len(agent.tok(json.dumps(visible,ensure_ascii=False))['input_ids']),312)
 
     def test_welfare_measured_clinic_and_reserve_reach_all_stages(self):

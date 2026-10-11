@@ -1,6 +1,7 @@
 """Live human needs and reversible care, prisoner and learning policies."""
 from __future__ import annotations
 from typing import Any
+import colony_decision_context as observations
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 
@@ -347,7 +348,11 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         persons.setdefault(pid, (row.get('person') or {}).get('name') or row.get('label') or pid)
         person_effects.setdefault(pid, _effects(row, action, context))
     persons['defer'], person_effects['defer'] = 'Keep current jobs and policy', defer
-    pid, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_people': len(persons)-1}, 'option_effects': person_effects}, action + '_person', 'Choose a live person or defer; compare actual needs, risks and costs.', persons, detailed=True)
+    mood_facts = {str(row['pawn_id']): observations.mood_person(row.get('person') or {}) for row in plans.values()}
+    shared = {'action': action, 'live_people': len(persons)-1}
+    mood_action = action in {'society_free_time', 'society_drug_policy', 'society_drug_entry'}
+    person_state = {'comparison_facts': {'shared': shared, 'options': mood_facts}} if mood_action else {'decision_facts': shared}
+    pid, first = ask_laya_choice(agent, {**person_state, 'option_effects': person_effects}, action + '_person', 'Choose a live person or defer; compare actual needs, risks and costs. Recreation does not remove hunger, cold, grief or weapon penalties.', persons, detailed=True)
     if pid == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if str(row['pawn_id']) == pid}
@@ -370,7 +375,9 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     criteria = {k: row.get('label') or f"{row.get('value')} hour={row.get('hour')}" for k, row in plans.items()}
     option_effects = {k: _effects(row, action, context) for k, row in plans.items()}
     criteria['defer'], option_effects['defer'] = 'Keep current policy/jobs; needs may persist', defer
-    key, raw = ask_laya_choice(agent, {'decision_facts': {'person': pid, 'diagnosis_need': person_effects[pid]['benefit']}, 'option_effects': option_effects}, action, DESCRIPTIONS[action], criteria, detailed=True)
+    comparison = {'comparison_facts': {'shared': {'person': pid, 'mood': mood_facts[pid]}, 'options': {}}} if mood_action else {}
+    key, raw = ask_laya_choice(agent, {**comparison,
+        'decision_facts': {'person': pid, 'diagnosis_need': person_effects[pid]['benefit']}, 'option_effects': option_effects}, action, DESCRIPTIONS[action], criteria, detailed=True)
     raw['society_person_choice'] = first
     return (defer_selection(plans) if key == 'defer' else _payload(plans[key])), raw
 

@@ -458,7 +458,23 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     target_effects['defer'] = defer
     instructions = ('Choose normal rescue out of lethal temperature or defer. Tending frostbite does not warm or cool a patient. Fresh native bed and route checks protect ongoing bleeding, infection, feeding and carrying.' if thermal else
         'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.')
-    target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
+    def neutral_facts(patient):
+        facts = {k:patient.get(k) for k in ('neutral_arrival', 'downed', 'bleeding_total', 'bleedout_ticks',
+            'temperature', 'in_bed', 'current_bed_id')}
+        races = [{k:h.get(k) for k in ('def_name', 'severity', 'immunity', 'treatment_ticks_left')}
+                 for h in patient.get('conditions') or [] if h.get('visible', True) and _immunity_race(h) is True]
+        if races:
+            facts['immunity_races'] = races
+        return facts
+    has_neutral = any(p.get('neutral_arrival') for p in people.values())
+    # A neutral target must not erase the other compared colony patients.
+    neutral = {pid:neutral_facts(p) for pid,p in people.items()} if has_neutral else {}
+    comparison = {'comparison_facts': {'shared': {'medicine': snapshot.get('map',{}).get('resources',{}).get('medicine'),
+        'food': snapshot.get('map',{}).get('resources',{}).get('nutrition'),
+        'colony_downed': sum(bool(p.get('downed')) for p in snapshot.get('colonists') or [])}, 'options':neutral}} if neutral else {}
+    if neutral:
+        instructions += ' A neutral pod arrival is not a quest accepted by the model or a guaranteed recruit. Compare bleeding deadline and timely tending with carrying to warmth.'
+    target, first = ask_laya_choice(agent, {**comparison, 'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
     if target == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if subject(row) == target}
@@ -476,7 +492,13 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     facts = {'target': target, 'evidence': target_effects[target]['benefit'], 'exposure': target_effects[target]['risk']}
     if action in ('resilience_feed', 'resilience_rescue'):
         facts = {'nutrition': nutrition_facts(people.get(target, {})), **facts}
-    key, raw = ask_laya_choice(agent, {'decision_facts': facts, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
+    if target in neutral:
+        comparison = {'comparison_facts': {'shared': {'patient':neutral[target]}, 'options': {
+            k:{f:row.get(f) for f in ('worker_id','medicine_skill','medical_tend_quality','travel_distance','bed_id','destination_temperature')}
+            for k,row in plans.items()}}}
+    else:
+        comparison = {}
+    key, raw = ask_laya_choice(agent, {**comparison, 'decision_facts': facts, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
     raw['patient_choice'] = first
     return (defer_selection(plans) if key == 'defer' else order_fields(plans[key])), raw
 

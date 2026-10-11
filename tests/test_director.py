@@ -3737,7 +3737,7 @@ class DirectorTests(unittest.TestCase):
                 "item_counts": {"WoodLog": 9000, "Steel": 5000},
                 "material": "WoodLog", "powered": True, "climate": "cold"}
         for program in director.architect.PROGRAM_CATALOG:
-            if program.startswith("greenhouse_") or program == "royal_bedroom":
+            if program.startswith("greenhouse_") or program in {"royal_bedroom", "insect_heat_lure"}:
                 self.assertEqual(director.architect.generate_program_variants(program, base), {})
                 continue  # Unresearched composite layouts are tested with live-style metadata separately.
             for entry_side in ("north", "east", "south", "west"):

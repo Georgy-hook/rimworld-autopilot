@@ -9,6 +9,7 @@ from typing import Any
 import colony_retry as retry
 import colony_combat as combat
 import colony_husbandry as husbandry
+import colony_decision_context as observations
 from laya_decisions import NoFeasibleChoice, ask_laya_choice
 
 DESCRIPTIONS = {
@@ -363,7 +364,9 @@ def weapon_tradeoff_note(current, alternative, pawn=None):
     travel = ((float(origin.get("x") or 0) - float(destination.get("x") or 0)) ** 2
               + (float(origin.get("z") or 0) - float(destination.get("z") or 0)) ** 2) ** .5
     cost = f"Fetch {travel:.0f} cells; interrupts work; replaces {current.get('def_name') or 'unarmed'}; "
-    return cost + switch + "; ".join(differences) + "; " + weapon_note(alternative)
+    preference = (pawn or {}).get('weapon_preferences') or {}
+    mood = ('Brawler: ranged weapon penalizes mood; melee avoids this penalty. ' if preference.get('brawler') else '')
+    return mood + cost + switch + "; ".join(differences) + "; " + weapon_note(alternative)
 
 
 def _weapon_assignment_guard(snapshot, pawn):
@@ -386,7 +389,10 @@ def _weapon_assignment_guard(snapshot, pawn):
             pawn.get("can_fight"), tuple(float(pawn.get(k) or 0) < .65 for k in ("sight", "manipulation")),
             (pawn.get("weapon_info") or {}).get("hit_points_percent") == 0,
             pawn.get("combat_role"), (snapshot.get("doctrine") or {}).get("military"))
-    return repr((sorted(inventory.items()), role, threats))
+    preference = observations.weapon_preferences(snapshot, pawn)
+    # Reconsider changed weapon beliefs/penalties, but not every mood tick.
+    mood_guard = (preference['brawler'], repr(preference['weapon_thoughts']), tuple(preference['weapon_beliefs']))
+    return repr((sorted(inventory.items()), role, threats, mood_guard))
 
 
 def _unarmed(pawn):
@@ -777,20 +783,26 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
             pick("animal_trainable", "Choose a training. Prerequisites are requested recursively; actual learning takes food, handling and time.", {k: f"{k}: steps {v.get('steps','unknown')}/{v.get('total_steps','unknown')}; prerequisites {v.get('prerequisites','unknown')}; requested {v.get('wanted')}; learned {v.get('learned')}; maintenance automatic while wanted" for k, v in plan["trainables"].items()})
         pick("animal_handler", "Choose a handler or master with sufficient Animals skill, health and spare time.", {str(p["id"]): f"{person_note(p)}; native interaction/food ready {p.get('native_training_ready','not required for master')}" for p in plan["workers"]})
     elif action == "improve_weapon_loadout":
+        for plan in plans.values():
+            plan['pawn'] = {**plan['pawn'], 'weapon_preferences': observations.weapon_preferences(snapshot, plan['pawn'])}
         key = pick("weapon_pawn", "Choose a colonist by combat role, skill and health, or keep current loadouts.", {
-            **{k: f"{p['pawn'].get('name')}; shooting {p['pawn'].get('shooting_skill')}, melee {p['pawn'].get('melee_skill')}; sight {p['pawn'].get('sight')}, manipulation {p['pawn'].get('manipulation')}; current {weapon_note(p['pawn'].get('weapon_info') or {})}" for k, p in plans.items()},
+            **{k: f"{p['pawn'].get('name')}; preferences {p['pawn']['weapon_preferences']}; shooting {p['pawn'].get('shooting_skill')}, melee {p['pawn'].get('melee_skill')}; sight {p['pawn'].get('sight')}, manipulation {p['pawn'].get('manipulation')}; current {weapon_note(p['pawn'].get('weapon_info') or {})}" for k, p in plans.items()},
             "defer": "Keep existing loadouts; fetching another weapon may be unnecessary or risky."})
         if key == "defer":
             details["weapon_defer"] = True
             return details, raw
         state = {"choice_context": {
             "fighter": {k: plans[key]["pawn"].get(k) for k in ("shooting_skill", "melee_skill", "distance_to_nearest_opponent", "weapon_def")},
+            "weapon_preferences": plans[key]['pawn']['weapon_preferences'],
             "previous_assignment": {field: (plans[key].get("previous_assignment") or {}).get(field)
                                     for field in ("target_id", "target_def", "previous_weapon_id",
                                                   "previous_weapon_def", "confirmed")},
             "enemies": [{k: e.get(k) for k in ("kind_def", "armor_sharp", "is_mechanoid", "is_insect")}
                         for e in snapshot.get("combat", {}).get("hostiles") or [] if not e.get("is_dead")][:4]}, "colony": state}
-        if pick("weapon_item", "Choose a compatible weapon or keep current one. Compare range, damage, accuracy and AP with pawn role and enemies, previous assignment and the walking/work cost of switching. Explosives risk friendly fire; EMP does not replace normal damage.", {
+        # Preserve preferences and the combat context together in every pair.
+        # Detailed prefix clipping previously could erase the mood penalty.
+        state = {'planning_context': state['choice_context']}
+        if pick("weapon_item", "Choose a compatible weapon or keep current one. Compare Brawler and ideological weapon mood penalties, melee/shooting skill, range, AP, enemies and the walking/work cost of switching. A melee preference does not make approaching gunfire safe. Explosives risk friendly fire; EMP does not replace normal damage.", {
                 **{k: weapon_tradeoff_note(plans[key]["pawn"].get("weapon_info") or {}, w, plans[key]["pawn"])
                    for k, w in plans[key]["weapons"].items()},
                 "defer": "Keep current weapon: " + weapon_note(plans[key]["pawn"].get("weapon_info") or {})}) == "defer":

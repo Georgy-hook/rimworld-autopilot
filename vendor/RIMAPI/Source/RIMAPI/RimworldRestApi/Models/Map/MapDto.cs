@@ -296,6 +296,7 @@ namespace RIMAPI.Models
 
     public class CreateStockpileRequestDto
     {
+        public string StorageProfile { get; set; }
         public int MapId { get; set; }
         public bool? AllowFresh { get; set; }
         public bool? AllowRotten { get; set; }

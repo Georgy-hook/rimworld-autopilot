@@ -12,6 +12,7 @@ import copy
 import random
 import math
 import colony_husbandry as husbandry
+import colony_storage as storage_plans
 from collections import Counter
 from typing import Any
 import colony_retry as retry
@@ -33,6 +34,7 @@ PROGRAM_CATALOG: dict[str, dict[str, Any]] = {
     "factory": {"label": "powered industrial factory", "category": "production", "skills": ["Crafting", "Intellectual"]},
     "research_lab": {"label": "research laboratory", "category": "technology", "skills": ["Intellectual", "Construction"]},
     "storage": {"label": "shelved warehouse", "category": "logistics", "skills": ["Construction"]},
+    "insect_heat_lure": {"label": "isolated mountain exhaust chamber", "category": "defense", "skills": ["Construction"]},
     "prison": {"label": "secure humane prison", "category": "care", "skills": ["Social", "Construction"]},
     "barn": {"label": "animal barn", "category": "animals", "skills": ["Animals", "Construction"]},
     "nursery": {"label": "nursery and school room", "category": "care", "skills": ["Childcare", "Social"]},
@@ -421,8 +423,14 @@ def _furnished_room(
         for x in (2, width // 2, width - 3):
             add("Bed", x, 2, stuff="WoodLog")
         add("Table2x2c", width // 2, height - 3, stuff="WoodLog")
-    items.extend(_climate_items(index, climate, powered, width - 2, 2) if program not in {"hospital", "barn"} else [])
-    return blueprint(items, width, height, floors)
+    items.extend(_climate_items(index, climate, powered, width - 2, 2) if program not in {"hospital", "barn", "freezer"} else [])
+    roles = {'kitchen': 'kitchen_inputs', 'hospital': 'medicine', 'workshop': 'workshop_inputs',
+             'factory': 'workshop_inputs', 'research_lab': 'dry_goods', 'freezer': 'kitchen_inputs'}
+    shelves = [item for item in items if item['def_name'] in {'Shelf', 'ShelfSmall'}]
+    for item in shelves: item['storage_profile'] = roles.get(program, 'dry_goods')
+    if program in {'kitchen', 'freezer'} and len(shelves) > 1: shelves[-1]['storage_profile'] = 'meals'
+    if program == 'freezer' and len(shelves) == 1: shelves[0]['storage_profile'] = 'cold_food'
+    return {**blueprint(items, width, height, floors), 'roof': program != 'power_utility'}
 
 
 def _defense_variant(material: str, variant: int, index: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -672,6 +680,8 @@ def generate_royal_variants(program: str, context: dict[str, Any]) -> dict[str, 
 
 
 def generate_program_variants(program: str, context: dict[str, Any], *, seed: int = 0) -> dict[str, dict[str, Any]]:
+    if program == 'storage': return storage_plans.variants(context)
+    if program == 'insect_heat_lure': return storage_plans.heat_lure_variants(context)
     if program == "barn":
         return animal_shelter_variants(context)
     if program == "royal_bedroom" or (program == "throne_room" and any(
@@ -924,6 +934,10 @@ def program_options(context: dict[str, Any]) -> dict[str, str]:
         options["factory"] = "Powered industrial room for unlocked advanced workbenches and short hauling paths"
     if int(storage.get("utilization_percent") or 0) >= 75:
         options["storage"] = f"Storage is {int(storage.get('utilization_percent') or 0)}% full; shelved warehouse increases density"
+    if any((row.get('def') or row.get('def_name')) in {'Shelf', 'ShelfSmall'} for row in context.get('buildings') or []):
+        options.setdefault('storage', 'Choose dry goods, workshop inputs, kitchen pantry, meals, medicine, armory or bulk store; filtered shelves and optional floors, purposeful adjacency')
+    if context.get('heat_lure_site_available') and context.get('actual_power_source'):
+        options['insect_heat_lure'] = 'Revealed dry mountain edge and active power; isolated sealed exhaust chamber. Heat/infestation preference unproved, breach possible; no instant kills or occupied/stocked hot room'
     if not any(room.get("is_prison_cell") for room in rooms):
         options["prison"] = "No valid prison cell; secure beds, table and light for capture/recruitment"
     if any(int(pawn.get("age") or 99) < 13 for pawn in colonists):

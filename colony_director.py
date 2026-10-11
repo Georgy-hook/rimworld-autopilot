@@ -32,6 +32,7 @@ import colony_capabilities as capabilities
 import colony_modules
 import colony_society
 import colony_reasoning
+import colony_decision_context as observations
 import colony_outcomes
 import colony_plan
 import colony_medical_recovery as medical_recovery
@@ -564,9 +565,9 @@ def animal_barn_blueprint(
 
 def weapon_shelves_blueprint(stuff: str) -> dict[str, Any]:
     return blueprint([
-        building("Shelf", 0, 0, stuff=stuff),
-        building("Shelf", 0, 2, stuff=stuff),
-        building("Shelf", 0, 4, stuff=stuff),
+        {**building("Shelf", 0, 0, stuff=stuff), 'storage_profile': 'armory'},
+        {**building("Shelf", 0, 2, stuff=stuff), 'storage_profile': 'armory'},
+        {**building("Shelf", 0, 4, stuff=stuff), 'storage_profile': 'armory'},
     ], 2, 5)
 
 
@@ -3249,6 +3250,19 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
     # window; Laya still weighs their labor cost against immediate food/care.
     if colony_reasoning.recreation_pressure(snapshot):
         related.update({"schedule_recreation", "society_free_time", "build_recreation_pin"})
+    pressure = observations.mood_pressure(snapshot)
+    if pressure:
+        causes = observations.mood_causes(snapshot)
+        # High Joy does not remove hunger, cold, bad bedding or weapon beliefs.
+        # These remain choices, backed by the same native worker/route gates.
+        if causes & {'SleptOnGround', 'SleptInCold', 'SleptInBarracks'}:
+            related.update({'build_basic_beds', 'assign_real_bed', 'production_utilities'})
+        if any('weapon' in str(c).lower() or 'brawler' in str(c).lower() for c in causes):
+            related.add('improve_weapon_loadout')
+        if causes & {'NeedBeauty', 'BrutalOutdoors', 'EnvironmentCold', 'SleptInCold'}:
+            related.update({'resilience_clean', 'resilience_shelter', 'production_utilities'})
+    if observations.neutral_urgency(snapshot):
+        related.update({'resilience_rescue', 'resilience_tend', 'resilience_feed'})
     if (snapshot.get("development") or {}).get("urgent_cooking_projects"):
         related.add("prioritize_construction_project")
     # A newly arrived worker can add to food production only if they can rest
@@ -5217,6 +5231,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         "animal_count": len(colony_animals),
         "biome": (dev.get("plant_catalog") or {}).get("biome"),
         "power_info": dev.get("power_info") or {},
+        "actual_power_source": float((dev.get('power_info') or {}).get('current_power') or 0) - float((dev.get('power_info') or {}).get('total_consumption') or 0) >= 400,
         "sheltered_beds": sheltered_real_bed_count(dev, anchor) or 0,
         "potential_patients": [
             {
@@ -5230,6 +5245,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         "altar_defs": [str(row.get("def_name")) for row in (dev.get("ideology") or {}).get("ritual_buildings", []) if row.get("def_name")],
         "bench_defs": [str(row.get("def_name")) for row in dev.get("building_catalog", []) if row.get("is_work_table") and row.get("available_now")],
     }
+    if architecture_context['actual_power_source'] and any(int(n or 0) >= 350 for d, n in item_counts.items() if d.startswith('Blocks')):
+        terrain = dev.get('terrain') or (bridge.safe_get(client, '/api/v1/map/terrain', snapshot.setdefault('warnings', []), map_id=map_id) if client is not None else {}) or {}
+        architecture_context['heat_lure_site_available'] = storage.site(terrain, anchor, 9, 12,
+            architecture_occupied_cells(dev, map_state), heat_lure=True) is not None
     dev["greenhouse_context"] = architect.greenhouse_context(architecture_context)
     architecture_programs = {
         program: description for program, description in architect.program_options(architecture_context).items()
@@ -6070,7 +6089,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     ) for pawn in neutral_downed
         if int(pawn["id"]) not in active_neutral_rescues
         and not issued_recently(map_state, f"neutral_rescue:{pawn['id']}", tick, retry_ticks=1800)}
-    if neutral_options and neutral_rescuers and neutral_beds:
+    if neutral_options and neutral_rescuers and neutral_beds and (dev.get('resilience') or {}).get('available') is not True:
         dev["neutral_rescue_options"] = neutral_options
         dev["neutral_rescuers"] = {str(pawn["id"]): (
             f"{pawn.get('name')}: health {pawn.get('health')}, current job {pawn.get('current_job')}; "
@@ -6356,7 +6375,7 @@ def defer_discretionary_work_until_shelter(
             "build_income_infrastructure", "configure_income_production",
             "plan_colonist_augmentation", "assign_animal_training", "assign_animal_master",
             "specialists_ritual", "specialists_genetics", "specialists_mech_boss",
-            "production_recipe_batch", "affordances_scanner",
+            "production_recipe_batch", "production_plan", "affordances_scanner",
         }:
             return True
         if action in {"build_killbox", "build_fallback_defense", "build_turret_defense",
@@ -8786,7 +8805,14 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
                    "z": int(anchor["z"]) + dz + (4 * ring if dz >= 0 else -4 * ring)}
         fresh_construction = architect.read_construction(client, map_id)
         terrain = fresh_construction["terrain"]
-        origin = find_terrain_rect(
+        storage_role = selected.get('storage_role')
+        if program == 'storage':
+            desired = storage.adjacent_anchor(storage_role, fresh_construction['buildings'], desired)
+        if program in {'storage', 'insect_heat_lure'}:
+            origin = storage.site(terrain, desired, int(selected['width']), int(selected['height']),
+                architecture_occupied_cells(fresh_construction, map_state), heat_lure=program == 'insect_heat_lure')
+        else:
+            origin = find_terrain_rect(
             terrain,
             desired,
             int(selected["width"]),
@@ -8795,7 +8821,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             radius=16,
             blocked=architecture_occupied_cells(fresh_construction, map_state),
             clearance=1,
-        )
+            )
         if origin is None:
             issued["architecture_site_search"] = tick
             return {"applied": False, "reason": "No dry, unoccupied site with access clearance for this building"}
@@ -9885,23 +9911,29 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["freezer"] = tick
         return {"applied": True, "site": site, "response": response}
     if choice == "create_stockpile":
+        terrain = client.get('/api/v1/map/terrain', map_id=map_id)
+        site = storage.site(terrain, anchor, 6, 6, architecture_occupied_cells(dev, map_state), stockpile=True)
+        if site is None: return {'applied': False, 'reason': 'no_observed_dry_storage_footprint'}
         result = client.post("/api/v1/map/zone/stockpile", body={
             "map_id": map_id,
-            "point_a": position(anchor["x"] - 8, anchor["z"] + 1),
-            "point_b": position(anchor["x"] - 3, anchor["z"] + 6),
+            "point_a": position(site['x'], site['z']),
+            "point_b": position(site['x']+5, site['z']+5),
             "name": "Laya Main Stockpile",
-            "priority": 1,
+            "storage_profile": "dry_goods", "priority": 3,
         })
         issued["stockpile"] = tick
         return result
     if choice == "expand_stockpile":
         expansion_index = int(map_state.get("stockpile_expansions") or 0)
+        terrain = client.get('/api/v1/map/terrain', map_id=map_id)
+        site = storage.site(terrain, anchor, 6, 6, architecture_occupied_cells(dev, map_state), stockpile=True)
+        if site is None: return {'applied': False, 'reason': 'no_observed_dry_storage_footprint'}
         result = client.post("/api/v1/map/zone/stockpile", body={
             "map_id": map_id,
-            "point_a": position(anchor["x"] - 15 - expansion_index * 7, anchor["z"] + 1),
-            "point_b": position(anchor["x"] - 10 - expansion_index * 7, anchor["z"] + 6),
+            "point_a": position(site['x'], site['z']),
+            "point_b": position(site['x']+5, site['z']+5),
             "name": f"Laya Main Stockpile {expansion_index + 2}",
-            "priority": 1,
+            "storage_profile": "dry_goods", "priority": 3,
         })
         map_state["stockpile_expansions"] = expansion_index + 1
         issued["expand_stockpile"] = tick

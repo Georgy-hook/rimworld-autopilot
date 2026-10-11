@@ -11,7 +11,8 @@ import json
 import re
 from typing import Any
 
-from laya_decisions import ask_laya_choice
+from laya_decisions import ChoiceContextOverflow, ask_laya_choice
+import colony_decision_context as observations
 
 
 QUEST_RULE = (
@@ -102,7 +103,9 @@ def text_pages(agent: Any, header: dict[str, Any], field: str, value: Any) -> li
     budget = _budget(agent)
     base = {**header, "field": field, "text": ""}
     if _size(agent, base) + 8 >= budget:
-        raise ValueError("Quest critical colony facts exceed the model budget")
+        error = ChoiceContextOverflow('quest_critical_context_exceeds_budget', budget, _size(agent, base) + 8, {})
+        error.question_id = 'quest_terms:' + field
+        raise error
     while text:
         lo, hi = 0, len(text)
         while lo < hi:
@@ -112,7 +115,9 @@ def text_pages(agent: Any, header: dict[str, Any], field: str, value: Any) -> li
             else:
                 hi = mid - 1
         if lo == 0:
-            raise ValueError("Quest term cannot fit the model budget")
+            error = ChoiceContextOverflow('quest_term_cannot_fit_budget', budget, _size(agent, {**base, 'text': text[:1]}), {})
+            error.question_id = 'quest_terms:' + field
+            raise error
         # Keep words together when possible; neither whitespace nor punctuation
         # is discarded, so concatenating pages recovers the full public field.
         split = text.rfind(" ", 0, lo)
@@ -176,11 +181,20 @@ def offer_fields(offer: dict[str, Any], snapshot: dict[str, Any], strategy: dict
         "beliefs": {key: (development.get("ideology") or {})[key] for key in ("name", "memes", "precepts") if key in (development.get("ideology") or {})}}))
     fields.append(("active_commitments", [{key: q[key] for key in ("id", "quest_def", "name", "description", "state", "accepted_hours_ago") if key in q}
         for q in (snapshot.get("quest_context") or {}).get("active_quests") or [] if q.get("ever_accepted")]))
+    fields.append(("climate_and_shared_fuel", observations.environment(snapshot)))
+    fields.append(("mental_health", [{"pawn_id": p.get("pawn_id"), **observations.mood_person(p)}
+        for p in (development.get("society") or {}).get("people") or [] if not p.get("dead")]))
+    fields.append(("neutral_patients", observations.neutral_patients(snapshot)))
+    fields.append(("active_conditions", (snapshot.get("quest_context") or {}).get("active_conditions")))
     return fields
 
 
-def review_header(agent: Any, snapshot: dict[str, Any], strategy: dict[str, Any]) -> dict[str, Any]:
+def review_header(agent: Any, snapshot: dict[str, Any], strategy: dict[str, Any], offer=None) -> dict[str, Any]:
     header = {"colony": colony_facts(snapshot)}
+    if any(key in (snapshot.get("development") or {}) for key in ("weather", "rooms", "production", "item_counts")):
+        header["supplies_and_climate"] = observations.quest_impact(snapshot, offer)
+    if offer and offer.get('quest_def'):
+        header['quest_type'] = offer['quest_def']
     # The goal persists next to EVERY consequence, rather than appearing only
     # on an earlier page. A long custom doctrine receives its own complete page.
     goal = (strategy.get("doctrine") or {}).get("endgame") or strategy.get("endgame") or strategy.get("chosen_ending_route")
@@ -190,7 +204,7 @@ def review_header(agent: Any, snapshot: dict[str, Any], strategy: dict[str, Any]
 
 
 def review_pages(agent: Any, offer: dict[str, Any], snapshot: dict[str, Any], strategy: dict[str, Any]) -> list[dict[str, Any]]:
-    header = {"quest_id": offer.get("id"), **review_header(agent, snapshot, strategy)}
+    header = {"quest_id": offer.get("id"), **review_header(agent, snapshot, strategy, offer)}
     # Pack complete small fields together. A standalone name or empty list is
     # not a useful independent decision and used to veto otherwise ready offers.
     pages, pending = [], {}
@@ -273,10 +287,12 @@ def review(agent: Any, offer: dict[str, Any], snapshot: dict[str, Any],
                  "defer": "Keep pending; these terms or unknowns need preparation. Offer may expire."})
             reviews.append(raw)
             accepted = accepted and choice == "accept"
-        record = {"reviews": reviews, "all_terms_seen": True, "page_count": len(pages)}
+        record = {"reviews": reviews, "all_terms_seen": True, "page_count": len(pages),
+                  "reviewed_impact": observations.quest_impact(snapshot, offer),
+                  "context_basis": "public terms plus measured colony constraints; choices are not a prose rationale"}
         if not accepted:
             return "defer", record, None
-        header = {"quest_id": offer.get("id"), **review_header(agent, snapshot, strategy)}
+        header = {"quest_id": offer.get("id"), **review_header(agent, snapshot, strategy, offer)}
         bindings = []
         for group in offer.get("reward_groups") or []:
             if group.get("choice_used"):
@@ -301,7 +317,8 @@ def review(agent: Any, offer: dict[str, Any], snapshot: dict[str, Any],
             accepter = int(selected)
         plan = {"quest_id": int(offer["id"]), "offer_version": offer["offer_version"],
                 "reward_choices": bindings, "accepter_pawn_id": accepter,
-                "reviewed_colony": colony_facts(snapshot), "reviewed_roster": roster_ids(snapshot), "reviewed": True}
+                "reviewed_colony": colony_facts(snapshot), "reviewed_roster": roster_ids(snapshot),
+                "reviewed_impact": observations.quest_impact(snapshot), "reviewed": True}
         return "accept", record, plan
     except (KeyError, TypeError, ValueError) as exc:
         # An overflowing or malformed observation must never fall back to the
@@ -332,7 +349,8 @@ def accept_reviewed(client: Any, plan: dict[str, Any] | None, fresh_snapshot: di
     if not plan or plan.get("reviewed") is not True:
         return {"applied": False, "reason": "quest_offer_review_required"}
     if (plan.get("reviewed_roster") != roster_ids(fresh_snapshot)
-            or readiness_changed(plan.get("reviewed_colony") or {}, colony_facts(fresh_snapshot))):
+            or readiness_changed(plan.get("reviewed_colony") or {}, colony_facts(fresh_snapshot))
+            or impact_changed(plan.get("reviewed_impact") or {}, observations.quest_impact(fresh_snapshot))):
         return {"applied": False, "reason": "quest_colony_readiness_changed"}
     offer = client.get("/api/v1/quest/offer", quest_id=plan["quest_id"])
     if not isinstance(offer, dict) or offer.get("id") != plan["quest_id"] or offer.get("offer_version") != plan["offer_version"] or offer.get("can_accept") is not True:
@@ -365,3 +383,17 @@ def readiness_changed(before: dict[str, Any], now: dict[str, Any]) -> bool:
             if old != new: return True
         elif old > 0 and (new <= 0 or new < old * .5): return True
     return False
+
+
+def impact_changed(before, now):
+    """Re-review a lost fuel reserve or materially colder shelter, not every tick."""
+    for key in ('shared_fuel_days', 'wood', 'nutrition'):
+        old, new = before.get(key), now.get(key)
+        if old is None or new is None:
+            if old != new: return True
+        elif old > 0 and (new <= 0 or new < old * .5):
+            return True
+    old, new = before.get('bed_room_min_c'), now.get('bed_room_min_c')
+    if old is None or new is None:
+        return old != new
+    return new < old - 5 and new < 10
