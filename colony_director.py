@@ -9,6 +9,8 @@ import sys
 import time
 import traceback
 from collections import Counter, deque
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +44,33 @@ import colony_sessions
 import colony_shipbuilding
 from colony_actions import ACTION_DESCRIPTIONS, ACTION_LABELS, ACTION_LABELS_EN
 import laya_preferences
-from laya_decisions import NoFeasibleChoice, ask_laya_choice
+from laya_decisions import ChoiceContextOverflow, NoFeasibleChoice, ask_laya_choice
+
+
+def bounded_decision_cycle(function):
+    """Defer an unrepresentable choice without blocking independent cycles.
+
+    Missing clinical facts must not become a fabricated model choice or an
+    action. Report that comparison as unavailable, then let defense, care and
+    development for other actors continue through their ordinary validation.
+    """
+    parameters = signature(function)
+    @wraps(function)
+    def run(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except ChoiceContextOverflow as error:
+            bound = parameters.bind(*args, **kwargs)
+            diagnostic = error.diagnostic()
+            record = {"timestamp": bridge.utc_now(), "mode": "choice-unavailable",
+                      "decision": {"choice": "defer", "selection_unavailable": diagnostic},
+                      "result": {"applied": False, "reason": "complete_decision_context_unavailable",
+                                 "comparison": diagnostic}, "blocks_development": False}
+            log_path = bound.arguments.get("log_path")
+            if log_path is not None:
+                bridge.append_log(log_path, record)
+            return record
+    return run
 
 
 RESEARCH_ROUTE = [
@@ -1999,6 +2027,7 @@ def action_outcome(choice: str, result: Any) -> str:
     return "unknown" if result.get("outcome_unknown") or result.get("applied") is not False else "rejected"
 
 
+@bounded_decision_cycle
 def run_mental_safety_cycle(client: Any, agent: Any, snapshot: dict[str, Any],
                             map_state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """One model protection choice beside, never instead of, raid/care processing."""
@@ -7371,7 +7400,8 @@ def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -
         return _choose_action(agent, snapshot, candidates, selection_trace)
     except NoFeasibleChoice as error:
         return {"choice": selection_trace.get("action", "hold_survival"), "confidence": 0.0,
-                "selection_unavailable": {"question_id": error.question_id, **selection_trace},
+                "selection_unavailable": {"question_id": error.question_id, **selection_trace,
+                    **(error.diagnostic() if isinstance(error, ChoiceContextOverflow) else {})},
                 "raw": {"mode": "selection_unavailable", "answers": {}}}
 
 
@@ -10765,6 +10795,7 @@ def stdout_result(result: Any) -> str:
     return text if len(text) <= 1600 else text[:1560] + "… (console summary truncated)"
 
 
+@bounded_decision_cycle
 def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[str, Any], state_path: Path, log_path: Path, *, expedition: bool = False) -> dict[str, Any]:
     snapshot = collect_development(client, bridge.collect_snapshot(client))
     player_preferences = laya_preferences.load_preferences()
@@ -11221,6 +11252,7 @@ def event_result_acknowledged(response: str, result: Any) -> bool:
     return result.get("applied") is True or result.get("success") is True
 
 
+@bounded_decision_cycle
 def run_event_cycle(
     client: bridge.RimApiClient,
     agent: Any,
@@ -11616,6 +11648,7 @@ def recurring_entity_unresolved(snapshot: dict[str, Any]) -> bool:
                for row in (snapshot.get("combat") or {}).get("hostiles") or [])
 
 
+@bounded_decision_cycle
 def run_downed_raider_cycle(
     client: bridge.RimApiClient,
     agent: Any,
@@ -11790,6 +11823,7 @@ def get_ancient_danger(client: bridge.RimApiClient, map_id: int) -> dict[str, An
         return {}
 
 
+@bounded_decision_cycle
 def run_ancient_danger_cycle(
     client: bridge.RimApiClient,
     agent: Any,
@@ -12516,6 +12550,7 @@ def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
                for row in colonists)
 
 
+@bounded_decision_cycle
 def run_urgent_thermal_cycle(client: bridge.RimApiClient, agent: Any,
                              snapshot: dict[str, Any], map_state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """Compare a native safe thermal relocation before wound-only bedside treatment."""
@@ -12572,6 +12607,7 @@ def run_urgent_thermal_cycle(client: bridge.RimApiClient, agent: Any,
     return record
 
 
+@bounded_decision_cycle
 def run_urgent_nutrition_cycle(client: bridge.RimApiClient, agent: Any,
                              snapshot: dict[str, Any], map_state: dict[str, Any],
                              log_path: Path) -> dict[str, Any] | None:
@@ -12744,6 +12780,7 @@ def publish_post_combat_care_overlay(client: bridge.RimApiClient, snapshot: dict
     )
 
 
+@bounded_decision_cycle
 def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                                snapshot: dict[str, Any], log_path: Path,
                                *, live_threat: bool = False,
@@ -12996,6 +13033,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     return record
 
 
+@bounded_decision_cycle
 def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str, Any],
                      state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """Resolve live multi-choice game dialogues through Laya, never blind-close them."""
@@ -13097,6 +13135,7 @@ def run_window_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     return record
 
 
+@bounded_decision_cycle
 def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str, Any],
                             state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """Finish a real faction-settlement trade session, including a chosen recruit."""
@@ -13200,6 +13239,7 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
     return record
 
 
+@bounded_decision_cycle
 def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str, Any],
                      state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """Handle live joiner/quest choice letters before their opportunity expires."""

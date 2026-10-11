@@ -51,10 +51,12 @@ class OpportunityContextTests(unittest.TestCase):
 
     def test_oversized_required_facts_fail_explicitly_without_truncation(self):
         agent=parameters.ParameterContextTests().agent()
-        with self.assertRaisesRegex(ValueError,'Consequence envelope'):
+        with self.assertRaises(decisions.ChoiceContextOverflow) as caught:
             decisions.ask_laya_choice(agent,{'comparison_facts':{'shared':{'required':'critical '*1000}},
                 'option_effects':{'a':{'benefit':'act'},'defer':{'benefit':'wait'}}},
                 'test','Choose',{'a':'Act','defer':'Wait'})
+        self.assertEqual(caught.exception.question_id,'test')
+        self.assertEqual(caught.exception.reason,'complete_consequence_context_unavailable')
         self.assertEqual(agent.seen,[])
 
     def test_measured_pen_feed_contains_finite_reserve_and_starvation(self):

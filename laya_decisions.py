@@ -27,6 +27,56 @@ class NoFeasibleChoice(ValueError):
         super().__init__(f"No feasible options for {question_id}")
 
 
+class ChoiceContextOverflow(NoFeasibleChoice):
+    """This comparison cannot be shown completely; no action was selected."""
+
+    def __init__(self, reason: str, budget: int, minimum_tokens: int,
+                 options: dict[str, str]):
+        super().__init__("unbound_comparison")
+        self.reason = reason
+        self.budget = budget
+        self.minimum_tokens = minimum_tokens
+        self.options = list(options)
+        self.args = (f"{reason}: minimum {minimum_tokens} tokens, budget {budget}",)
+
+    def diagnostic(self) -> dict[str, Any]:
+        return {"question_id": self.question_id, "reason": self.reason,
+                "state_budget": self.budget, "minimum_state_tokens": self.minimum_tokens,
+                "options": self.options}
+
+
+def _effect_table(agent: Any, visible: dict[str, Any], source: dict[str, Any],
+                  options: dict[str, str], budget: int) -> dict[str, Any]:
+    """Share the effect column names without dropping any protected fact.
+
+    Repeating five JSON keys for every option used to consume the space needed
+    by otherwise bounded clinical observations. Keep the original facts and
+    option identities; only the presentation of ordinary descriptions changes.
+    """
+    fields = ("benefit", "risk", "cost", "inaction", "uncertainty")
+    tokenizer = agent.tok
+    def size(value: Any) -> int:
+        return _token_count(tokenizer, json.dumps(value, ensure_ascii=False, default=str), budget)
+    def clip(text: str, limit: int) -> str:
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _token_count(tokenizer, text[:mid], limit) <= limit:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo]
+    table = {"facts": visible["facts"], "effect_fields": list(fields), "effects": {}}
+    # Restart from the source descriptions rather than keeping the two-token
+    # remnants left by the earlier, more expensive dictionary representation.
+    for limit in range(max(2, (budget - 64) // (len(options) * len(fields))), 1, -1):
+        table["effects"] = {key: [clip(str((source.get(key) or {}).get(field) or "Unknown"), limit)
+                                  for field in fields] for key in options}
+        if size(table) <= budget:
+            return table
+    raise ChoiceContextOverflow("complete_consequence_context_unavailable", budget, size(table), options)
+
+
 def _planning_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
     """The root plan is a complete factual unit, shared by every narrowing call.
 
@@ -66,7 +116,7 @@ def _planning_state(agent: Any, state: dict[str, Any], options: dict[str, str]) 
             if isinstance(text, dict) else clip(text, limit)) for key, text in descriptions.items()}
         if size(visible) <= budget:
             return visible
-    raise ValueError("Complete root planning facts exceed the decision window")
+    raise ChoiceContextOverflow("complete_planning_context_unavailable", budget, size(visible), options)
 
 
 def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
@@ -80,7 +130,7 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
     config = getattr(agent, "cfg", {}) or {}
     budget = int(config.get("max_len", 512)) - int(config.get("head_max_len", 192)) - 8
     if budget < 96:
-        raise ValueError("Laya state budget is too small for consequence comparisons")
+        raise ChoiceContextOverflow("consequence_window_too_small", budget, 96, options)
     fields = ("benefit", "risk", "cost", "inaction", "uncertainty")
     source = state.get("option_effects") or {}
     facts = state.get("decision_facts") or state.get("choice_context") or {}
@@ -157,7 +207,7 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
                     row[field] = clip(row[field], limit)
         elif protected_facts and "last_outcome" in visible:
             visible.pop("last_outcome")
-        elif "development" in visible["facts"]:
+        elif protected_facts and "development" in visible["facts"]:
             # Clinical and quest obligations take precedence in a crowded
             # emergency. Ordinary root choices retain the complete small unit
             # instead of losing all labor/recruitment/defense facts to care.
@@ -173,7 +223,7 @@ def _consequence_state(agent: Any, state: dict[str, Any], options: dict[str, str
         elif visible["facts"] and not protected_facts:
             visible["facts"] = clip(visible["facts"], max(0, size(visible["facts"]) - 4))
         else:
-            raise ValueError("Consequence envelope exceeds Laya state budget")
+            return _effect_table(agent, visible, source, options, budget)
     return visible
 
 
@@ -252,7 +302,7 @@ def _detailed_state(agent: Any, state: dict[str, Any], options: dict[str, str]) 
         container, key = max(entries, key=lambda pair: len(pair[0][pair[1]]))
         text = container[key]
         if not text:
-            raise ValueError("Detailed comparison facts and option identifiers exceed Laya state budget")
+            raise ChoiceContextOverflow("complete_detailed_context_unavailable", budget, size(visible), options)
         container[key] = text[:max(0, len(text) * 4 // 5)]
     return visible
 
@@ -287,9 +337,13 @@ def ask_laya_choice(agent: Any, state: dict[str, Any], question_id: str,
         # The decision head has a small option-description budget. Medical,
         # crop and equipment comparisons reserve space for both alternatives
         # before the broader colony context can be truncated.
-        visible = (_planning_state(agent, state, chunk) if planning else
-                   _consequence_state(agent, state, chunk) if consequences else
-                   _detailed_state(agent, state, chunk) if detailed else state)
+        try:
+            visible = (_planning_state(agent, state, chunk) if planning else
+                       _consequence_state(agent, state, chunk) if consequences else
+                       _detailed_state(agent, state, chunk) if detailed else state)
+        except ChoiceContextOverflow as error:
+            error.question_id = stage_id
+            raise
         result = agent.predict(visible, {stage_id: question})
         result["question"] = {"id": stage_id, **question}
         result["visible_state"] = visible
