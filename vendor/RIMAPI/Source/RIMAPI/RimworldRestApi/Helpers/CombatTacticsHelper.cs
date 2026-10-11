@@ -30,13 +30,15 @@ namespace RIMAPI.Helpers
                 if (map == null)
                     return ApiResult<CombatTacticResponseDto>.Fail($"Map {request.MapId} not found.");
                 string tactic = (request.Tactic ?? "").Trim().ToLowerInvariant();
+                if (tactic == "caregiver_retreat") return ApplyCareRetreat(map, request);
                 if(new[]{"emp_control","smoke_advance","mortar_counterbattery","mortar_reload","attack_structure"}.Contains(tactic))return ApiResult<CombatTacticResponseDto>.Ok(CombatNativeHelper.Apply(map,request));
                 if (tactic == "stand_down")
                 {
-                    if (map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                    if (map.mapPawns.AllPawnsSpawned.Any(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         || map.listerBuildings.allBuildingsNonColonist.Any(CombatNativeHelper.ActiveStructure))
                         return ApiResult<CombatTacticResponseDto>.Fail("Hostiles remain; stand down no longer feasible.");
-                    foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.drafter?.Drafted == true))
+                    foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.drafter?.Drafted == true
+                        && !CombatNativeHelper.HasClinicalCareJob(p) && !CombatNativeHelper.HasCareRetreat(p)))
                         pawn.drafter.Drafted = false;
                     return ApiResult<CombatTacticResponseDto>.Ok(new CombatTacticResponseDto { Tactic = tactic });
                 }
@@ -51,9 +53,9 @@ namespace RIMAPI.Helpers
                 if (fighters.Count == 0)
                     return ApiResult<CombatTacticResponseDto>.Fail("No selected healthy fighter is available on this map.");
                 Pawn target = request.TargetPawnId.HasValue
-                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                    ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                     : map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
                 if (target != null && MentalSafetyHelper.Allied(target) && !MentalSafetyHelper.ActiveAlliedAggressor(target))
@@ -111,7 +113,7 @@ namespace RIMAPI.Helpers
                 if (tactic == "melee_hold_line")
                 {
                     Pawn closeThreat = map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .OrderBy(p => fighters.Min(f => f.Position.DistanceToSquared(p.Position)))
                         .FirstOrDefault();
                     bool threatened = closeThreat != null
@@ -157,7 +159,7 @@ namespace RIMAPI.Helpers
                     foreach (Pawn pawn in fighters)
                     {
                         Pawn nearest = map.mapPawns.AllPawnsSpawned
-                            .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                            .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                             .OrderBy(p => pawn.Position.DistanceToSquared(p.Position))
                             .FirstOrDefault();
                         if (nearest == null) continue;
@@ -297,7 +299,7 @@ namespace RIMAPI.Helpers
                             && p.drafter?.Drafted == true && IsRanged(p))
                         .ToList();
                     List<Pawn> threats = map.mapPawns.AllPawnsSpawned
-                        .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                        .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                         .ToList();
                     foreach (Pawn pawn in fighters)
                     {
@@ -492,7 +494,7 @@ namespace RIMAPI.Helpers
                         Pawn pawn = ordered[i];
                         Pawn nearestThreat = (tactic == "backstep_fire" || tactic == "withdraw_and_regroup")
                             ? map.mapPawns.AllPawnsSpawned
-                                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer))
+                                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                                 .OrderBy(p => pawn.Position.DistanceToSquared(p.Position))
                                 .FirstOrDefault() ?? target
                             : target;
@@ -509,6 +511,8 @@ namespace RIMAPI.Helpers
                             float distance = (float)Math.Sqrt(dx * dx + dz * dz);
                             if (distance <= range - 2f && CanShootTarget(pawn, pawn.Position, target))
                             {
+                                if (pawn.CurJobDef == JobDefOf.AttackStatic && pawn.CurJob.targetA.Thing == target)
+                                { result.AttackingPawnIds.Add(pawn.thingIDNumber); continue; }
                                 Job shot = JobMaker.MakeJob(JobDefOf.AttackStatic, target);
                                 shot.playerForced = true;
                                 if (MentalSafetyHelper.TakeDefenceOrder(pawn,shot))
@@ -714,14 +718,59 @@ namespace RIMAPI.Helpers
             }
         }
 
+        private static ApiResult<CombatTacticResponseDto> ApplyCareRetreat(Map map, CombatTacticRequestDto request)
+        {
+            var result = new CombatTacticResponseDto { Tactic = "caregiver_retreat" };
+            if (request.FighterIds == null || request.FighterIds.Count != 1)
+                return ApiResult<CombatTacticResponseDto>.Fail("Care retreat requires exactly one named caregiver.");
+            Pawn actor = MapHelper.GetThingOnMapById(map.uniqueID, request.FighterIds[0]) as Pawn;
+            Thing threat = request.TargetPawnId.HasValue
+                ? MapHelper.GetThingOnMapById(map.uniqueID, request.TargetPawnId.Value) : null;
+            if (actor == null || !actor.IsColonistPlayerControlled || actor.Dead || actor.Downed || actor.InMentalState
+                || !CombatNativeHelper.HasClinicalCareJob(actor) || actor.CurJobDef.defName != request.ExpectedCurrentJob
+                || !(CombatNativeHelper.CareTarget(actor) is Pawn patient)
+                || patient.thingIDNumber != request.ExpectedCarePatientId || actor.carryTracker?.CarriedThing is Pawn
+                || !CombatNativeHelper.ImmediateCareThreat(actor, threat))
+            {
+                result.Notes.Add("Exact care or immediate threat changed; current care retained.");
+                return ApiResult<CombatTacticResponseDto>.Ok(result);
+            }
+            int attempts = 0;
+            IntVec3 safe;
+            int dx = Math.Sign(actor.Position.x - threat.Position.x);
+            int dz = Math.Sign(actor.Position.z - threat.Position.z);
+            if (dx == 0 && dz == 0) dx = 1;
+            IntVec3 desired = new IntVec3(actor.Position.x + dx * 8, 0, actor.Position.z + dz * 8);
+            if (!TryFindCoveredRetreatCell(actor, threat, ref attempts, out safe)
+                && !TryFindTrapFreeCell(actor, desired,
+                    threat.Position, "civilian_retreat", out safe, 6f))
+            {
+                result.Notes.Add("No checked escape route; current care retained.");
+                return ApiResult<CombatTacticResponseDto>.Ok(result);
+            }
+            // A normal forced Goto can retreat without toggling the draft and
+            // destroying care before a replacement job has been accepted.
+            Job move = JobMaker.MakeJob(JobDefOf.Goto, safe);
+            move.playerForced = true;
+            if (actor.jobs.TryTakeOrderedJob(move))
+            {
+                CombatNativeHelper.RememberCareRetreat(actor, move);
+                result.PositionedPawnIds.Add(actor.thingIDNumber);
+            }
+            result.TargetPawnId = threat.thingIDNumber;
+            result.Notes.Add("Only the named caregiver's care may be suspended; escape completion unverified.");
+            return ApiResult<CombatTacticResponseDto>.Ok(result);
+        }
+
         private static bool IsRanged(Pawn pawn)
         {
             return pawn?.equipment?.Primary?.def?.IsRangedWeapon ?? false;
         }
 
-        private static bool CanShootTarget(Pawn pawn, IntVec3 from, Pawn target)
+        private static bool CanShootTarget(Pawn pawn, IntVec3 from, Thing target)
         {
-            if (!IsRanged(pawn) || target == null || target.Dead || target.Downed)
+            if (!IsRanged(pawn) || target == null || target.Destroyed
+                || (target is Pawn victim && (victim.Dead || victim.Downed)))
                 return false;
             Verb verb = pawn.equipment.Primary.TryGetComp<CompEquippable>()?.PrimaryVerb;
             return verb != null && verb.CanHitTargetFrom(from, target);
@@ -855,17 +904,21 @@ namespace RIMAPI.Helpers
         private static bool RetreatRouteSafe(Pawn pawn, PawnPath path)
         {
             List<Pawn> threats = pawn.Map.mapPawns.AllPawnsSpawned
-                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToList();
+                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)).ToList();
+            var turrets = pawn.Map.listerBuildings.allBuildingsNonColonist.OfType<Building_Turret>()
+                .Where(CombatNativeHelper.ActiveStructure).ToList();
             // Allow a first step out of existing contact and bends in a narrow
             // escape route. Never route through a live threat or friendly trap.
             return path.Found && path.NodesReversed.All(node => !HasFriendlyTrap(node, pawn.Map)
                 && !node.ContainsStaticFire(pawn.Map)
                 && threats.All(threat => node != threat.Position && node.DistanceToSquared(threat.Position)
                     >= (node.DistanceToSquared(pawn.Position) <= 4
-                        ? Math.Min(4, pawn.Position.DistanceToSquared(threat.Position)) : 4)));
+                        ? Math.Min(4, pawn.Position.DistanceToSquared(threat.Position)) : 4))
+                && turrets.All(turret => !turret.AttackVerb.CanHitTargetFrom(turret.Position, node)
+                    || node.DistanceToSquared(turret.Position) >= pawn.Position.DistanceToSquared(turret.Position)));
         }
 
-        private static bool TryFindCoveredRetreatCell(Pawn pawn, Pawn threat, ref int pathAttempts, out IntVec3 result)
+        private static bool TryFindCoveredRetreatCell(Pawn pawn, Thing threat, ref int pathAttempts, out IntVec3 result)
         {
             Map map = pawn.Map;
             List<Pawn> covering = map.mapPawns.FreeColonistsSpawned
@@ -941,7 +994,7 @@ namespace RIMAPI.Helpers
             Map map = pawn.Map;
             bool melee = tactic == "melee_block" || tactic == "door_defense" || tactic == "rush_ranged" || tactic == "infestation_choke";
             List<Pawn> nearbyHostiles = melee ? null : map.mapPawns.AllPawnsSpawned
-                .Where(p => !p.Dead && !p.Downed && p.HostileTo(Faction.OfPlayer)).ToList();
+                .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)).ToList();
             IEnumerable<IntVec3> candidates = GenRadial.RadialCellsAround(desired, 7f, true)
                 .Where(cell => cell.InBounds(map) && cell.Standable(map) && !cell.Fogged(map)
                     && !cell.ContainsStaticFire(map) && !HasFriendlyTrap(cell, map)

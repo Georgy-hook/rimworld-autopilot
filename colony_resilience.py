@@ -278,6 +278,15 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             continue
         if (row.get('kind'), row.get('target_id')) in active or (row.get('kind') == 'dispose_corpse' and row.get('target_id') in active_hauls):
             continue
+        if row.get('kind') == 'rest':
+            patient = next((p for p in context.get('patients') or []
+                            if p.get('pawn_id') == row.get('target_id')), {})
+            if (patient.get('downed') is True and patient.get('in_bed') is True
+                    and patient.get('current_job') == 'LayDown'):
+                # Priorities cannot change an incapacitated patient's current
+                # bed-rest job. Keep their feeding, treatment and rescue choices;
+                # reassess rest priority when they can choose ordinary work.
+                continue
         subject = action + ':' + _subject(row)
         deferred = (memory.get('deferred') or {}).get(subject, {})
         signature = _defer_state(subject_rows[subject], context)
@@ -294,6 +303,19 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
     return [a for a, rows in options.items() if rows]
 
 def assess(action: str, snapshot: dict) -> dict:
+    if action == 'resilience_rest':
+        context = snapshot.get('development', {}).get('resilience', {})
+        plans = (context.get('plans') or {}).get(action) or {}
+        targets = {row.get('target_id') for row in plans.values()}
+        patients = [p for p in context.get('patients') or [] if p.get('pawn_id') in targets]
+        already_resting = bool(patients) and all(p.get('in_bed') is True for p in patients)
+        return {'benefit': 'Bed-rest priority only; no feeding, tending or cure of malnutrition. '
+                + ('Available patients are already in bed; their current rest continues.' if already_resting
+                   else 'Permits an eligible patient to choose bed rest through ordinary work.'),
+                'cost': 'Changes only the chosen patient\'s priority; other workers remain available.',
+                'risk': 'Food and active treatment still need separate workers and resources.',
+                'inaction': 'Existing bed-rest jobs continue; a priority change is not patient recovery.',
+                'uncertainty': 'Actual arrival, nutrition and clinical progress require later observations.'}
     return {'benefit': DESCRIPTIONS[action], 'cost': 'Worker time, medicine or food; other work waits.',
             'risk': 'Conditions and reservations may change. A scheduled job does not prove recovery. Prevention does not treat existing infections.',
             'inaction': 'Autonomous work continues; illness, hunger or contamination may persist.',
@@ -351,6 +373,19 @@ def nutrition_defer_effects(context: dict) -> dict:
             'uncertainty': 'Current job may help another patient; it does not guarantee food reaches this patient'}
 
 
+def thermal_rescue_effects(patient: dict, row: dict) -> dict:
+    illness = ','.join(f"{h.get('def_name')}={h.get('severity')}" for h in patient.get('conditions') or []
+                      if h.get('def_name') in {'Hypothermia', 'Heatstroke'})
+    danger = 'life-threatening ' if any(h.get('life_threatening') for h in patient.get('conditions') or []
+                                      if h.get('def_name') in {'Hypothermia', 'Heatstroke'}) else ''
+    replacement = row.get('care_yield_reason') == 'nonbleeding_tend_to_thermal_rescue_same_patient'
+    return {'benefit': f"Carry the patient from {row.get('current_temperature')}C into a {row.get('destination_temperature')}C indoor bed to reduce {danger}{illness}",
+            'risk': 'Temperature exposure continues during the trip; the safe bed and route are checked again before departure',
+            'cost': f"Caregiver {row.get('worker_id')} travels {row.get('travel_distance')} cells; " + ('same nonbleeding patient switches from frostbite tending to rescue, other caregivers keep working' if replacement else 'this idle helper becomes occupied'),
+            'inaction': 'Tending frostbite does not remove cold. Delaying shelter leaves the patient exposed to potentially lethal temperature',
+            'uncertainty': 'Native safe bed and route verified; assignment is not arrival, warming, cooling or recovery'}
+
+
 def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, dict]:
     context = snapshot.get('development', {}).get('resilience', {})
     plans = context.get('plans', {}).get(action) or {}
@@ -363,6 +398,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         return str(row['worker_id'] if row['kind'] == 'prevent' else row['target_id'])
     def effects(row: dict) -> dict:
         patient = people.get(subject(row), {})
+        if row.get('thermal_rescue') is True:
+            return thermal_rescue_effects(patient, row)
         if row['kind'] in ('feed', 'rescue') and nutrition_facts(patient)['malnutrition'] is not None:
             return nutrition_effects(patient, row)
         conditions = sorted((h for h in patient.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), _immunity_race(h) is True, bool(h.get('tendable_now'))), reverse=True)
@@ -407,7 +444,8 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
                 'inaction': consequence,
                 'uncertainty': 'Negative not clear; matching sample analysis needed; infected doctor can lie' if row['kind'] in ('inspect', 'interrogate', 'interrogation_policy') else f"immunity/day={h.get('immunity_per_day')} severity/day={h.get('severity_modifiers_per_day')}; job not recovery"}
     defer = {'benefit': 'Preserve current jobs/resources', 'risk': 'Illness/exposure/collapse can persist', 'cost': 'No new dose/food/labor', 'inaction': 'Autonomous work continues', 'uncertainty': 'No recovery guarantee'}
-    nutritional = action in ('resilience_feed', 'resilience_rescue') and any(nutrition_facts(people.get(subject(row), {}))['malnutrition'] is not None for row in plans.values())
+    thermal = any(row.get('thermal_rescue') is True for row in plans.values())
+    nutritional = not thermal and action in ('resilience_feed', 'resilience_rescue') and any(nutrition_facts(people.get(subject(row), {}))['malnutrition'] is not None for row in plans.values())
     if nutritional:
         defer = nutrition_defer_effects(context)
     targets = {}
@@ -418,12 +456,30 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         targets.setdefault(target, f"{people.get(target, {}).get('name', row.get('target', target))}; {target_effects[target]['benefit']}")
     targets['defer'] = 'Keep current work; dependent patients remain unfed and starvation can kill' if nutritional else 'Preserve current jobs/resources; hazards may persist.'
     target_effects['defer'] = defer
-    instructions = 'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.'
-    target, first = ask_laya_choice(agent, {'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
+    instructions = ('Choose normal rescue out of lethal temperature or defer. Tending frostbite does not warm or cool a patient. Fresh native bed and route checks protect ongoing bleeding, infection, feeding and carrying.' if thermal else
+        'Choose a patient to feed or carry to a bed before starvation becomes lethal. Compare malnutrition, remaining margin and travel; keeping wound care supplies no calories. Defer if current work is more urgent.' if nutritional else 'Choose a live patient/device/support, or defer. Compare exact illness and exposure.')
+    def neutral_facts(patient):
+        facts = {k:patient.get(k) for k in ('neutral_arrival', 'downed', 'bleeding_total', 'bleedout_ticks',
+            'temperature', 'in_bed', 'current_bed_id')}
+        races = [{k:h.get(k) for k in ('def_name', 'severity', 'immunity', 'treatment_ticks_left')}
+                 for h in patient.get('conditions') or [] if h.get('visible', True) and _immunity_race(h) is True]
+        if races:
+            facts['immunity_races'] = races
+        return facts
+    has_neutral = any(p.get('neutral_arrival') for p in people.values())
+    # A neutral target must not erase the other compared colony patients.
+    neutral = {pid:neutral_facts(p) for pid,p in people.items()} if has_neutral else {}
+    comparison = {'comparison_facts': {'shared': {'medicine': snapshot.get('map',{}).get('resources',{}).get('medicine'),
+        'food': snapshot.get('map',{}).get('resources',{}).get('nutrition'),
+        'colony_downed': sum(bool(p.get('downed')) for p in snapshot.get('colonists') or [])}, 'options':neutral}} if neutral else {}
+    if neutral:
+        instructions += ' A neutral pod arrival is not a quest accepted by the model or a guaranteed recruit. Compare bleeding deadline and timely tending with carrying to warmth.'
+    target, first = ask_laya_choice(agent, {**comparison, 'decision_facts': {'action': action, 'live_targets': len(targets)-1}, 'option_effects': target_effects}, action + '_patient', instructions, targets, detailed=True)
     if target == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if subject(row) == target}
-    choices = {k: (f"{row.get('worker', row['worker_id'])}; {nutrition_description(people.get(subject(row), {}))}; {row['kind']}" if row['kind'] in ('feed', 'rescue') else
+    choices = {k: (thermal_rescue_effects(people.get(subject(row), {}), row)['benefit'] if row.get('thermal_rescue') is True else
+                   f"{row.get('worker', row['worker_id'])}; {nutrition_description(people.get(subject(row), {}))}; {row['kind']}" if row['kind'] in ('feed', 'rescue') else
                    f"{row.get('worker', row['worker_id'])}; {row.get('giver', row['kind'])}; Medicine {row.get('medicine_skill')}") for k, row in plans.items()}
     option_effects = {k: effects(row) for k, row in plans.items()}
     for key, row in plans.items():
@@ -436,7 +492,13 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     facts = {'target': target, 'evidence': target_effects[target]['benefit'], 'exposure': target_effects[target]['risk']}
     if action in ('resilience_feed', 'resilience_rescue'):
         facts = {'nutrition': nutrition_facts(people.get(target, {})), **facts}
-    key, raw = ask_laya_choice(agent, {'decision_facts': facts, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
+    if target in neutral:
+        comparison = {'comparison_facts': {'shared': {'patient':neutral[target]}, 'options': {
+            k:{f:row.get(f) for f in ('worker_id','medicine_skill','medical_tend_quality','travel_distance','bed_id','destination_temperature')}
+            for k,row in plans.items()}}}
+    else:
+        comparison = {}
+    key, raw = ask_laya_choice(agent, {**comparison, 'decision_facts': facts, 'option_effects': option_effects}, action, DESCRIPTIONS[action], choices, detailed=True)
     raw['patient_choice'] = first
     return (defer_selection(plans) if key == 'defer' else order_fields(plans[key])), raw
 

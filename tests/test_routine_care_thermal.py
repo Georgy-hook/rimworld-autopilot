@@ -38,6 +38,7 @@ class RoutineCareThermalReplay(unittest.TestCase):
             if endpoint.endswith('/rooms'):return {'rooms':copy.deepcopy(s['development']['rooms'])}
             if endpoint.endswith('/projects'):return {'projects':copy.deepcopy(s['development']['construction_projects'])}
             if endpoint.endswith('/buildings'):return []
+            if endpoint.endswith('/things'):return []
             if endpoint.endswith('/detailed'):return copy.deepcopy(s['colonists'])
             raise AssertionError(endpoint)
         def post(endpoint,**kw):

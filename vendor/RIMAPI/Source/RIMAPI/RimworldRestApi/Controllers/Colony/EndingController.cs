@@ -8,6 +8,7 @@ using HarmonyLib;
 using RIMAPI.Core;
 using RIMAPI.Helpers;
 using RIMAPI.Http;
+using RIMAPI.Models;
 using RimWorld;
 using Verse;
 
@@ -119,7 +120,8 @@ namespace RIMAPI.Controllers
                 .Where(t => t.Spawned && (t is Building_ArchonexusCore || t is Building_VoidMonolith
                     || t.def.defName.Contains("VoidStructure") || t.def.defName == "VoidNode"
                     || t.def.defName.Contains("Mechhive") || t.TryGetComp<CompCerebrexCore>() != null)).ToArray());
-            var questSnapshot = EndingReadBoundary.Capture(() => Find.QuestManager.QuestsListForReading).Where(EndingQuest).ToArray();
+            var questSnapshot = EndingReadBoundary.Capture(() => Find.QuestManager.QuestsListForReading)
+                .Where(q => !q.hidden && !q.hiddenInUI && EndingQuest(q)).ToArray();
             var allAccepters = pawnSnapshots.Values.SelectMany(p => p).ToArray();
             var quests = EndingReadBoundary.Project(questSnapshot, q => {
                 var parts = EndingReadBoundary.Capture(() => q.PartsListForReading);
@@ -130,6 +132,7 @@ namespace RIMAPI.Controllers
                     state = q.State.ToString(), expires_in_ticks = q.TicksUntilExpiry,
                     requires_accepter = q.RequiresAccepter, acceptance = acceptance.Reason,
                     can_accept = q.State == QuestState.NotYetAccepted && acceptance.Accepted,
+                    quest_offer = GameEventAutomationHelper.ToQuestDto(q),
                     accepter_ids = allAccepters.Where(p => QuestUtility.CanPawnAcceptQuest(p, q)).Select(p => p.thingIDNumber).ToArray(),
                     targets = targets.Select(t => t.ToString()).ToArray(), part_types = parts.Select(p => p.GetType().Name).Distinct().ToArray()
                 };
@@ -183,7 +186,16 @@ namespace RIMAPI.Controllers
                 !QuestUtility.CanAcceptQuest(quest).Accepted || (quest.RequiresAccepter && (pawn == null || !QuestUtility.CanPawnAcceptQuest(pawn, quest)))) {
                 await context.SendJsonResponse(ApiResult<string>.Fail("Ending quest conditions changed or unconfirmed")); return;
             }
-            quest.Accept(quest.RequiresAccepter ? pawn : null);
+            // Same review/version/reward guard as ordinary quests; ending routes
+            // cannot bypass it through a second acceptance endpoint.
+            var body = await context.Request.ReadBodyAsync<QuestActionRequestDto>();
+            if (body == null || body.QuestId != id || body.AccepterPawnId.GetValueOrDefault() != pawnId) {
+                await context.SendJsonResponse(ApiResult<string>.Fail("quest_offer_review_required")); return;
+            }
+            var result = GameEventAutomationHelper.AcceptQuest(body);
+            if (!result.Success) {
+                await context.SendJsonResponse(ApiResult<string>.Fail(string.Join("; ", result.Errors))); return;
+            }
             await context.SendJsonResponse(ApiResult<string>.Ok("ending_quest_accepted"));
         }
         [Post("/api/v1/colony/endings/job")]

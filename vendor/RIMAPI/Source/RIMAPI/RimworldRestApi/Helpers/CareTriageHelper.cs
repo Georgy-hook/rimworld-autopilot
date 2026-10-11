@@ -36,8 +36,21 @@ namespace RIMAPI.Helpers
             // In a complete native hediff set absence of BloodLoss is known zero.
             return Math.Max(0f, 1f - (blood?.Severity ?? 0f)) * 60000f / rate;
         }
-        public static bool DiseaseCareProtected(Pawn p) => p.health.hediffSet.hediffs.Any(h => h.Visible
+        public static bool ThermalTransferBeneficial(bool cold, bool hot, float source, float destination, float comfortableMin, float comfortableMax)
+            => destination >= comfortableMin && destination <= comfortableMax
+                && (cold && source < comfortableMin && destination - source >= 5f
+                    || hot && source > comfortableMax && source - destination >= 5f);
+        public static bool ThermalRescueNeeded(Pawn p) => p != null && p.Spawned && !p.Dead && p.Downed
+            && p.health.hediffSet.hediffs.Any(h => h.Visible && h.Severity >= .1f
+                && (h.def == HediffDefOf.Hypothermia && p.Position.GetTemperature(p.Map) < p.GetStatValue(StatDefOf.ComfyTemperatureMin)
+                    || h.def == HediffDefOf.Heatstroke && p.Position.GetTemperature(p.Map) > p.GetStatValue(StatDefOf.ComfyTemperatureMax)));
+        public static bool ThermalBedBeneficial(Pawn p, Building_Bed bed) => bed != null && bed.Spawned && bed.Map == p.Map
+            && bed.OccupiedRect().All(c => c.Roofed(p.Map))
+            && ThermalTransferBeneficial(p.health.hediffSet.HasHediff(HediffDefOf.Hypothermia), p.health.hediffSet.HasHediff(HediffDefOf.Heatstroke),
+                p.Position.GetTemperature(p.Map), bed.Position.GetTemperature(p.Map), p.GetStatValue(StatDefOf.ComfyTemperatureMin), p.GetStatValue(StatDefOf.ComfyTemperatureMax));
+        public static bool DiseaseCareProtected(Pawn p, bool thermalTransfer = false) => p.health.hediffSet.hediffs.Any(h => h.Visible
             && h.def != HediffDefOf.BloodLoss && h.def != HediffDefOf.Malnutrition
+            && !(thermalTransfer && (h.def == HediffDefOf.Hypothermia || h.def == HediffDefOf.Heatstroke || h.def.defName == "Frostbite"))
             && (PawnHelper.CanDevelopImmunity(h) && h.TryGetComp<HediffComp_Immunizable>().Immunity < 1f
                 || h.IsCurrentlyLifeThreatening || h.TendableNow() && (h.def.lethalSeverity > 0f || h.def.defName.IndexOf("infection", StringComparison.OrdinalIgnoreCase) >= 0)));
         public static bool CanYield(Pawn worker, Pawn next, string kind, string expectedJob, int? expectedPatient, out string reason)
@@ -46,12 +59,22 @@ namespace RIMAPI.Helpers
             if ((kind != "feed" && kind != "rescue") || worker == null || next == null || worker == next
                 || !worker.IsColonistPlayerControlled || !worker.Spawned || worker.Dead || worker.Downed || worker.Drafted || worker.InMentalState
                 || (worker.CurJob?.def.forceCompleteBeforeNextJob ?? false) || !worker.jobs.IsCurrentJobPlayerInterruptible()
-                || !next.IsColonistPlayerControlled || !next.Spawned || next.Dead || next.Map != worker.Map || worker.carryTracker?.CarriedThing != null
+                || !(next.IsColonistPlayerControlled || next.RaceProps.Animal && next.Faction == Faction.OfPlayer)
+                || !next.Spawned || next.Dead || next.Map != worker.Map || worker.carryTracker?.CarriedThing != null
                 || QueuedCare(worker) || expectedJob == null || !expectedPatient.HasValue || worker.CurJobDef?.defName != expectedJob) return false;
             Job job = worker.CurJob;
             if (job == null || (job.def != JobDefOf.TendPatient && job.def != JobDefOf.Rescue)
                 || !(job.targetA.Thing is Pawn old) || old.thingIDNumber != expectedPatient.Value || old.Dead || !old.Spawned || old.Map != worker.Map
-                || DiseaseCareProtected(old) || DiseaseCareProtected(worker)) return false;
+                || DiseaseCareProtected(worker)) return false;
+            // Exact same-patient relocation treats the exposure that tending cannot remove.
+            // The normal workgiver, usable bed and complete route are rechecked by NativeJob.
+            if (kind == "rescue" && job.def == JobDefOf.TendPatient && old == next && ThermalRescueNeeded(next)
+                && old.health.hediffSet.BleedRateTotal == 0f && worker.health.hediffSet.BleedRateTotal == 0f
+                && !DiseaseCareProtected(old, thermalTransfer:true))
+            { reason = "nonbleeding_tend_to_thermal_rescue_same_patient"; return true; }
+            // Animal care may yield only for the exact exposed patient above.
+            if (!next.IsColonistPlayerControlled) return false;
+            if (DiseaseCareProtected(old)) return false;
             Hediff mal = Malnutrition(next);
             float? urgent = StarvationTicks(next), oldStarvation = StarvationTicks(old), bleed = BleedoutTicks(old);
             if (mal == null || next.needs?.food == null || !next.needs.food.Starving || !(mal.IsCurrentlyLifeThreatening || mal.Severity >= .75f)
@@ -70,7 +93,7 @@ namespace RIMAPI.Helpers
             {
                 if (!path.Found) return false;
                 // Only observed threats. Both approach and food/carry leg are checked on the native path.
-                var enemies=map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && p.HostileTo(actor) && !p.Position.Fogged(map)).ToArray();
+                var enemies=map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && (p.HostileTo(actor) || CombatNativeHelper.ActivePredation(p)) && !p.Position.Fogged(map)).ToArray();
                 var turrets=map.listerBuildings.allBuildingsNonColonist.Where(b=>CombatNativeHelper.ActiveStructure(b) && !b.Position.Fogged(map)).ToArray();
                 foreach (IntVec3 c in path.NodesReversed)
                     if (c.Fogged(map) || c.ContainsStaticFire(map)

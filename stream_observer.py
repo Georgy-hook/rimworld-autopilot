@@ -336,12 +336,13 @@ class ObserverPlanner:
                         events: list[dict[str, Any]], now: float) -> None:
         alive_ids = {_id(pawn) for pawn in colonists}
         event_ids = {int(event.get("id") or 0) for event in events}
+        queued_ids = {int(event.get("id") or 0) for event in self.death_queue}
         for pawn_id, previous in self.known.items():
             if pawn_id in alive_ids:
                 self.missing_since.pop(pawn_id, None)
                 continue
             self.missing_since.setdefault(pawn_id, now)
-            if pawn_id in self.shown_deaths or pawn_id in event_ids:
+            if pawn_id in self.shown_deaths or pawn_id in event_ids or pawn_id in queued_ids:
                 continue
             # A pawn can leave the map without dying. Require a matching corpse.
             name = str(previous.get("name") or "").lower()
@@ -399,6 +400,7 @@ class ObserverPlanner:
 
         if self.shot and self.shot.kind == "death" and now - self.shot.started < DEATH_SECONDS:
             return actions
+        self.death_queue = [event for event in self.death_queue if int(event.get("id") or 0) not in self.shown_deaths]
         if self.death_queue:
             event = self.death_queue.pop(0)
             self.shown_deaths.add(int(event["id"]))

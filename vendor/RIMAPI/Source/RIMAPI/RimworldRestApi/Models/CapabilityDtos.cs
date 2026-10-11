@@ -26,6 +26,11 @@ namespace RIMAPI.Models
         public float HarvestYield { get; set; }
         public float ProductNutrition { get; set; }
         public bool HumanEdibleProduct { get; set; }
+        public List<int> CompatibleProductAnimalIds { get; set; } = new List<int>();
+        public List<int> GrazingAnimalIds { get; set; } = new List<int>();
+        public float LivePlantNutrition { get; set; }
+        public float WorkToSow { get; set; }
+        public float WorkToHarvest { get; set; }
         public float GrowDays { get; set; }
         public float CalendarDaysAtNormalFertility { get; set; }
         public float FertilityMin { get; set; }
@@ -58,6 +63,7 @@ namespace RIMAPI.Models
         public bool Powered { get; set; }
         public int PlantCount { get; set; }
         public int CellCount { get; set; }
+        public List<int> PenIds { get; set; } = new List<int>();
         public int BlightedCount { get; set; }
         public PositionDto PointA { get; set; }
         public PositionDto PointB { get; set; }

@@ -131,7 +131,9 @@ class ProductionGoalTests(unittest.TestCase):
                 return {'answers':{qid:{'choice':next(k for k in q['criteria'] if k!='defer')}}}
         state={'endgame':'ship_escape','goal_requirements':{'journey':'Pemmican:40','ship_materials':{'ComponentSpacer':12}},
                'building_catalog':'unrelated catalog '*1000}
-        for action in p.ACTIONS:
+        # The manufacturing planner uses the public catalog, not executable
+        # recipe options. Its complete paginated context has separate tests.
+        for action in p.ACTIONS - {'production_plan'}:
             snapshot=ProductionTests().snapshot()
             context=snapshot['development']['production']
             context['recipe_context']={'options':[RecipeProductionTests().plan()]}

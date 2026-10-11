@@ -30,6 +30,8 @@ class TerminalAttentionSequences(unittest.TestCase):
         self.assertEqual(facts["recreation_deprived"], {"people": 1, "joy_min": .05, "mood_min": .15})
         s["colonists"][0].update(hunger=.8, downed=False, bleeding_rate=0, health_conditions=[])
         s["colonists"][1].update(joy=.7, mood=.7)
+        self.assertEqual(reasoning.attention_facts(s)["care_risks"]["food_days"], .2)
+        s["map"]["resources"]["nutrition"] = 32
         self.assertNotIn("care_risks", reasoning.attention_facts(s))
         s["colonists"].append({"id": 3, "downed": True, "hunger": .02, "health_conditions": []})
         self.assertEqual(reasoning.attention_facts(s)["care_risks"]["dependent_hungry"], 1)

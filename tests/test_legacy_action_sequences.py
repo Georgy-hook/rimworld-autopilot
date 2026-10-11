@@ -118,7 +118,7 @@ class LegacyActionSequences(unittest.TestCase):
     def test_butcher_no_site_then_feasibility_change_and_lost_response(self):
         snap = baseline()
         snap["development"]["corpses"] = [{"thing_id": 99, "label": "deer",
-            "categories": ["CorpsesAnimal"], "position": {"x": 22, "z": 22}}]
+            "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"], "position": {"x": 22, "z": 22}}]
         world = World(snap)
         for _ in range(3):
             _, actions, _ = self.candidates(world)
@@ -163,7 +163,7 @@ class LegacyActionSequences(unittest.TestCase):
 
     def test_butcher_exact_site_drift_is_revalidated_before_mutation(self):
         snap = baseline()
-        snap["development"]["corpses"] = [{"thing_id": 99, "categories": ["CorpsesAnimal"],
+        snap["development"]["corpses"] = [{"thing_id": 99, "rot_stage": "Fresh", "can_butcher": True, "categories": ["CorpsesAnimal"],
                                             "position": {"x": 22, "z": 22}}]
         world = World(snap)
         world.sites = [{"position": {"x": 23, "z": 22}, "rotation": 0}]
@@ -200,6 +200,10 @@ class LegacyActionSequences(unittest.TestCase):
 
     def test_priority_unchanged_drift_and_new_recipient_inside_old_marker(self):
         world = World(baseline())
+        world.snapshot["development"]["construction_projects"] = [
+            {"thing_id": 75, "def_name": "Wall", "kind": "frame",
+             "position": {"x": 21, "z": 21}, "label": "wall", "percent_complete": 0.8}
+        ]
         self.state["issued"]["priority:Construction"] = 12000
         for _ in range(3):
             self.assertNotIn("prioritize_construction", self.candidates(world)[1])
@@ -218,6 +222,31 @@ class LegacyActionSequences(unittest.TestCase):
         targets = [kwargs["body"]["id"] for method, endpoint, kwargs in world.calls
                    if method == "post" and endpoint.endswith("work-priority")]
         self.assertEqual(targets, [2, 2])
+
+    def test_post_combat_tending_keeps_its_actor_while_another_worker_gets_food_work(self):
+        s = baseline()
+        s['map']['resources'] = {'food': 0, 'meals': 0, 'nutrition': 0}
+        s['colonists'][0]['work_priorities']['PlantCutting'] = {'priority': 2, 'disabled': False}
+        s['development']['plants'] = [{'thing_id':7,'harvestable_now':True}]
+        doctor, patient = pawn(2), pawn(3)
+        doctor.update(current_job='TendPatient', current_job_target_id=3)
+        patient.update(downed=True, current_job='LayDown')
+        s['colonists'] += [doctor, patient]
+        s['combat'] = {'colonists': [dict(p, is_drafted=False, is_downed=p.get('downed', False))
+                                   for p in s['colonists']],
+            'hostiles': [{'id': 9, 'kind_def': 'Human', 'is_downed': True, 'bleeding_rate': .5}]}
+        world = World(s)
+        self.assertEqual(director.independent_development_workers(world.snapshot), {1})
+        result = director.execute_action(world, world.snapshot, self.state, 'prioritize_plant_cutting', {})
+        self.assertTrue(result['applied'])
+        self.assertEqual(result['pawn_id'], 1)
+        self.assertEqual(doctor['current_job'], 'TendPatient')
+        self.assertTrue(all(kw['body']['id'] == 1 for method, path, kw in world.calls
+                            if method == 'post' and path.endswith('work-priority')))
+        world.snapshot['combat']['hostiles'][0]['is_downed'] = False
+        self.assertEqual(director.independent_development_workers(world.snapshot), set())
+        world.snapshot['combat']['hostiles'][0].update(is_downed=True, kind_def='Shambler', bleeding_rate=0)
+        self.assertEqual(director.independent_development_workers(world.snapshot), set())
 
     def test_project_rejection_or_unknown_response_retires_only_exact_project(self):
         for mode in ("denied", "no_effect", "unknown"):

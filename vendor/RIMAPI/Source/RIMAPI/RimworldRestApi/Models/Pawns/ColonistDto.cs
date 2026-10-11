@@ -273,6 +273,7 @@ namespace RIMAPI.Models
         public int? DoctorPawnId { get; set; }
         public bool SelfTend { get; set; }
         public int? ReassignFromPatientId { get; set; }
+        public int? ReassignFromRescuePatientId { get; set; }
     }
 
     public class MedicalBedRestRequestDto

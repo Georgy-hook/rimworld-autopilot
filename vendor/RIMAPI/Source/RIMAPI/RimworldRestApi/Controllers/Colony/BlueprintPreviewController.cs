@@ -41,6 +41,9 @@ namespace RIMAPI.Controllers
                 return ApiResult<object>.Fail("Blueprint and position are required.");
             Map map = MapHelper.GetMapByID(request.MapId);
             if (map == null) return ApiResult<object>.Fail("Map missing.");
+            string siteBlocker = StorageProfileHelper.SiteBlocker(map, request);
+            if (siteBlocker != null) return ApiResult<object>.Ok(new { all_placeable = false,
+                placed_count = 0, reason = siteBlocker });
             var rows = new List<Element>();
             foreach (var floor in request.Blueprint.Floors ?? new List<SavedTerrainDto>())
             {

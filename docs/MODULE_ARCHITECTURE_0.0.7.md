@@ -27,6 +27,8 @@ flowchart TD
 | `colony_modules` | Whitelisted domain ownership, collection status, proposal and execution routing | No model-generated Python or endpoints |
 | `colony_production` | Utilities, loaded table recipes and material logistics | Native components, whole-unit stock allocation, ordinary bills and workers |
 | `colony_sustenance` | Food, preservation, animal husbandry, diets and fishing | Native stock, recipes, pens, medicine/food policies and jobs |
+| `colony_mining` | Exact connected ore batches and mineral hauling | Visible loaded products, selected capable workers, whole-batch roof support, native jobs; output and sales observed separately |
+| `colony_labor`, `colony_storage` | Shared worker commitments and fresh carcass storage geometry | Live jobs and both clocks; actual pen/zone footprints and native rot stages |
 | `colony_resilience` | Patient care, disease, sanitation, temperature, roof and diagnosis | Visible symptoms, native workgivers, evidence-gated operations |
 | `colony_society` | Medicine, prisoner policies, childcare, growth, drugs, deathrest and surgery | Instantiated needs, earned options, beliefs and ordinary policies/jobs |
 | `colony_progression` | Prerequisite frontier and finite Core/DLC ending chains | Native quests, blockers, intermediate choices and persisted credits evidence |
@@ -34,6 +36,7 @@ flowchart TD
 | `colony_affordances`, `colony_sessions` | Loaded abilities/interactions and pending native choices | Current callbacks/targets, costs, effect identity and modal/session validation |
 | `colony_capabilities` | Crops, blight, augmentation, equipment and trained animals | Subject history, native atomic command guards and repair of partial auxiliary steps |
 | `colony_expeditions` | Shared trade, raid and rescue planning outside the domain registry | Native two-leg ETA, nutrition, mass, home reserves, exact confirmation and persisted formation identity |
+| `colony_quests` | Shared event/ending offer review outside the registry | Complete public terms, colony/ending facts, exact rewards/accepters and fresh native acceptance |
 | `colony_combat` | Threat geometry, available tactics and target selection | Live positions, capabilities and contact distance |
 | `colony_mental_safety` | Protection of a named allied murderous-rage victim alongside raid defense | Native session, actual Goto/Arrest/Rescue, resistance and path risks; scoped observation and progress leases |
 | `colony_downed_combat` | Explicit finishing of a selected downed hostile | Native violence/verb/target guards before atomic drafting; observed kill flag; pending and stalled job reconciliation |
@@ -46,6 +49,12 @@ flowchart TD
 | `colony_outcomes` | Last order and subsequent measured changes | Acceptance, observation and completion are distinct |
 
 The director emergency scheduler exposes severe dependent starvation before its wound-only care pass. It uses the resilience module's native options, parameter allowlist, finite subject memory and fresh executor. Exact clinical bindings are required to yield stable tending or rescue travel; feeding and carrying keep their leases. See [the starvation contract](audits/starvation-care-yield-2026-10-06.md).
+
+Quest offers use the [common quest contract](modules/quests.md): complete
+actual-tokenizer pages, exact native reward/accepter binding and fresh colony/
+offer validation. Events, consequential letters and ending acceptance share
+this boundary. Generic menus and ending-site jobs also share target/effect
+pending memory to prevent rapid reassignment across workers or modules.
 
 ## Extension contract
 

@@ -3,6 +3,35 @@ from __future__ import annotations
 from typing import Any
 import math
 
+CLINICAL_CARE_JOBS = {'tendpatient', 'rescue', 'feedpatient'}
+
+
+def active_clinical_care(row: dict[str, Any]) -> bool:
+    return str(row.get('current_job') or '').casefold() in CLINICAL_CARE_JOBS
+
+
+def protected_care_retreat_ids(snapshot: dict[str, Any]) -> set[int]:
+    """Native IDs refer only to an exact still-running care escape job."""
+    facts = snapshot.get('combat') or {}
+    named = set(facts.get('care_retreat_pawn_ids') or [])
+    return {p['id'] for p in facts.get('colonists') or [] if p.get('id') in named
+            and p.get('current_job') == 'Goto' and not any(p.get(k) for k in ('is_dead', 'is_downed', 'is_in_mental_state'))}
+
+
+def self_tend_candidates(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """A new self-tend order must not replace care already owned by this pawn."""
+    details = {p.get('id'): p for p in snapshot.get('colonists') or []}
+    retreating = protected_care_retreat_ids(snapshot)
+    return [p for p in (snapshot.get('combat') or {}).get('colonists') or []
+            if p.get('tendable_now') and not p.get('is_dead') and not p.get('is_downed')
+            and not p.get('is_in_mental_state') and not active_clinical_care(p)
+            and p.get('id') not in retreating
+            and not ((details.get(p.get('id'), {}).get('skills') or {}).get('Medicine') or {}).get('disabled')
+            and not ((details.get(p.get('id'), {}).get('work_priorities') or {}).get('Doctor') or {}).get('disabled')
+            and float(p.get('manipulation', 1) if p.get('manipulation') is not None else 1) > 0
+            and float(p.get('moving', 1) if p.get('moving') is not None else 1) >= .65
+            and opponent_distance(p, 0) > 4]
+
 
 def opponent_distance(row: dict[str, Any], unknown: float = 9999) -> float:
     """Preserve contact at zero; missing/nonfinite telemetry cannot prove distance."""
@@ -26,6 +55,41 @@ def _cell(row: dict[str, Any] | None) -> tuple[float, float] | None:
 def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in [*((snapshot.get("combat") or {}).get("hostiles") or []), *((snapshot.get("combat") or {}).get("hostile_buildings") or [])]
             if not row.get("is_dead") and not row.get("is_downed") and row.get("active_threat", True)]
+
+
+def safe_work_actor_ids(snapshot: dict[str, Any], *, allow_idle_drafted: bool = False) -> set[int]:
+    """A conservative observed work window, never a declaration of raid victory.
+
+    Missing distance, an assault/kidnap/predator order or an active allied attack
+    cannot authorize stand-down. Native route/target guards still govern work.
+    Patients can remain with their own caregivers while unrelated workers act.
+    """
+    hostiles = live_hostiles(snapshot)
+    allies = [p for p in (snapshot.get("combat") or {}).get("colonists") or [] if not p.get("is_dead")]
+    if not hostiles or not allies:
+        return set()
+    for enemy in hostiles:
+        if is_kidnapper(enemy):
+            return set()
+        if not enemy.get("is_building") and not hostile_is_preparing(enemy):
+            return set()
+    radius = max(35, max((float(e.get("weapon_range") or 0) + 12 for e in hostiles), default=35))
+    if any(opponent_distance(p, 0) <= radius for p in allies):
+        return set()
+    protected = protected_emergency_care_ids(snapshot)
+    actors = set()
+    for pawn in allies:
+        if pawn.get("is_downed") or pawn.get("is_in_mental_state") or pawn.get("id") in protected:
+            continue
+        job = str(pawn.get("current_job") or "").casefold()
+        if job in {"attackstatic", "attackmelee", "castverb", "predatorhunt"}:
+            return set()
+        if pawn.get("is_drafted"):
+            if not allow_idle_drafted or job not in {"wait_combat", "wait", "wait_maintainposture"}:
+                return set()
+        if pawn.get("id") is not None:
+            actors.add(int(pawn["id"]))
+    return actors
 
 
 def care_at_bedside(row: dict[str, Any], snapshot: dict[str, Any]) -> bool | None:
@@ -83,13 +147,20 @@ def protected_response_ids(snapshot: dict[str, Any]) -> set[int]:
 
 
 def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
-    """Protect safe bedside care; an exposed traveling doctor can defend."""
+    """Generic combat cannot cancel clinical care, even near a hostile.
+
+    Leaving a patient is a separate, exact native caregiver_retreat choice.
+    Proximity alone does not authorize a group order to take the doctor.
+    """
     care_jobs = {'tendpatient', 'rescue', 'feedpatient', 'dobill', 'deathrest', 'breastfeed',
                  'bottlefeedbaby', 'breastfeedcarrytomom', 'bringbabytosafety', 'bringbabytosafetyunforced',
                  'carrytomomafterbirth', 'babysuckle', 'babyplay', 'playstatic', 'playwalking', 'playtoys',
                  'lessongiving', 'lessonreceiving', 'prisonerinterrogateidentity'}
     protected = set()
     for row in (snapshot.get('combat') or {}).get('colonists') or []:
+        if row.get('id') is not None and not row.get('is_dead') and active_clinical_care(row):
+            protected.add(int(row['id']))
+            continue
         if (row.get('id') is None or row.get('is_dead') or row.get('is_downed')
                 or str(row.get('current_job') or '').lower() not in care_jobs or opponent_distance(row, 0) <= 4):
             continue
@@ -97,7 +168,7 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
         if bedside is False and errand_exposed(snapshot, row.get('position')):
             continue
         protected.add(int(row['id']))
-    return protected | protected_response_ids(snapshot)
+    return protected | protected_response_ids(snapshot) | protected_care_retreat_ids(snapshot)
 
 
 def ranged_capable(row: dict[str, Any]) -> bool:
@@ -116,6 +187,17 @@ def is_kidnapper(row: dict[str, Any]) -> bool:
 
 def native_tactical_options(snapshot: dict[str, Any], tactic: str) -> dict[str, dict[str, Any]]:
     protected = protected_emergency_care_ids(snapshot)
+    if tactic == 'caregiver_retreat':
+        people = {p.get('id'): p for p in (snapshot.get('combat') or {}).get('colonists') or []}
+        return {f"{o['fighter_id']}:{o['target_id']}": o
+                for o in (snapshot.get('combat') or {}).get('native_options') or []
+                if o.get('tactic') == tactic and o.get('fighter_id') in people
+                and active_clinical_care(p := people[o['fighter_id']])
+                and not any(p.get(k) for k in ('is_dead', 'is_downed', 'is_in_mental_state', 'carrying_pawn_id'))
+                and o.get('expected_current_job') == p.get('current_job')
+                and o.get('expected_care_patient_id') == (p.get('care_target_id') or
+                    p.get('current_job_target_id_b' if str(p.get('current_job') or '').casefold() == 'feedpatient'
+                          else 'current_job_target_id'))}
     return {f"{o['fighter_id']}:{o['target_id']}:{o.get('defense_building_id', 0)}": o
             for o in snapshot.get("combat", {}).get("native_options") or []
             if o.get("tactic") == tactic and o.get("fighter_id") not in protected}
