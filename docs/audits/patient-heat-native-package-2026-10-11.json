@@ -1,0 +1,15 @@
+{
+  "candidate_version": "0.0.8",
+  "native_source_commit": "1f2e4ba88ef7a0a4226d985786721b3eacc25749",
+  "assembly_product_version": "1.10.0+1f2e4ba",
+  "native_sha256": "8e18246d06217ad5c3e21fddd50c8248c494a9e33c4df2f5abe6b590ae2a6471",
+  "build_configuration": "Release-1.6",
+  "build_errors": 0,
+  "build_warnings": 0,
+  "python_tests_passed": 1381,
+  "native_patient_heat_cases_passed": 23,
+  "offline_api_routes": 313,
+  "game_orders_during_offline_checks": 0,
+  "live_survival_proven": false,
+  "runtime_installation": "separate manifest required; this file records the candidate binary only"
+}
