@@ -118,6 +118,7 @@ namespace RIMAPI.Helpers
                 if (StorageProfileHelper.Specialized(linked.Key)) continue;
                 foreach (ThingDef def in unstoredDefs)
                 {
+                    if (StorageProfileHelper.IsGroundBulk(def)) continue;
                     Building_Storage storage = linked.FirstOrDefault(b => !b.GetStoreSettings().AllowedToAccept(def)
                         && (b.GetParentStoreSettings()?.AllowedToAccept(def) ?? true)
                         && needingStorage[def].Any(t => CellCapacity(map, b.GetSlotGroup().CellsList, t)));

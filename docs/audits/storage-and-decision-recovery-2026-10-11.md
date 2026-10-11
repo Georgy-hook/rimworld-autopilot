@@ -52,11 +52,17 @@ as one group, with the whole changed filter shown as the cost.
 | Meals | Prepared food | Kitchen or dining area |
 | Cold food | Raw ingredients and meals | Freezer |
 | Medicine | Loaded medicines | Patient beds |
-| Workshop inputs | Compatible raw/manufactured resources and textiles | Worktables |
-| Construction | Steel, wood and stone blocks | Construction supply area |
+| Workshop inputs | Components, non-bulk resources and textiles | Worktables |
+| Bulk materials | Metals and stone blocks on the ground; no shelves or paid building | Free supply zone |
 | Armory | Weapons | Non-prison storage |
 | Dry goods | Nonfood goods, excluding corpses and chemfuel | General roofed warehouse |
 | Fresh carcasses | Fresh animal corpses | Butcher, away from beds and kitchen |
+
+Steel, plasteel, silver, gold, uranium and loaded metallic stuff definitions are
+excluded from shelf profiles and shelf-widening options. Bulk materials get free
+ground zones rather than an obligatory roofed warehouse. Components remain a
+separate small workshop input; putting every metal on shelves wastes building
+materials without meeting a current preservation need.
 
 General storage uses Normal priority; local input buffers use Preferred. Filters
 do not move a stack, refrigeration still needs real cooling, and current shelf
@@ -65,7 +71,7 @@ their benches and separating kitchen traffic from butchering are practical
 layouts described by their authors in the [storage and base-efficiency discussion](https://steamcommunity.com/app/294100/discussions/0/1644290549123433646/).
 Priority and filters are separate controls in the [RimWorld Access storage guide](https://rimworldaccess.com/building/zones-stockpiles/).
 
-Seven ordinary warehouse layouts provide loaded bare, concrete, paved or stone
+Six ordinary warehouse layouts provide loaded bare, concrete, paved or stone
 floor alternatives with their real material cost. Bare floors remain a valid
 early choice. Kitchen, medical and workshop plans start their site search near
 actual completed facilities. Adjacency is a search preference, not proof of a
@@ -106,7 +112,7 @@ option, not a demonstrated trap, instant insect death or a survival guarantee.
 
 - 1414 Python tests passed, including actual cached-tokenizer budget checks.
 - Native boundaries: 23 patient-heat, 8 thermal-transfer, 7 food mapping,
-  22 decision-context and 12 storage-profile cases passed in isolated processes.
+  22 decision-context and 14 storage-profile cases passed in isolated processes.
 - C# Release-1.6 build passed with zero warnings and errors; 313 offline routes
   have no missing literal calls or duplicate registration.
 - The recorded budget failure passed actual cached CUDA prediction in both

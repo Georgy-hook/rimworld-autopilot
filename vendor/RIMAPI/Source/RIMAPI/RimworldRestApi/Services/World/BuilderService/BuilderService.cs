@@ -216,7 +216,8 @@ namespace RIMAPI.Services
                 string siteBlocker = StorageProfileHelper.SiteBlocker(map, request);
                 if (siteBlocker != null) return ApiResult.Fail(siteBlocker);
                 if ((request.Blueprint.Buildings ?? new List<SavedBuildingDto>()).Any(b =>
-                    !string.IsNullOrEmpty(b.StorageProfile) && StorageProfileHelper.Definitions(b.StorageProfile).Count == 0))
+                    !string.IsNullOrEmpty(b.StorageProfile) && (StorageProfileHelper.Definitions(b.StorageProfile).Count == 0
+                        || b.StorageProfile == "bulk_materials" || b.StorageProfile == "construction")))
                     return ApiResult.Fail("Unknown storage profile in blueprint.");
 
                 // 1. Paste Floors

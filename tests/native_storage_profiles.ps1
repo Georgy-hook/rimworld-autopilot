@@ -15,10 +15,11 @@ enum FoodTypeFlags {None,Vegetable,Meal,Corpse}
 enum StoragePriority {Normal=3,Preferred=4}
 class Map {}
 class ThingCategoryDef {public string defName; public List<ThingCategoryDef> Parents=new List<ThingCategoryDef>();}
+class StuffProps {public List<ThingCategoryDef> categories=new List<ThingCategoryDef>();}
 class Race {public bool Animal;}
 class Ingestible {public FoodTypeFlags foodType=FoodTypeFlags.Vegetable;public ThingDef sourceDef;}
 class ThingDef {public string defName;public ThingCategory category=ThingCategory.Item;public bool IsCorpse,IsMedicine,IsNutritionGivingIngestible,IsWeapon,IsApparel;
- public Ingestible ingestible;public Race race;public List<ThingCategoryDef> thingCategories=new List<ThingCategoryDef>();}
+ public Ingestible ingestible;public Race race;public StuffProps stuffProps;public List<ThingCategoryDef> thingCategories=new List<ThingCategoryDef>();}
 static class DefDatabase<T> {public static List<T> AllDefs=new List<T>();}
 public static class StorageBoundaryFixture {
 METHODS
@@ -44,17 +45,20 @@ public static int Run() {
  Check(Definitions("cold_food").SetEquals(new[]{berries,milk,meal}),"Cold food must exclude corpses, eggs, metal, drugs");
  Check(Definitions("medicine").SetEquals(new[]{med}),"Medicine filter");
  Check(Definitions("construction").SetEquals(new[]{steel,wood}),"Construction must not steal components from indoor workshop");
- Check(Definitions("workshop_inputs").SetEquals(new[]{steel,component}),"Workshop metals/components must not steal medicine or drugs");
+ Check(Definitions("workshop_inputs").SetEquals(new[]{component}),"Workshop shelves must exclude bulk metal, medicine and drugs");
  Check(Definitions("fuel").SetEquals(new[]{wood,chem}),"Fuel filter");
  Check(Definitions("armory").SetEquals(new[]{gun}),"Armory filter");
  Check(Definitions("fresh_carcasses").SetEquals(new[]{corpse}),"Human corpses not animal-food warehouse");
  Check(!Definitions("dry_goods").Contains(berries)&&!Definitions("dry_goods").Contains(chunk)&&!Definitions("dry_goods").Contains(chem),"Dry goods contamination");
  Check(Definitions("unknown").Count==0,"Unknown purpose must be unavailable");
  Check(Priority("workshop_inputs")>Priority("dry_goods"),"Work buffers must outrank overflow");
- return 12;
+ var modMetal=Def("ModAlloy","ResourcesRaw");modMetal.stuffProps=new StuffProps();modMetal.stuffProps.categories.Add(new ThingCategoryDef {defName="Metallic"});
+ Check(Definitions("bulk_materials").SetEquals(new[]{steel,modMetal}),"Metal belongs in free ground storage");
+ Check(!Definitions("dry_goods").Contains(steel)&&!Definitions("workshop_inputs").Contains(modMetal),"Bulk metal must not consume warehouse shelves");
+ return 14;
 }
 }
 '@
-$taskCode=$taskCode.Replace('METHODS',$taskMethods.Replace('public static HashSet','private static HashSet').Replace('public static StoragePriority','private static StoragePriority'))
+$taskCode=$taskCode.Replace('METHODS',$taskMethods.Replace('public static HashSet','private static HashSet').Replace('public static StoragePriority','private static StoragePriority').Replace('public static bool','private static bool'))
 Add-Type -TypeDefinition $taskCode -Language CSharp
 [StorageBoundaryFixture]::Run()

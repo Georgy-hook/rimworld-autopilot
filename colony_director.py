@@ -9918,8 +9918,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "map_id": map_id,
             "point_a": position(site['x'], site['z']),
             "point_b": position(site['x']+5, site['z']+5),
-            "name": "Laya Main Stockpile",
-            "storage_profile": "dry_goods", "priority": 3,
+            "name": "Laya Bulk Materials (ground)",
+            "storage_profile": "bulk_materials", "priority": 3,
         })
         issued["stockpile"] = tick
         return result
@@ -9932,8 +9932,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "map_id": map_id,
             "point_a": position(site['x'], site['z']),
             "point_b": position(site['x']+5, site['z']+5),
-            "name": f"Laya Main Stockpile {expansion_index + 2}",
-            "storage_profile": "dry_goods", "priority": 3,
+            "name": f"Laya Bulk Materials (ground) {expansion_index + 2}",
+            "storage_profile": "bulk_materials", "priority": 3,
         })
         map_state["stockpile_expansions"] = expansion_index + 1
         issued["expand_stockpile"] = tick

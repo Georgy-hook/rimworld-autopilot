@@ -2,12 +2,11 @@
 
 PROFILES = {
     'dry_goods': ('dry warehouse', 9, 8, 'Nonfood valuables; Normal overflow priority; no corpses, fuel or chunks'),
-    'workshop_inputs': ('workshop input annex', 7, 6, 'Metals/components/materials beside production; Preferred input buffer'),
+    'workshop_inputs': ('workshop input annex', 7, 6, 'Components/textiles beside production; Preferred input buffer; bulk metals stay in free ground zones'),
     'kitchen_inputs': ('kitchen pantry', 6, 6, 'Raw food beside cooking; roof is not refrigeration; fresh only'),
     'meals': ('meal store', 6, 6, 'Meals beside dining/cooking; Preferred; spoilage still depends on actual temperature'),
     'medicine': ('medical supply store', 5, 5, 'Medicine beside care beds; separate from corpses and bulk material'),
     'armory': ('armory', 6, 6, 'Weapons/apparel; keep away from prison exit routes'),
-    'construction': ('construction material store', 9, 7, 'Wood/steel/blocks; Normal overflow, not kitchen shelf competition'),
 }
 
 

@@ -11,7 +11,7 @@ namespace RIMAPI.Helpers
     public static class StorageProfileHelper
     {
         public static readonly string[] Roles = { "kitchen_inputs", "meals", "cold_food", "medicine", "workshop_inputs",
-            "textiles", "construction", "fuel", "armory", "dry_goods", "fresh_carcasses" };
+            "textiles", "construction", "bulk_materials", "fuel", "armory", "dry_goods", "fresh_carcasses" };
 
         public static HashSet<ThingDef> Definitions(string role, Map map = null)
         {
@@ -30,6 +30,7 @@ namespace RIMAPI.Helpers
                 case "medicine": selected = all.Where(d => d.IsMedicine); break;
                 case "textiles": selected = all.Where(d => category(d, "Textiles")); break;
                 case "construction": selected = all.Where(d => d.defName == "Steel" || d.defName == "WoodLog" || category(d, "StoneBlocks")); break;
+                case "bulk_materials": selected = all.Where(IsGroundBulk); break;
                 case "fuel": selected = all.Where(d => d.defName == "WoodLog" || d.defName == "Chemfuel"); break;
                 case "armory": selected = all.Where(d => d.IsWeapon || d.IsApparel); break;
                 case "fresh_carcasses": selected = all.Where(d => d.IsCorpse && d.ingestible != null
@@ -38,15 +39,19 @@ namespace RIMAPI.Helpers
                     selected = all.Where(d => d.ingestible == null && !d.IsCorpse &&
                         (category(d, "ResourcesRaw") || category(d, "Manufactured") || category(d, "Textiles"))
                         && !d.IsMedicine && !category(d, "Drugs") && !category(d, "MortarShells")
-                        && d.defName != "Chemfuel" && d.defName != "WoodLog"); break;
+                        && d.defName != "Chemfuel" && d.defName != "WoodLog" && !IsGroundBulk(d)); break;
                 case "dry_goods": selected = all.Where(d => d.ingestible == null && !d.IsCorpse
-                    && d.defName != "Chemfuel" && !category(d, "StoneChunks") && !d.defName.StartsWith("Chunk")); break;
+                    && d.defName != "Chemfuel" && !category(d, "StoneChunks") && !d.defName.StartsWith("Chunk") && !IsGroundBulk(d)); break;
                 default: return new HashSet<ThingDef>();
             }
             return new HashSet<ThingDef>(selected);
         }
 
-        public static StoragePriority Priority(string role) => role == "dry_goods" || role == "construction"
+        public static bool IsGroundBulk(ThingDef d) => new[] { "Steel", "Plasteel", "Silver", "Gold", "Uranium" }.Contains(d.defName)
+            || d.stuffProps?.categories?.Any(c => c.defName == "Metallic") == true
+            || d.thingCategories?.Any(c => c.defName == "StoneBlocks" || c.Parents.Any(p => p.defName == "StoneBlocks")) == true;
+
+        public static StoragePriority Priority(string role) => role == "dry_goods" || role == "construction" || role == "bulk_materials"
             ? StoragePriority.Normal : StoragePriority.Preferred;
 
         public static bool Specialized(StorageSettings settings)
@@ -60,6 +65,8 @@ namespace RIMAPI.Helpers
         public static void Apply(IStoreSettingsParent owner, string role)
         {
             var allowed = Definitions(role);
+            if (owner is Building_Storage || owner is Blueprint_Storage || owner is Frame)
+                allowed.RemoveWhere(IsGroundBulk);
             if (allowed.Count == 0) throw new ArgumentException("Unknown or empty storage profile: " + role);
             StorageSettings settings = owner.GetStoreSettings();
             var parent = owner.GetParentStoreSettings();
@@ -128,6 +135,7 @@ namespace RIMAPI.Helpers
                 if (Specialized(settings)) continue;
                 foreach (string role in Roles)
                 {
+                    if (role == "construction" || role == "bulk_materials") continue;
                     var allowed = Definitions(role);
                     if (allowed.Count == 0 || shelves.Any(b => !Suitable(role, map, b.Position, b.GetSlotGroup().CellsList))) continue;
                     var displaced = shelves.SelectMany(b => b.GetSlotGroup().CellsList.SelectMany(c => c.GetThingList(map)))
@@ -136,7 +144,7 @@ namespace RIMAPI.Helpers
                     if (displaced.Any(t => !map.haulDestinationManager.AllHaulDestinationsListInPriorityOrder.Any(d =>
                         d.HaulDestinationEnabled && d is ISlotGroupParent slots && d.Accepts(t)
                         && !(d is Building_Storage other && shelves.Any(b => b == other))
-                        && slots.GetSlotGroup().CellsList.Any(c => c.Roofed(map)
+                        && slots.GetSlotGroup().CellsList.Any(c => (IsGroundBulk(t.def) || c.Roofed(map))
                             && StoreUtility.IsGoodStoreCell(c, map, t, null, null))))) continue;
                     string signature = string.Join(",", settings.filter.AllowedThingDefs.Select(d => d.defName).OrderBy(s => s));
                     string stamp = StableStamp(signature + ":" + settings.Priority);
