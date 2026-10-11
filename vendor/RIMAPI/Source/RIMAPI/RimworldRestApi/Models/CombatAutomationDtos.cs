@@ -8,6 +8,8 @@ namespace RIMAPI.Models
         public int FighterId { get; set; }
         public int TargetId { get; set; }
         public int DefenseBuildingId { get; set; }
+        public string ExpectedCurrentJob { get; set; }
+        public int? ExpectedCarePatientId { get; set; }
         public string Label { get; set; }
         public Dictionary<string,string> Effects { get; set; }
     }
@@ -53,6 +55,8 @@ namespace RIMAPI.Models
         public string AbilityDefName { get; set; }
         public int? AbilityTargetPawnId { get; set; }
         public PositionDto AbilityTargetPosition { get; set; }
+        public string ExpectedCurrentJob { get; set; }
+        public int? ExpectedCarePatientId { get; set; }
     }
 
     public class CombatTacticResponseDto

@@ -109,18 +109,21 @@ class BridgeTests(unittest.TestCase):
 
     def test_first_run_downloads_root_laya_model_when_cache_is_empty(self):
         calls = []
-        inner = object()
         def download(name, **kwargs):
             calls.append((name, kwargs))
             if kwargs.get("local_files_only"):
                 raise OSError("cache empty")
             return "downloaded-root-model"
         fake_hub = types.SimpleNamespace(snapshot_download=download)
-        fake_laya = types.SimpleNamespace(load=lambda path, device: (path, device, inner))
-        with mock.patch.dict(sys.modules, {"huggingface_hub": fake_hub, "laya": fake_laya, "torch": mock.Mock()}):
+        fake_laya = types.SimpleNamespace(load=mock.Mock(return_value=types.SimpleNamespace(device="cpu")))
+        fake_torch = mock.Mock()
+        fake_torch.__version__ = "test-torch"
+        fake_torch.version = types.SimpleNamespace(cuda=None, hip=None)
+        with mock.patch.dict(sys.modules, {"huggingface_hub": fake_hub, "laya": fake_laya, "torch": fake_torch}):
             with mock.patch.object(pathlib.Path, "is_file", return_value=True):
                 agent = bridge.load_agent(bridge.DEFAULT_MODEL, "cpu")
-        self.assertEqual(agent.inner, ("downloaded-root-model", "cpu", inner))
+        fake_laya.load.assert_called_once_with("downloaded-root-model", device="cpu")
+        self.assertEqual(agent.runtime_info()["actual_device"], "cpu")
         self.assertEqual(len(calls), 2)
         self.assertTrue(calls[0][1]["local_files_only"])
         self.assertNotIn("local_files_only", calls[1][1])

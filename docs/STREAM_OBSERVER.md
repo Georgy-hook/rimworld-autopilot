@@ -10,7 +10,9 @@ The shot order is based on real elapsed time:
 4. Injured or sick colonists get occasional priority shots, with a cooldown so one patient cannot monopolize the broadcast.
 5. During quieter work, the camera rotates between colonists every 45 seconds: 10 seconds close, then a wide view. Every 10 minutes it takes a short five-stop tour of the map at wide zoom.
 
-While this mode is on, the observer resumes any game pause—including a manual pause—and requests 3× speed. It retries every five real seconds so raids or other events that force 1× do not leave the broadcast slow. Shot lengths and camera rotations still use real seconds, regardless of game speed. Turn the mode off if you want the game to stay paused. The observer waits for the next loaded colony when the game is at the main menu or temporarily unavailable. This mode does not start an OBS or Twitch broadcast by itself.
+While this mode is on, the observer permits game time only with a fresh heartbeat from a live, ready director. Otherwise it keeps the colony paused. Normal target speed is 3×; home fire, critical bleeding, dangerous immune disease, serious thermal illness, starvation of a patient or attack on a downed colonist reduce it to 1×. Shot lengths and camera rotations use real seconds. Turn the mode off to retain a manual pause. Native final defeat/victory stops pacing; ordinary unavailable API state is not proof of defeat. This mode does not start an OBS or Twitch broadcast by itself.
+
+Hourly verification also assesses screenshots, placement and actual outputs, animal losses, raid outcomes, population, income and ending progress. See [the colony verification protocol](COLONY_VERIFICATION.md). Healthy processes or accepted orders are not proof of a successful colony.
 
 The script can also run without the GUI, using the configured Python environment:
 

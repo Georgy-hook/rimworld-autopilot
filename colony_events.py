@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 import colony_growth as growth
+import colony_quests as quest_review
 
 
 EVENT_FAMILIES: dict[str, dict[str, Any]] = {
@@ -122,6 +123,7 @@ def event_signature(row: dict[str, Any]) -> str:
 def matching_rescue_quests(event: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
     """Never mistake a stranger's rescue quest for a kidnapped colonist's."""
     quests = [row for row in context.get("active_quests") or [] if isinstance(row, dict)
+              and row.get("read_status", "complete") == "complete"
               and classify_event(row) == "kidnap_rescue"]
     if event.get("source") == "quest" and event.get("id") is not None:
         return [row for row in quests if str(row.get("id")) == str(event["id"])]
@@ -140,6 +142,8 @@ def pending_events(context: dict[str, Any], handled: set[str]) -> list[dict[str,
     for key, source in (("recent_incidents", "incident"), ("active_conditions", "condition"), ("active_quests", "quest")):
         for raw in context.get(key) or []:
             if not isinstance(raw, dict):
+                continue
+            if source == "quest" and raw.get("read_status", "complete") != "complete":
                 continue
             row = {"source": source, **raw}
             # Accepted ordinary quests are already in progress. Their world
@@ -206,7 +210,10 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
             )
     if family == "quest" and event.get("ever_accepted"):
         options.pop("accept_quest", None)
-    if family == "quest" and str(event.get("quest_def") or "").startswith("BuildMonument"):
+    if family in {"quest", "kidnap_rescue"} and quest_review.offer_blocker(event):
+        options.pop("accept_quest", None)
+        options.pop("accept_rescue_quest", None)
+    if family == "quest" and str(event.get("quest_def") or "").startswith(quest_review.UNSUPPORTED):
         # Accepting commits the colony to a timed monument blueprint, but the
         # current API/director has no way to place that quest-specific plan.
         options.pop("accept_quest", None)
@@ -215,6 +222,9 @@ def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str
 
 
 def event_context_for_model(event: dict[str, Any], context: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    if event.get("source") == "quest" or event.get("quest_def"):
+        return {"quest_offer": event, "decision_facts": quest_review.colony_facts(snapshot),
+                "rule": quest_review.QUEST_RULE}
     if event.get("family") == "trade":
         # The raw incident and trader rows include every stock item twice. Laya's
         # short decision context then loses the colony's needs and the prices.

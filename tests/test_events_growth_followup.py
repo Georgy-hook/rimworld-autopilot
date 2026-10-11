@@ -34,7 +34,7 @@ class EventGrowthContracts(unittest.TestCase):
                 mock.patch.object(director.events, "pending_events", side_effect=lambda ctx, handled: [] if "quest:1" in handled else [event]), \
                 mock.patch.object(director.events, "response_options", return_value={"accept_quest": "accept"}), \
                 mock.patch.object(director.events, "event_context_for_model", return_value={}), \
-                mock.patch.object(director, "ask_laya_choice", return_value=("accept_quest", {})) as choose, \
+                mock.patch.object(director.quests, "review", return_value=("accept", {}, {"reviewed": True})) as choose, \
                 mock.patch.object(director, "_execute_event_response", side_effect=[{"applied": False, "reason": "stale"}, {"success": True}, {"applied": False}]) as execute, \
                 mock.patch.object(director, "publish_event_overlay"), \
                 mock.patch.object(director.time, "time", return_value=100) as clock:

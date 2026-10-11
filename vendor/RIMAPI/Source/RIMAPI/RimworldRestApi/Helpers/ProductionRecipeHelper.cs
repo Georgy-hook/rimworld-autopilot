@@ -239,6 +239,44 @@ namespace RIMAPI.Helpers
             return choices;
         }
 
+        public static List<object> PlanningCatalog(Map map)
+        {
+            // Public loaded prerequisites include unavailable manufacturing.
+            // Empty executable options must not erase the path to a product.
+            var tables=DefDatabase<ThingDef>.AllDefsListForReading.Where(d=>d.IsWorkTable).ToArray();
+            var stock=map.listerThings.AllThings.Where(Stock).ToArray();
+            return DefDatabase<RecipeDef>.AllDefsListForReading.Where(r=>r.products.Any(p=>p.thingDef.IsWeapon
+                || p.thingDef.defName=="ComponentIndustrial" || p.thingDef.defName=="ComponentSpacer"))
+                .Select(r=> {
+                    var users=tables.Where(t=>t.AllRecipes.Contains(r)).ToArray();
+                    var research=new[]{r.researchPrerequisite}.Concat(r.researchPrerequisites ?? new List<ResearchProjectDef>())
+                        .Where(p=>p!=null).Distinct().ToArray();
+                    return (object)new{recipe=r.defName,label=r.LabelCap,
+                        products=r.products.Select(p=>new{def_name=p.thingDef.defName,count=p.count,stock=stock.Where(t=>t.def==p.thingDef).Sum(t=>t.stackCount)}).ToArray(),
+                        work_amount=r.workAmount,cost=Info(r).Cost,
+                        fixed_ingredients=r.ingredients.Where(i=>i.filter.AllowedDefCount==1)
+                            .Select(i=>new{def_name=i.filter.AllowedThingDefs.First().defName,
+                                count=i.CountRequiredOfFor(i.filter.AllowedThingDefs.First(),r)}).ToArray(),
+                        variable_ingredients=r.ingredients.Where(i=>i.filter.AllowedDefCount!=1).Select(i=>i.SummaryFor(r)).ToArray(),
+                        missing_research=research.Where(p=>!p.IsFinished).Select(p=>p.defName).ToArray(),
+                        skill_requirements=r.skillRequirements?.Select(s=>new{skill=s.skill.defName,level=s.minLevel}).ToArray(),
+                        table_defs=users.Select(t=>t.defName).ToArray(),
+                        tables=users.Select(t=>new{def_name=t.defName,
+                            construction_skill=t.constructionSkillPrerequisite,
+                            fixed_cost=t.CostList?.Select(c=>new{def_name=c.thingDef.defName,count=c.count}).ToArray(),
+                            stuff_count=t.costStuffCount,
+                            power_watts=t.comps?.OfType<CompProperties_Power>().FirstOrDefault()?.PowerConsumption,
+                            missing_research=t.researchPrerequisites?.Where(p=>!p.IsFinished).Select(p=>p.defName).ToArray()}).ToArray(),
+                        completed_table_ids=map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>()
+                            .Where(b=>users.Contains(b.def)).Select(b=>b.thingIDNumber).ToArray(),
+                        completed_tables=map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>()
+                            .Where(b=>users.Contains(b.def)).Select(b=>new{id=b.thingIDNumber,def_name=b.def.defName,
+                                powered=b.TryGetComp<CompPowerTrader>()?.PowerOn,
+                                connected=b.TryGetComp<CompPowerTrader>()?.PowerNet!=null}).ToArray(),
+                        completion="Prerequisites and stocks only; no bill, powered table, qualified worker, delivered inputs or product promised"};
+                }).ToList();
+        }
+
         public static ApiResult<object> Context(int id)
         {
             Map map = MapHelper.GetMapByID(id);
@@ -251,7 +289,7 @@ namespace RIMAPI.Helpers
             }).ToArray();
             return ApiResult<object>.Ok(new
             {
-                available = true, options = Options(map), subcore_scanners = scanners,
+                available = true, options = Options(map), planning_catalog=PlanningCatalog(map), subcore_scanners = scanners,
                 pending_bills=map.listerBuildings.allBuildingsColonist.OfType<Building_WorkTable>()
                     .SelectMany(t=>t.BillStack.Bills.OfType<Bill_Production>().Where(Pending).Select(b=>new {
                         building_id=t.thingIDNumber,recipe=b.recipe.defName,worker_id=b.PawnRestriction?.thingIDNumber,

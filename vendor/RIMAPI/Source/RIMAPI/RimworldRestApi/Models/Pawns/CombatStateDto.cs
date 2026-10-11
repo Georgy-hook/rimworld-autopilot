@@ -7,6 +7,7 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public List<object> HostileBuildings { get; set; } = new List<object>();
         public List<CombatNativeOptionDto> NativeOptions { get; set; } = new List<CombatNativeOptionDto>();
+        public List<int> CareRetreatPawnIds { get; set; } = new List<int>();
         public int GameTick { get; set; }
         public List<CombatPawnDto> Colonists { get; set; } = new List<CombatPawnDto>();
         public List<CombatPawnDto> Hostiles { get; set; } = new List<CombatPawnDto>();

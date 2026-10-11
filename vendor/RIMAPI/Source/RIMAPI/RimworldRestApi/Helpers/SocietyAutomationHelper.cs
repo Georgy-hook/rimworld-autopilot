@@ -35,7 +35,15 @@ namespace RIMAPI.Helpers
             if (map == null) return ApiResult<SocietyContextDto>.Fail("Map not found.");
             var result = new SocietyContextDto();
             foreach (var group in map.listerThings.AllThings.Where(t => t.def.IsMedicine && !t.Destroyed).GroupBy(t => t.def.defName))
+            {
                 result.Medicine[group.Key] = group.Sum(t => t.stackCount);
+                Thing medicine = group.First();
+                result.MedicineCatalog.Add(new SocietyMedicineDto { DefName = group.Key,
+                    Count = result.Medicine[group.Key], Potency = medicine.GetStatValue(StatDefOf.MedicalPotency),
+                    QualityMax = medicine.GetStatValue(StatDefOf.MedicalQualityMax),
+                    AllowedCare = Care.Where(c => Enum.TryParse(c, out MedicalCareCategory category)
+                        && MedicalCareUtility.AllowsMedicine(category, medicine.def)).ToList() });
+            }
             foreach (var p in map.mapPawns.AllPawnsSpawned.Where(p => p.RaceProps.Humanlike && (p.IsColonistPlayerControlled || p.IsPrisonerOfColony)))
             {
                 var row = new SocietyPersonDto { PawnId = p.thingIDNumber, Name = p.LabelShort, Dead = p.Dead,
@@ -48,6 +56,7 @@ namespace RIMAPI.Helpers
                     Certainty = p.ideo?.Certainty,
                     MinorBreakThreshold = p.mindState?.mentalBreaker?.BreakThresholdMinor,
                     MedicalCare = p.playerSettings?.medCare.ToString(),
+                    BleedingRate = p.health.hediffSet.BleedRateTotal,
                     MedicalAttention = NeedsCare(p),
                     PrisonerMode = p.IsPrisonerOfColony ? p.guest?.ExclusiveInteractionMode?.defName : null,
                     Resistance = p.IsPrisonerOfColony ? (float?)p.guest.resistance : null,
@@ -61,7 +70,10 @@ namespace RIMAPI.Helpers
                 foreach (var h in p.health.hediffSet.hediffs.Where(h => h.Visible))
                 { var immune = h.TryGetComp<HediffComp_Immunizable>();
                     row.Conditions.Add(new SocietyConditionDto { DefName = h.def.defName, Severity = h.Severity,
-                        Immunity = immune == null ? (float?)null : immune.Immunity, LifeThreatening = h.IsCurrentlyLifeThreatening }); }
+                        Part = h.Part?.Label, Immunity = immune == null ? (float?)null : immune.Immunity,
+                        ImmunityCanDevelop = PawnHelper.CanDevelopImmunity(h), LifeThreatening = h.IsCurrentlyLifeThreatening,
+                        TendQuality = h.TryGetComp<HediffComp_TendDuration>()?.tendQuality,
+                        TendTicksLeft = h.TryGetComp<HediffComp_TendDuration>()?.tendTicksLeft }); }
                 if (p.Ideo != null) row.Beliefs.AddRange(p.Ideo.PreceptsListForReading.Select(precept => precept.def.defName + ": " + precept.def.description));
                 if (p.learning != null) row.LearningDesires.AddRange(p.learning.ActiveLearningDesires.Select(d => d.defName));
                 if (p.IsColonistPlayerControlled && p.timetable != null)

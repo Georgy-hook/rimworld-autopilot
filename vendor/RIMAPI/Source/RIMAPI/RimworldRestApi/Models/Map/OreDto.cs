@@ -12,6 +12,12 @@ namespace RIMAPI.Models.Map
 
     public class OreGroupDto
     {
+        public string ProductDef { get; set; }
+        public int YieldPerCell { get; set; }
+        public float? ProductMarketValue { get; set; }
+        public bool YieldWasteable { get; set; }
+        public List<int> ThingIds { get; set; }
+        public List<int> DesignatedCells { get; set; }
         public int MaxHp { get; set; } // Send MaxHP once per type
 
         // Flattened Map Indices: (z * MapWidth) + x

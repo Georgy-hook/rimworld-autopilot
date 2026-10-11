@@ -1,13 +1,15 @@
 """Food production, preservation, diets and animal welfare through loaded vanilla policies."""
 from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
+from colony_capabilities import food_planning_facts
+import colony_husbandry as husbandry
 
-_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather"}, "herd_policy": {"herd", "sterilize", "release"}}
+_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather", "penfeed", "warmspot"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
     "sustenance_food_batch": "Choose a feasible food or butcher recipe batch, fishing workflow, or explicit kitchen preparation. Preparation cleans or configures a kitchen and produces no food; a food bill still requires a usable table, enabled skilled worker and reachable ingredients. Compare human reserves, animal feed, fuel, spoilage and poisoning. Existing unused feed bills can be paused deliberately.",
     "sustenance_food_policy": "Choose an existing food policy for one colonist. Compare allowed reachable foods, scarcity, raw-food poisoning, ideology and mood; changing policy does not feed the pawn.",
     "sustenance_preservation": "Choose an existing cooler target or food-storage priority. Compare power, room temperature, spoiling stock, hauling and access; a setpoint is not proof of a frozen room.",
-    "sustenance_animal_welfare": "Choose one animal medicine policy or existing allowed area. Compare illness, pregnancy, nutrition, rest, reachable feed, beds and human medicine reserves. Pen animals use pens rather than allowed areas.",
+    "sustenance_animal_welfare": "Choose finite compatible feed delivery into a connected pen, a free warm animal sleeping spot, an animal medicine policy or an existing allowed area. Compare actual hunger, illness, temperature, pregnancy, reachable feed, beds and human reserves. Spot creation and haul start do not prove rescue, delivery or eating. Pen animals use pens rather than allowed areas.",
     "sustenance_herd_policy": "Choose an existing species total population limit, sterilization bill or release-to-wild designation, preserving pregnant and bonded animals. Compare pasture demand, stored feed, breeding sex/age structure, veneration and explosive death hazards; vanilla handlers may slaughter excess animals."}
 LABELS = {"sustenance_food_batch": "производство и сохранение пищи", "sustenance_food_policy": "пищевые ограничения", "sustenance_preservation": "холодильник и хранение пищи", "sustenance_animal_welfare": "питание и лечение животных", "sustenance_herd_policy": "размер стада и размножение"}
 ACTIONS = set(DESCRIPTIONS)
@@ -62,7 +64,7 @@ def _guard(context, plan):
     kind, target = plan["kind"], plan.get("target_id")
     if kind == "pausefeed":
         return {"compatible_animals": sum(bool(a.get("can_eat_kibble")) for a in context.get("animals") or []), "identity": plan.get("value")}
-    if kind in {"care", "area", "sterilize", "release", "gather", "diet", "customdiet"}:
+    if kind in {"care", "area", "sterilize", "release", "gather", "diet", "customdiet", "warmspot"}:
         pawns = context.get("food_pawns") if kind in {"diet", "customdiet"} else context.get("animals")
         pawn = next((p for p in pawns or [] if p.get("id") == target), {})
         return _clinical(pawn)
@@ -71,7 +73,7 @@ def _guard(context, plan):
         herd = [p for p in context.get("animals") or [] if p.get("species") == species]
         return {"count": len(herd), "pregnant": sum(bool(p.get("pregnant")) for p in herd),
                 "hungry": sum(p.get("food") is not None and float(p["food"]) < .3 for p in herd)}
-    if kind == "pen":
+    if kind in {"pen", "penfeed"}:
         pen = next((p for p in context.get("pens") or [] if p.get("id") == target), {})
         demand = pen.get("consumption_per_day")
         pasture = pen.get("pasture_nutrition_per_day")
@@ -127,6 +129,38 @@ def _failure(map_state, snapshot, action, key, reason, **details):
     return {"applied": False, "reason": reason, **details}
 
 
+def _food_crisis_plan_ready(snapshot, context, plan):
+    """Policy availability alone does not make it useful during starvation.
+
+    Keep actual food production and urgent animal care. Cleaning an empty
+    kitchen, rearranging empty shelves and a healthy animal's medicine ceiling
+    cannot bridge the shortage. Reconsider them when the observed stock, bill
+    readiness or patient changes; this is not a persisted category lock.
+    """
+    if not food_planning_facts(snapshot)["immediate_food_gap"]:
+        return True
+    kind = plan.get("kind")
+    animal = next((a for a in context.get("animals") or []
+                   if a.get("id") == plan.get("target_id")), {})
+    if kind == "care":
+        return bool(animal.get("health") or animal.get("downed"))
+    if kind == "area":
+        return bool(animal.get("health") or animal.get("downed")
+                    or animal.get("food") is not None and float(animal["food"]) < .3)
+    if kind in {"storage", "stockpile", "stockfood", "cooler", "diet", "customdiet"}:
+        # Missing stock observations are unknown; known empty human stock is
+        # not repaired by increasing a shelf priority or admitting raw hops.
+        nutrition = human_nutrition(context)
+        return nutrition is None or nutrition > 0 or kind == "cooler" and any(
+            p.get("eligible") is True for p in context.get("perishables") or [])
+    if kind == "kitchenhome" or kind == "job" and str(plan.get("value") or "").startswith("CleanFilth:"):
+        return any(t.get("usable") is True and any(
+            b.get("requested") is True and b.get("block_reason") in {
+                "ready_for_ordinary_work", "ordinary_job_in_progress"}
+            for b in t.get("bills") or []) for t in context.get("tables") or [])
+    return True
+
+
 def prepare(snapshot, map_state):
     context = snapshot.get("development", {}).get("sustenance", {})
     tick = int(snapshot.get("game", {}).get("tick") or 0)
@@ -142,6 +176,7 @@ def prepare(snapshot, map_state):
         plans = {}
         for key, plan in options(context, action).items():
             if key in failures: continue
+            if not _food_crisis_plan_ready(snapshot, context, plan): continue
             scope = _scope(plan)
             old = history.get(scope)
             if old and (old["guard"] != _guard(context, plan) or "defer_guard" in old and old["defer_guard"] != _defer_guard(context, plan)):
@@ -155,6 +190,19 @@ def prepare(snapshot, map_state):
 
 def _effects(context, plan):
     kind = plan.get("kind")
+    measured=plan.get('facts') or {}
+    if kind=='penfeed' and measured:
+        return {'benefit':f"Deliver {measured.get('nutrition')} nutrition to {measured.get('hungry_animals')} hungry animals",
+            'cost':f"Hauler labor; human food remaining {measured.get('human_remaining')}, minimum reserve {measured.get('human_minimum')}",
+            'risk':'Food diverted from storage; hauling labor competes with human care',
+            'inaction':f"No new pen feed; animal Malnutrition {measured.get('malnutrition')} and hunger continue",
+            'uncertainty':'Ordinary safe compatible haul; arrival and eating remain pending'}
+    if kind=='warmspot' and measured:
+        return {'benefit':f"Prepare animal bed at {measured.get('destination_c')}C instead of {measured.get('source_c')}C",
+            'cost':f"{measured.get('work')} work, {measured.get('materials')} materials; eligible carriers {measured.get('carrier_count')}; later rescue labor",
+            'risk':'Shared shelter cleanliness; creation alone does not move animal',
+            'inaction':f"Hypothermia {measured.get('hypothermia')} at {measured.get('source_c')}C; downed {measured.get('downed')}; no added safe bed",
+            'uncertainty':'Actual rescue, arrival and warming remain pending'}
     target = plan.get("target_id")
     animal = next((a for a in context.get("animals") or [] if a.get("id") == target), {})
     table = next((t for t in context.get("tables") or [] if t.get("id") == target), {})
@@ -217,13 +265,33 @@ def human_nutrition(context):
     return sum(float(f["fresh_eligible_nutrition"]) for f in food)
 
 
-def _stage(agent, context, rows, question, instructions, state=None):
+def _subject_facts(context, key):
+    plan = next((p for p in context.get('options') or [] if p.get('key') == key), {})
+    kind = plan.get('kind')
+    # Finite haul/thermal proposals carry native measured quantities rather
+    # than requiring the model to infer them from a cut cost/risk sentence.
+    native = plan.get('facts')
+    if kind in {'penfeed', 'warmspot'} and isinstance(native, dict):
+        return {'kind':kind, **native}
+    animal = next((a for a in context.get('animals') or [] if a.get('id') == plan.get('target_id')), {})
+    if kind in {'care', 'warmspot', 'sterilize', 'release', 'area', 'gather'}:
+        return {'kind':kind, 'food':animal.get('food'), 'downed':animal.get('downed'),
+                'temperature':animal.get('temperature'), 'pregnant':animal.get('pregnant'),
+                'conditions':{h.get('def_name'):h.get('severity') for h in animal.get('health') or []
+                              if h.get('def_name') in {'Malnutrition','Hypothermia','Heatstroke'}}}
+    if kind == 'penfeed':
+        return {'kind':kind, **_guard(context, plan)}
+    return {}
+
+
+def _stage(agent, context, rows, question, instructions, state=None, *, allow_defer=True):
     # Short aliases leave head/state budget for independently retained consequences.
     indexed = {f"o{i}": row for i, row in enumerate(rows)}
     choices = {alias: row[1] for alias, row in indexed.items()}
     effects = {alias: row[2] for alias, row in indexed.items()}
-    choices["defer"] = "Keep current policy; defer"
-    effects["defer"] = {"benefit": "Preserve resources/current services", "risk": "Hunger/rot/illness/breeding continue", "cost": "No added labor/resources", "inaction": "Current policy continues", "uncertainty": "No completed care or production"}
+    if allow_defer:
+        choices["defer"] = "Keep current policy; defer"
+        effects["defer"] = {"benefit": "Preserve resources/current services", "risk": "Hunger/rot/illness/breeding continue", "cost": "No added labor/resources", "inaction": "Current policy continues", "uncertainty": "No completed care or production"}
     # Preserve aggregate supply and rot urgency before purpose text in the small facts budget.
     nutrition = human_nutrition(context)
     rot = [p["ticks_until_rot"] for p in context.get("perishables") or []
@@ -232,7 +300,24 @@ def _stage(agent, context, rows, question, instructions, state=None):
     facts = {"endgame": state.get("endgame"), "fresh_nutrition": nutrition, "first_rot_ticks": min(rot) if rot else None,
              "feed_access": [{"id": p.get("pawn_id"), "self": p.get("self_reachable_nutrition"), "feeder": p.get("feeder_reachable_nutrition")} for p in sorted(context.get("human_food_access") or [], key=lambda p: (not bool(p.get("downed")), float(p.get("food_level") or 0)))][:2],
              "goal_requirements": state.get("goal_requirements") or {}, "purpose": question}
-    selected, raw = ask_laya_choice(agent, {"decision_facts": facts, "option_effects": effects}, question, instructions, choices, detailed=True)
+    if question.startswith("sustenance_"):
+        facts["livestock"] = husbandry.brief({'development':{'sustenance':context}})
+    comparison = {alias:_subject_facts(context, row[3] if len(row)>3 else row[0]) for alias,row in indexed.items()}
+    measured_welfare = any(row.get('kind') in {'penfeed','warmspot'} for row in comparison.values())
+    choice_state = {"decision_facts": facts, "option_effects": effects}
+    if measured_welfare:
+        if allow_defer:
+            effects['defer'] = {'benefit':'Retain current stock and worker job', 'cost':'No new haul or bed work',
+                'risk':'; '.join(row[2]['inaction'] for row in rows),
+                'inaction':'No new delivered feed or warm bed', 'uncertainty':'Recovery depends on other observed care'}
+        # Exact emergency orders need current clinical facts and resource
+        # costs. Seasonal planning is retained in herd, crop and barn choices;
+        # repeating it here crowds the action consequences out of the window.
+        shared={'human_nutrition':nutrition}
+        if state.get('endgame'): shared['endgame']=state['endgame']
+        if rot: shared['first_rot_ticks']=min(rot)
+        choice_state['comparison_facts'] = {'shared':shared, 'options':comparison}
+    selected, raw = ask_laya_choice(agent, choice_state, question, instructions, choices, detailed=True)
     if selected not in choices:
         raise ValueError("Unverified sustenance choice")
     return (None if selected == "defer" else indexed[selected][0]), raw
@@ -242,21 +327,31 @@ def choose(agent, state, action, snapshot):
     context = snapshot["development"]["sustenance"]
     plans = options(context, action)
     stages, shown = [], []
-    def stage(rows, question, instructions):
+    def stage(rows, question, instructions, *, allow_defer=True):
         shown.extend(row[3] for row in rows)
-        answer, raw = _stage(agent, context, rows, question, instructions, state)
+        if len(rows)==1 and not allow_defer:
+            # Mechanical classification of a unique subject is not dispatch.
+            # Final exact action still compares its consequences with waiting.
+            key,label,_,_=rows[0]
+            stages.append({'question':{'id':question,'criteria':{key:label}},
+                'answers':{question:{'choice':key,'resolved_without_model':True}}})
+            return key
+        answer, raw = _stage(agent, context, rows, question, instructions, state,allow_defer=allow_defer)
         stages.append(raw)
         return answer
     def selection(key):
         return {"sustenance_policy": key or "defer", **({"shown_sustenance_options": list(dict.fromkeys(shown))} if key is None else {})}, {"stages": stages}
     kinds = sorted({p["kind"] for p in plans.values()})
+    classify_only = action=='sustenance_animal_welfare' and set(kinds)<={'penfeed','warmspot'}
     rows = []
     for kind in kinds:
         key, plan = next((key, p) for key, p in plans.items() if p["kind"] == kind)
         purpose = {"job": "Kitchen preparation: cleaning only; produces no food",
-                   "kitchenhome": "Kitchen preparation: home area only; produces no food"}.get(kind, kind)
+                   "kitchenhome": "Kitchen preparation: home area only; produces no food",
+                   "penfeed":"Deliver finite feed to hungry animals",
+                   "warmspot":"Prepare free roofed comfortable animal place; movement still pending"}.get(kind, kind)
         rows.append((kind, purpose, _effects(context, plan), key))
-    kind = stage(rows, "sustenance_purpose", "Choose purpose or defer. Compare independently retained cost, risk and waiting.")
+    kind = stage(rows, "sustenance_purpose", "Compare available purposes; final exact action will include waiting." if classify_only else "Choose purpose or defer. Compare independently retained cost, risk and waiting.",allow_defer=not classify_only)
     if kind is None:
         shown.extend(plans)
         return selection(None)
@@ -267,13 +362,15 @@ def choose(agent, state, action, snapshot):
         subject = str(plan.get("target_id")) if plan.get("target_id") else str(plan.get("value", "")).split(":")[0]
         subjects.setdefault(subject, []).append((key, plan))
     rows = [(subject, str(items[0][1].get("label")), _effects(context, items[0][1]), items[0][0]) for subject, items in subjects.items()]
-    subject = stage(rows, "sustenance_subject", "Choose actual subject or defer; health, hunger, cleanliness and temperature evidence belongs to each subject.")
+    subject = stage(rows, "sustenance_subject", "Compare actual subjects; final exact action will include waiting." if classify_only else "Choose actual subject or defer; health, hunger, cleanliness and temperature evidence belongs to each subject.",allow_defer=not classify_only)
     if subject is None:
         shown.extend(plans)
         return selection(None)
     shown.clear()
     rows = [(key, str(plan.get("label")), _effects(context, plan), key) for key, plan in subjects[subject]]
-    return selection(stage(rows, "sustenance_policy", DESCRIPTIONS[action] + " Choose actual policy/operator or defer; normal work remains pending."))
+    instruction = ('Choose an exact task or wait. Compare untreated starvation or cold with resources, labor and pending care.'
+                   if classify_only else DESCRIPTIONS[action] + " Choose actual policy/operator or defer; normal work remains pending.")
+    return selection(stage(rows, "sustenance_policy", instruction))
 
 def execute(client, snapshot, map_state, action, selected):
     if action not in ACTIONS:
@@ -295,6 +392,8 @@ def execute(client, snapshot, map_state, action, selected):
     current = options(current_context, action).get(key)
     if not current or any(current.get(k) != original.get(k) for k in ("kind", "target_id", "value")):
         return _failure(map_state, snapshot, action, key, "policy_no_longer_available")
+    if not _food_crisis_plan_ready(snapshot, current_context, current):
+        return _failure(map_state, snapshot, action, key, "food_crisis_prerequisite_changed")
     try:
         result = client.post("/api/v1/sustenance/policy", body={"map_id": snapshot["map"]["id"], "key": key})
     except Exception as exc:
@@ -303,12 +402,21 @@ def execute(client, snapshot, map_state, action, selected):
         return _failure(map_state, snapshot, action, key, "invalid_response", response=result, outcome_unknown=True)
     if not result["applied"]:
         return _failure(map_state, snapshot, action, key, result.get("reason") or "sustenance_not_applied", response=result)
-    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
+    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "penfeed", "warmspot", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
     _remember(map_state, snapshot, current_context, [current], duration)
     return {"applied": True, "reason": result.get("reason"), "response": result}
 
 def assess(action, snapshot):
     benefit = DESCRIPTIONS.get(action, "unsupported")
+    if action == "sustenance_animal_welfare":
+        plans = options(snapshot.get("development", {}).get("sustenance", {}), action)
+        kinds = {p.get("kind") for p in plans.values()}
+        if kinds == {"care"}:
+            benefit = "Medicine ceiling only; no feeding job or delivered feed. Tending policy cannot cure starvation."
+        elif kinds & {"penfeed", "warmspot"}:
+            benefit = "Finite compatible feed haul into the connected pen or a completed warm animal spot; delivery, eating and thermal rescue remain unverified."
+        else:
+            benefit = "Animal medicine, allowed area or pen policy; no direct feeding job. Feed and safe access must exist; policy acceptance does not stop starvation."
     if action == "sustenance_food_batch":
         plans = options(snapshot.get("development", {}).get("sustenance", {}), action)
         if plans and all(p.get("kind") in {"job", "kitchenhome"} for p in plans.values()):

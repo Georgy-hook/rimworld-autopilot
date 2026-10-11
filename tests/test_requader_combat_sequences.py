@@ -89,7 +89,7 @@ class RequaderCombatSequenceTests(unittest.TestCase):
         snap=injured_snapshot(); snap['combat']['colonists'][0]['ranged_attack_available']=False
         self.assertNotIn('stationary_fire',combat.available_tactics(snap))
 
-    def test_actual_remote_patient_facts_release_exposed_traveling_doctor(self):
+    def test_actual_remote_patient_facts_do_not_authorize_generic_care_cancellation(self):
         snap=injured_snapshot(); doctor=snap['combat']['colonists'][0]
         doctor.update(id=22839,name='Nanda',current_job='TendPatient',current_job_target_id=257,
                       current_job_target_position={'x':216,'z':142},distance_to_nearest_opponent=16.76)
@@ -97,12 +97,12 @@ class RequaderCombatSequenceTests(unittest.TestCase):
         snap['combat']['colonists'].append(patient)
         for cycle in range(8):
             self.assertFalse(combat.care_at_bedside(doctor,snap))
-            self.assertNotIn(22839,combat.protected_emergency_care_ids(snap))
+            self.assertIn(22839,combat.protected_emergency_care_ids(snap))
         doctor['position']={'x':216,'z':141}
         self.assertTrue(combat.care_at_bedside(doctor,snap))
         self.assertIn(22839,combat.protected_emergency_care_ids(snap))
         doctor['distance_to_nearest_opponent']=2
-        self.assertNotIn(22839,combat.protected_emergency_care_ids(snap))
+        self.assertIn(22839,combat.protected_emergency_care_ids(snap))
 
     def test_feed_target_a_food_does_not_claim_patient_bedside(self):
         snap=injured_snapshot(); doctor=snap['combat']['colonists'][0]
@@ -111,7 +111,7 @@ class RequaderCombatSequenceTests(unittest.TestCase):
         snap['combat']['colonists'].append({'id':257,'position':{'x':216,'z':142},'is_downed':True})
         self.assertFalse(combat.care_at_bedside(doctor,snap))
         doctor.update(care_target_id=257,care_target_position={'x':216,'z':142},care_at_bedside=False)
-        self.assertNotIn(254,combat.protected_emergency_care_ids(snap))
+        self.assertIn(254,combat.protected_emergency_care_ids(snap))
         doctor['care_at_bedside']=True
         self.assertIn(254,combat.protected_emergency_care_ids(snap))
 

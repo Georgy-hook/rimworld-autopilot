@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 
-MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations", "mental_safety")
+MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations", "mental_safety", "mining")
 
 
 @lru_cache(maxsize=1)
@@ -61,7 +61,10 @@ def goal_requirements(snapshot: dict[str, Any]) -> dict[str, Any]:
     journey = progression.summary(snapshot).get("journey_needs") if progression else None
     ship = (snapshot.get("development") or {}).get("ship_construction") or {}
     royal = colony_architect.royal_goal_needs(snapshot.get("development") or {})
+    manufacturing = (snapshot.get('development') or {}).get('manufacturing_goal')
     return {**({"journey": journey} if journey else {}),
+            **({'manufacturing': {k: manufacturing.get(k) for k in ('product_def', 'recipe',
+                'missing_research', 'skill_requirements', 'table_defs', 'stock_target_met')}} if manufacturing else {}),
             **({"royal": royal} if royal.get("rooms") else {}),
             **({"ship_materials": ship["shortages"]} if ship.get("shortages") else {})}
 

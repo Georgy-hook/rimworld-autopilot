@@ -27,6 +27,15 @@ Execution refreshes the tree/current project, rejects missing benches, completed
 
 ## Primary sources
 
+As of 2026-10-07, offered ending quests carry a complete `quest_offer` and use
+the [common terms/reward/accepter review](quests.md). Acceptance posts through
+the same fresh native contract as ordinary events. Stable offer versions allow
+countdown drift; changed terms, roster or new clinical danger require review.
+Ending-site jobs share target/effect pending memory with generic interactions,
+so another worker or module cannot immediately restart the same unverified job.
+Current food/care/ending facts survive nested option comparisons. None of these
+guards establishes quest completion or credits.
+
 The engine's `GameVictoryUtility.ShowCredits` sets `Screen_Credits.wonGame=true`. `EndingCreditsHook` records that actual call in a saveable `EndingEvidence` component. Ship startup/countdown, successful quest acceptance, survival and colony death do not set victory. `GameEnder.gameEnding` is a defeat/all-colonists-gone detector and is deliberately not used as victory evidence. `exits_to_main_menu` reports whether the native credits require leaving; Anomaly resolution credits can still complete the model's chosen campaign goal even though the game permits continuing.
 
 `/api/v1/colony/endings` exposes all native ending quests with their `QuestUtility.CanAcceptQuest` result, valid accepter IDs, descriptions, states, part types and targets. `progression_ending` offers every eligible quest/site step alongside defer, with the complete alternatives catalogue in decision facts. It never generates quests, sends completion signals, adds research points or grants rewards. Executing a stale pawn job/selection/requirement rejects the decision.

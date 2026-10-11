@@ -54,6 +54,14 @@ namespace RIMAPI.Helpers
                             ? p.harvestedThingDef.GetStatValueAbstract(StatDefOf.Nutrition) : 0,
                         HumanEdibleProduct = p.harvestedThingDef?.IsNutritionGivingIngestible == true
                             && map.mapPawns.FreeColonistsSpawned.Any(c => c.RaceProps.CanEverEat(p.harvestedThingDef)),
+                        CompatibleProductAnimalIds = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer)
+                            .Where(a => a.RaceProps.Animal && p.harvestedThingDef?.ingestible!=null && a.RaceProps.CanEverEat(p.harvestedThingDef))
+                            .Select(a=>a.thingIDNumber).ToList(),
+                        GrazingAnimalIds = map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer)
+                            .Where(a=>a.RaceProps.Animal && def.ingestible!=null && a.RaceProps.CanEverEat(def))
+                            .Select(a=>a.thingIDNumber).ToList(),
+                        LivePlantNutrition = def.ingestible==null ? 0f : def.GetStatValueAbstract(StatDefOf.Nutrition),
+                        WorkToSow=p.sowWork, WorkToHarvest=p.harvestWork,
                         GrowDays = p.growDays, CalendarDaysAtNormalFertility = CalendarDays(def, 0, 1, 21),
                         FertilityMin = p.fertilityMin, FertilitySensitivity = p.fertilitySensitivity,
                         MinGrowthTemperature = p.minGrowthTemperature, MaxGrowthTemperature = p.maxGrowthTemperature,
@@ -118,7 +126,8 @@ namespace RIMAPI.Helpers
             var dto = new GrowerCapabilityDto { Id = id, Kind = kind, ZoneId = zoneId, BuildingId = buildingId,
                 PlantDef = current?.defName, AllowSow = allowSow, Roofed = cells.All(c => c.Roofed(map)),
                 Powered = !(grower is Thing thing) || thing.TryGetComp<CompPowerTrader>()?.PowerOn != false,
-                CellCount = cells.Count, PlantCount = cells.Count(c => c.GetPlant(map) != null), BlightedCount = cells.Count(c => c.GetPlant(map)?.Blighted == true) };
+                CellCount = cells.Count, PenIds = AnimalHusbandryHelper.PenIds(map,cells).ToList(),
+                PlantCount = cells.Count(c => c.GetPlant(map) != null), BlightedCount = cells.Count(c => c.GetPlant(map)?.Blighted == true) };
             var growLights = GrowLights(map);
             foreach (ThingDef def in defs.Where(d => d.plant.Sowable && Command_SetPlantToGrow.IsPlantAvailable(d, map)))
             {

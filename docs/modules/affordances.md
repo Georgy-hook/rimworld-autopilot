@@ -81,6 +81,15 @@ wait quietly rather than automatically dismissed.
 
 ## Verification limits
 
+The 2026-10-07 quest correction adds a shared `interaction_pending` record for
+accepted menu jobs: target plus effect label, independent of actor, with minimum
+120 real seconds and 30000 game ticks. Ending-site interactions consult the same
+record. This extends menu retry protection beyond the existing per-actor dwell;
+new targets/labels remain available. Nested comparisons now protect current food,
+clinical facts and chosen ending. See the [quest audit](../audits/quest-prompts-native-contract-2026-10-07.md).
+The repeated monolith reassignment is tested offline; real investigation
+completion after installing the change remains unverified.
+
 Offline `tests.test_affordances` and `tests.test_progression` pass together (61
 tests at this revision). Regression tests prove Python transport freshness,
 clinical drift, moved pawn identity, changed allies/stage/cost/generation,

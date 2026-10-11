@@ -30,7 +30,7 @@ class NativeHuntFoodIntegrationTests(unittest.TestCase):
 
     def test_native_new_hunt_disabled_until_existing_carcasses_can_be_butchered(self):
         snapshot=self.snapshot()
-        snapshot['development']['corpses']=[{'thing_id':99,'label':'hare dead','position':{'x':25,'z':17},'categories':['CorpsesAnimal'],'is_forbidden':False}]
+        snapshot['development']['corpses']=[{'thing_id':99,'label':'hare dead','position':{'x':25,'z':17},'rot_stage':'Fresh','can_butcher':True,'categories':['CorpsesAnimal'],'is_forbidden':False}]
         with patch.object(director,'local_butcher_plan',return_value={'x':25,'z':17}):
             actions=self.candidates(snapshot)
         self.assertIn('build_butcher_spot',actions)
@@ -44,7 +44,7 @@ class NativeHuntFoodIntegrationTests(unittest.TestCase):
 
     def test_actual_candidate_food_focus_keeps_cleanup_lifecycle_alongside_butchery(self):
         snapshot=self.snapshot()
-        snapshot['development']['corpses']=[{'thing_id':99,'label':'hare dead','position':{'x':25,'z':17},'categories':['CorpsesAnimal'],'is_forbidden':False}]
+        snapshot['development']['corpses']=[{'thing_id':99,'label':'hare dead','position':{'x':25,'z':17},'rot_stage':'Fresh','can_butcher':True,'categories':['CorpsesAnimal'],'is_forbidden':False}]
         snapshot['development']['wildlife']['wild_status']=[{'id':10,'dead':True,'downed':True,'health':0}]
         state={'anchor':{'x':20,'z':20},'issued':{},'wildlife_hunt_group':{'map_id':1,'target_id':10,'pawn_ids':[1],'tick':12000}}
         with patch.object(director,'local_butcher_plan',return_value={'x':25,'z':17}):

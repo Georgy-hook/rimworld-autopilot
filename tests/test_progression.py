@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -201,25 +202,39 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual(context["chosen_route_support"], {"frontier": []})
 
     def test_ending_quest_survives_elapsed_ticks_but_requires_live_eligibility(self):
+        quest_offer = {"id": 31, "quest_def": "EndGame_RoyalAscent", "name": "Royal ascent",
+            "description": "Host the royal guests and defend them before departing.", "can_accept": True,
+            "state": "NotYetAccepted", "requires_accepter": True, "eligible_accepters": [{"pawn_id": 7}],
+            "reward_groups": [], "offer_version": "terms-v1"}
         offer = {"quest_id": 31, "route": "EndGame_RoyalAscent", "label": "Royal ascent",
                  "state": "NotYetAccepted", "can_accept": True, "requires_accepter": True,
-                 "accepter_ids": [7], "expires_in_ticks": 9000}
+                 "accepter_ids": [7], "expires_in_ticks": 9000, "quest_offer": quest_offer}
         chosen = next(iter(p.ending_options({"endings": {"quests": [offer]}}).values()))
+        class Agent:
+            def predict(self, state, questions):
+                key, q = next(iter(questions.items()))
+                return {"answers": {key: {"choice": next(iter(q["criteria"]))}}}
+        _, _, plan = p.quests.review(Agent(), quest_offer, {})
+        chosen["quest_plan"] = plan
         class Client:
             eligible = True
             calls = []
             def get(self, endpoint, **params):
                 if endpoint == "/api/v1/colony/endings":
                     return {"quests": [{**offer, "expires_in_ticks": 8800, "can_accept": self.eligible}]}
+                if endpoint == "/api/v1/quest/offer":
+                    return {**quest_offer, "can_accept": self.eligible}
                 return [] if endpoint.endswith("progression") else {}
             def post(self, endpoint, **params):
                 self.calls.append((endpoint, params))
-                return "ending_quest_accepted"
+                return {"success": True}
         client = Client()
-        result = p.execute(client, {}, {}, "progression_ending", {**chosen, "director_reason": "advance", "confidence": .9})
+        with patch('rimworld_laya.collect_snapshot', return_value={}):
+            result = p.execute(client, {}, {}, "progression_ending", {**chosen, "director_reason": "advance", "confidence": .9})
         self.assertTrue(result["applied"])
         self.assertFalse(result["victory_verified"])
-        self.assertEqual(client.calls, [("/api/v1/colony/endings/accept", {"query": {"quest_id": 31, "pawn_id": 7, "confirmed": True}})])
+        self.assertEqual(client.calls, [("/api/v1/quest/accept", {"body": {
+            "quest_id": 31, "accepter_pawn_id": 7, "offer_version": "terms-v1", "reward_choices": []}})])
         client.eligible = False
         self.assertFalse(p.execute(client, {}, {}, "progression_ending", chosen)["applied"])
         self.assertEqual(len(client.calls), 1)
