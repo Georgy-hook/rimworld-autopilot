@@ -104,7 +104,7 @@ class StorageTests(unittest.TestCase):
         s = {'map': {'id': 0}, 'game': {'tick': 100}, 'development': {}}
         client=Client(); state={'anchor': {'x': 7, 'z': 7}, 'issued': {}}
         director.execute_action(client, s, state, 'create_stockpile', {})
-        body=client.posts[0][1]['body']; self.assertEqual(body['storage_profile'], 'dry_goods')
+        body=client.posts[0][1]['body']; self.assertEqual(body['storage_profile'], 'bulk_materials')
         self.assertEqual(body['point_a']['x'], 7)
         self.assertNotIn('allowed_item_categories', body)
 
