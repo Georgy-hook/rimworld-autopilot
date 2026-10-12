@@ -161,8 +161,25 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                 options[option["def_name"]] = plan
         if options:
             edible = {k: p for k, p in options.items() if p.get("human_edible_product") is True}
+            if food_required and need['first_harvest_gap'] and need['stored_food_days'] is not None:
+                timed = {k:p for k,p in edible.items() if isinstance(p.get('calendar_days_to_harvest_estimate'),(int,float))
+                         and p['calendar_days_to_harvest_estimate']>0}
+                within = {k:p for k,p in timed.items() if p['calendar_days_to_harvest_estimate']+2<=need['stored_food_days']}
+                if within:
+                    edible = within
+                elif timed:
+                    fastest = min(p['calendar_days_to_harvest_estimate'] for p in timed.values())
+                    edible = {k:p for k,p in timed.items() if p['calendar_days_to_harvest_estimate']<=fastest+.01}
+                else:
+                    edible = {}
+                # This proposal serves a first-food deadline. Slower long-term
+                # crops return when a reserve can bridge their delivery, or an
+                # existing field already covers that deadline. No crop is
+                # hard-coded, and standing food fields are never replaced here.
+                for plan in edible.values():
+                    plan['delivery_scope']='first_food_deadline; gather/hunt must bridge any positive stock gap'
             if food_required:
-                options = {**edible, **{k:p for k,p in options.items() if p.get("animal_feed_purpose")}}
+                options = {**edible, **{k:p for k,p in options.items() if p.get("animal_feed_purpose") and not p.get('human_edible_product')}}
             # Missing food-product evidence does not authorize reclassifying
             # wood, animal feed or decorations as a human food source.
             if options:

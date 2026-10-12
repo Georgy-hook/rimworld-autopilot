@@ -78,6 +78,24 @@ class FirstHarvestRecovery(unittest.TestCase):
             self.assertEqual(facts['human_demand_per_day'],1.6)
             self.assertEqual(facts['demand_basis'],'legacy_1.6_per_person_estimate')
 
+    def test_capacity_shortfall_cannot_make_another_slow_corn_plot_immediate_food(self):
+        s=food_snapshot();s['development']['plant_catalog']['growers'][0]['options'][0]['legal_cells']=45
+        s['development']['sustenance']={'husbandry':{'human_demand_nutrition_day':2.4}}
+        self.assertTrue(crops.food_planning_facts(s)['crop_capacity_gap'])
+        self.assertEqual(set(crops.crop_sites(s,True)['new_ground']['crop_options']),{'Plant_Rice'})
+        self.assertEqual(crops.crop_sites(s,False),{})
+    def test_finite_reserve_admits_multiple_timely_crops_and_long_horizon_returns_corn(self):
+        s=food_snapshot();s['development']['farm']['crop_types']=[]
+        s['development']['plant_catalog']['growers']=s['development']['plant_catalog']['growers'][1:]
+        s['map']['resources']['nutrition']=24 #15days
+        option={'def_name':'ModFood','safe_sowing_now':True,'legal_cells':140,'calendar_days_to_harvest_estimate':10}
+        definition={'def_name':'ModFood','human_edible_product':True,'category':'food','minimum_skill':0,'harvest_yield':10,'product_nutrition':.05}
+        s['development']['plant_catalog']['plants'].append(definition)
+        s['development']['plant_catalog']['growers'][0]['options'].append(option)
+        self.assertEqual(set(crops.crop_sites(s,True)['new_ground']['crop_options']),{'Plant_Rice','ModFood'})
+        s['map']['resources']['nutrition']=48
+        self.assertIn('Plant_Corn',crops.crop_sites(s,True)['new_ground']['crop_options'])
+
 
 class ConcurrentEmergencies(unittest.TestCase):
     def test_fire_leaves_safe_food_choices_for_free_actor(self):

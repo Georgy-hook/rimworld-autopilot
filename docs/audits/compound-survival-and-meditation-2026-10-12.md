@@ -11,6 +11,14 @@ can be offered without replacing live food plants. An identical additional slow
 plot cannot bridge that gap; a pending faster plot prevents repeated expansion
 for the same first-harvest need. Short-reserve crop and worker commitments remain.
 
+The real successor initially chose corn twice despite the comparison facts. A
+first-food proposal now has an explicit feasibility scope: offer legal crops
+whose estimated delivery fits the reserve, or the fastest legal alternatives if
+none fit. This is a deadline check rather than a hard-coded rice preference.
+The positive gap still requires gathering/hunting/ready supplies; a new crop
+never counts as today's food. Existing live food plants remain protected. Slower
+long-term crops return when the reserve/first-harvest requirement admits them.
+
 The live successor check also found an existing native demand observation was
 not joined into the planning horizon: a Gourmand crew needed5.6nutrition/day,
 while the typical three-person fallback used4.8. Planning now uses finite positive
