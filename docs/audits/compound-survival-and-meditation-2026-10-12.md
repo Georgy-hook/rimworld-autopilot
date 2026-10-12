@@ -11,6 +11,13 @@ can be offered without replacing live food plants. An identical additional slow
 plot cannot bridge that gap; a pending faster plot prevents repeated expansion
 for the same first-harvest need. Short-reserve crop and worker commitments remain.
 
+The live successor check also found an existing native demand observation was
+not joined into the planning horizon: a Gourmand crew needed5.6nutrition/day,
+while the typical three-person fallback used4.8. Planning now uses finite positive
+native current-pawn demand (traits, genes, age and body stage) when available,
+including the compact root reserve display. Missing/malformed demand keeps an
+explicit legacy estimate. Raw stock and future field output remain separate.
+
 An active fire retains already feasible immediate food work for independent
 available actors. Busy firefighters and protected caregivers retain their jobs.
 The food and corpse-gas focus passes retain one another's feasible actions.

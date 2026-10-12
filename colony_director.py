@@ -1533,6 +1533,9 @@ def collect_development(client: bridge.RimApiClient, snapshot: dict[str, Any]) -
         "active_mods": active_mods if isinstance(active_mods, list) else [],
     }
     colony_modules.collect(client, snapshot)
+    daily = husbandry.number(husbandry.native_context(snapshot).get('human_demand_nutrition_day'))
+    if daily is not None and daily > 0:
+        snapshot['map'].setdefault('resources',{})['human_demand_nutrition_day'] = daily
     snapshot["development"]["profession_context"] = professions.profession_context(
         snapshot.get("colonists", []), snapshot["development"]["work_types"]
     )
@@ -2922,8 +2925,8 @@ def requires_builder_now(action: str, snapshot: dict[str, Any] | None = None) ->
 def estimated_food_runway_days(resources: dict[str, Any], people_count: int) -> float | None:
     """Rough planning horizon, not a rule that decides the colony's next action.
 
-    RimWorld reports total stored nutrition. A humanlike's typical 1.6/day
-    demand is only an estimate; work, traits and food access can change it.
+    Use joined native current-pawn nutrition demand when present. The legacy
+    fallback1.6/day is only an estimate; traits, genes and age can change it.
     """
     days = capabilities.stored_food_days(resources, people_count)
     return round(days, 1) if days is not None else None

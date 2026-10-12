@@ -63,6 +63,21 @@ class FirstHarvestRecovery(unittest.TestCase):
         actions=['create_growing_zone','harvest_local_plants','advance_doctrine_research']
         self.assertEqual(director.focus_imminent_food_choices(s,actions),actions[:2])
 
+    def test_native_trait_gene_and_stage_demand_overrides_typical_count(self):
+        s=food_snapshot();s['development']['sustenance']={'husbandry':{'human_demand_nutrition_day':2.4}}
+        facts=crops.food_planning_facts(s)
+        self.assertEqual(facts['human_demand_per_day'],2.4)
+        self.assertAlmostEqual(facts['stored_food_days'],2.67)
+        self.assertEqual(facts['demand_basis'],'native_current_pawns')
+        s['map']['resources']['human_demand_nutrition_day']=2.4
+        self.assertAlmostEqual(director.estimated_food_runway_days(s['map']['resources'],1),2.7)
+    def test_invalid_native_demand_keeps_explicit_legacy_estimate(self):
+        for value in (None,False,float('nan'),-1,0):
+            s=food_snapshot();s['development']['sustenance']={'husbandry':{'human_demand_nutrition_day':value}}
+            facts=crops.food_planning_facts(s)
+            self.assertEqual(facts['human_demand_per_day'],1.6)
+            self.assertEqual(facts['demand_basis'],'legacy_1.6_per_person_estimate')
+
 
 class ConcurrentEmergencies(unittest.TestCase):
     def test_fire_leaves_safe_food_choices_for_free_actor(self):

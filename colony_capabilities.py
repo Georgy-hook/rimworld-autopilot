@@ -202,14 +202,19 @@ def stored_food_days(resources: dict[str, Any], people_count: int) -> float | No
         else:
             raw = raw or max(0, float(resources.get("food") or 0) - meals)
             nutrition = .9 * meals + .05 * raw
-    return max(0, float(nutrition)) / (1.6 * people_count) if nutrition is not None else None
+    daily = husbandry.number(resources.get('human_demand_nutrition_day'))
+    daily = daily if daily is not None and daily > 0 else 1.6 * people_count
+    return max(0, float(nutrition)) / daily if nutrition is not None else None
 
 
 def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Potential fields are an estimate, never stored or delivered nutrition."""
     people = [p for p in snapshot.get("colonists") or [] if not p.get("dead") and not p.get("is_dead")]
-    demand = 1.6 * len(people)
-    stored = stored_food_days((snapshot.get("map") or {}).get("resources") or {}, len(people))
+    native_demand = husbandry.number(husbandry.native_context(snapshot).get('human_demand_nutrition_day'))
+    resources = (snapshot.get('map') or {}).get('resources') or {}
+    demand = native_demand if native_demand is not None and native_demand > 0 else husbandry.number(resources.get('human_demand_nutrition_day'))
+    demand = demand if demand is not None and demand > 0 else 1.6 * len(people)
+    stored = stored_food_days({**resources,'human_demand_nutrition_day':demand}, len(people))
     potential = crop_nutrition_estimate(snapshot)
     urgent = any(float(p.get("hunger", 1) if p.get("hunger") is not None else 1) < .12
                  or any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) > 0
@@ -237,6 +242,7 @@ def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
     protect = bool(demand and capacity_gap) or urgent or first_gap or stored is not None and stored < 5
     return {"stored_food_days": round(stored, 2) if stored is not None else None,
             "human_demand_per_day": round(demand, 1),
+            "demand_basis": 'native_current_pawns' if native_demand is not None and native_demand > 0 or 'human_demand_nutrition_day' in resources else 'legacy_1.6_per_person_estimate',
             "potential_crop_nutrition_per_day": round(potential, 1),
             "crop_capacity_gap": capacity_gap,
             "first_harvest_days_estimate": first,
