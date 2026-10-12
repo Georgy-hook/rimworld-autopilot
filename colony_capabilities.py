@@ -112,7 +112,7 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
     # A viable planned field is a labour commitment, not delivered food.
     # Once enough acreage is configured, finish sowing/gathering before adding
     # more fields. Short reserves still protect that commitment until harvest.
-    if new and food_required and not need["crop_capacity_gap"] and not (fodder_needed and not human_urgent):
+    if new and food_required and not need["crop_capacity_gap"] and not need["first_harvest_gap"] and not (fodder_needed and not human_urgent):
         return result
     for site in (snapshot.get("development", {}).get("plant_catalog") or {}).get("growers") or []:
         if (site.get("kind") == "new_ground") != new:
@@ -133,6 +133,15 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                     and workers(snapshot, "Growing", int(definition.get("minimum_skill") or 0))
                     and (new or option["def_name"] != site.get("plant_def"))):
                 plan = {**definition, **option}
+                days = plan.get("calendar_days_to_harvest_estimate")
+                stored = need["stored_food_days"]
+                if (new and need["first_harvest_gap"] and not need["crop_capacity_gap"]
+                        and definition.get("human_edible_product") and isinstance(days, (int,float))
+                        and need["first_harvest_days_estimate"] is not None and days >= need["first_harvest_days_estimate"]):
+                    continue  # An identical extra slow field cannot bridge this first-harvest gap.
+                plan["first_food_delivery_days_estimate"] = float(days) + 2 if isinstance(days, (int, float)) and days > 0 else None
+                plan["bridge_food_days_needed"] = (round(max(0, float(days) + 2 - stored), 2)
+                    if isinstance(days, (int, float)) and days > 0 and stored is not None else None)
                 # Harvested feed belongs outside connected pens. Pasture is a
                 # distinct grazing purpose and does not deliver harvested hay.
                 feed = bool(plan.get("compatible_product_animal_ids")) and float(plan.get("product_nutrition") or 0)>0
@@ -152,8 +161,25 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                 options[option["def_name"]] = plan
         if options:
             edible = {k: p for k, p in options.items() if p.get("human_edible_product") is True}
+            if food_required and need['first_harvest_gap'] and need['stored_food_days'] is not None:
+                timed = {k:p for k,p in edible.items() if isinstance(p.get('calendar_days_to_harvest_estimate'),(int,float))
+                         and p['calendar_days_to_harvest_estimate']>0}
+                within = {k:p for k,p in timed.items() if p['calendar_days_to_harvest_estimate']+2<=need['stored_food_days']}
+                if within:
+                    edible = within
+                elif timed:
+                    fastest = min(p['calendar_days_to_harvest_estimate'] for p in timed.values())
+                    edible = {k:p for k,p in timed.items() if p['calendar_days_to_harvest_estimate']<=fastest+.01}
+                else:
+                    edible = {}
+                # This proposal serves a first-food deadline. Slower long-term
+                # crops return when a reserve can bridge their delivery, or an
+                # existing field already covers that deadline. No crop is
+                # hard-coded, and standing food fields are never replaced here.
+                for plan in edible.values():
+                    plan['delivery_scope']='first_food_deadline; gather/hunt must bridge any positive stock gap'
             if food_required:
-                options = {**edible, **{k:p for k,p in options.items() if p.get("animal_feed_purpose")}}
+                options = {**edible, **{k:p for k,p in options.items() if p.get("animal_feed_purpose") and not p.get('human_edible_product')}}
             # Missing food-product evidence does not authorize reclassifying
             # wood, animal feed or decorations as a human food source.
             if options:
@@ -193,26 +219,55 @@ def stored_food_days(resources: dict[str, Any], people_count: int) -> float | No
         else:
             raw = raw or max(0, float(resources.get("food") or 0) - meals)
             nutrition = .9 * meals + .05 * raw
-    return max(0, float(nutrition)) / (1.6 * people_count) if nutrition is not None else None
+    daily = husbandry.number(resources.get('human_demand_nutrition_day'))
+    daily = daily if daily is not None and daily > 0 else 1.6 * people_count
+    return max(0, float(nutrition)) / daily if nutrition is not None else None
 
 
 def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Potential fields are an estimate, never stored or delivered nutrition."""
     people = [p for p in snapshot.get("colonists") or [] if not p.get("dead") and not p.get("is_dead")]
-    demand = 1.6 * len(people)
-    stored = stored_food_days((snapshot.get("map") or {}).get("resources") or {}, len(people))
+    native_demand = husbandry.number(husbandry.native_context(snapshot).get('human_demand_nutrition_day'))
+    resources = (snapshot.get('map') or {}).get('resources') or {}
+    demand = native_demand if native_demand is not None and native_demand > 0 else husbandry.number(resources.get('human_demand_nutrition_day'))
+    demand = demand if demand is not None and demand > 0 else 1.6 * len(people)
+    stored = stored_food_days({**resources,'human_demand_nutrition_day':demand}, len(people))
     potential = crop_nutrition_estimate(snapshot)
     urgent = any(float(p.get("hunger", 1) if p.get("hunger") is not None else 1) < .12
                  or any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) > 0
                         for h in p.get("health_conditions") or []) for p in people)
     capacity_gap = potential < demand * 1.3
-    protect = bool(demand and capacity_gap) or urgent or stored is not None and stored < 5
+    definitions = plant_definitions(snapshot)
+    harvests = [c for c in (snapshot.get("development", {}).get("farm") or {}).get("crop_types") or []
+                if int(c.get("total_plants") or 0) > 0 and definitions.get(c.get("plant_def_name"), {}).get("human_edible_product") is True]
+    ready = sum(int(c.get("harvestable_plants") or 0) for c in harvests)
+    waits = [float(c["days_until_harvest"]) for c in harvests
+             if isinstance(c.get("days_until_harvest"), (int, float)) and c["days_until_harvest"] >= 0]
+    represented = {i for c in harvests for i in c.get('grower_ids') or []}
+    for site in (snapshot.get('development', {}).get('plant_catalog') or {}).get('growers') or []:
+        if site.get('kind') == 'new_ground' or site.get('id') in represented or not definitions.get(site.get('plant_def'),{}).get('human_edible_product'):
+            continue
+        option = next((o for o in site.get('options') or [] if o.get('def_name')==site.get('plant_def')), {})
+        days = option.get('calendar_days_to_harvest_estimate')
+        if option.get('safe_sowing_now') and site.get('allow_sow') is not False and isinstance(days,(int,float)) and days>0:
+            waits.append(float(days))  # Configured/unsown field: full growth time, not ready food.
+    first = 0.0 if ready else min(waits) if waits else None
+    # A full corn field can meet average output yet miss the first meal by weeks.
+    # Harvesting/hauling/cooking and sowing need a buffer even in a warm biome.
+    first_gap = bool(demand and stored is not None and not ready
+                     and (first is not None and first + 2 > stored or first is None and capacity_gap))
+    protect = bool(demand and capacity_gap) or urgent or first_gap or stored is not None and stored < 5
     return {"stored_food_days": round(stored, 2) if stored is not None else None,
             "human_demand_per_day": round(demand, 1),
+            "demand_basis": 'native_current_pawns' if native_demand is not None and native_demand > 0 or 'human_demand_nutrition_day' in resources else 'legacy_1.6_per_person_estimate',
             "potential_crop_nutrition_per_day": round(potential, 1),
             "crop_capacity_gap": capacity_gap,
+            "first_harvest_days_estimate": first,
+            "first_harvest_gap": first_gap,
+            "first_delivery_buffer_days": 2,
+            "ready_food_plants": ready,
             "protect_food_supply": protect,
-            "renewable_food_gap": capacity_gap or protect,
+            "renewable_food_gap": capacity_gap or protect or first_gap,
             "immediate_food_gap": urgent or stored is not None and stored < 2.5,
             "crop_food_is_not_ready": True}
 
@@ -713,11 +768,12 @@ def choose(agent: Any, state: dict[str, Any], action: str, snapshot: dict[str, A
                 "feed_deficit":reserve.get("reserve_deficit_nutrition"),
                 "human_stored_days":food_need["stored_food_days"]},
             "options":{name:{"human_food":p.get("human_edible_product"),
-                "harvest_days":(p.get("feed_planning") or {}).get("harvest_days"), "warm_days":p.get("outdoor_warm_days_estimate"),
+                "harvest_days":p.get("calendar_days_to_harvest_estimate"), "delivery_days":p.get("first_food_delivery_days_estimate"),
+                "bridge_food_days":p.get("bridge_food_days_needed"), "warm_days":p.get("outdoor_warm_days_estimate"),
                 "feed_nutrition":(p.get("feed_planning") or {}).get("potential_nutrition"),
                 "feed_cells_needed":(p.get("feed_planning") or {}).get("harvest_cells_lower_bound"),
                 "grazed":(p.get("feed_planning") or {}).get("grazing_prevents_assured_harvest")} for name,p in compared.items()}}
-        name = pick("crop_type", "Choose an actual legal crop. Seasonal averages cannot predict cold snaps. Compare time to harvest with remaining outdoor warm days and current food need.", {
+        name = pick("crop_type", "Choose an actual legal crop. Compare first food delivery with stored days: a positive bridge gap needs food from another source before this crop yields. Keep live food fields; use a separate faster plot when needed. Seasonal averages cannot predict cold snaps.", {
             name: f"{p.get('label')}; human edible {p.get('human_edible_product')}; feed {p.get('feed_planning')}; yields {p.get('harvest_yield')} {p.get('harvested_thing')}; harvest about {p.get('calendar_days_to_harvest_estimate'):.1f} calendar days, warm days {p.get('outdoor_warm_days_estimate')}; fertility {p.get('fertility')}; skill {p.get('minimum_skill')}; temp {p.get('min_growth_temperature')}..{p.get('max_growth_temperature')}"
             for name, p in crops.items() if str(p.get("category") or "other") == category})
         state.pop("option_effects",None); state.pop("comparison_facts",None)

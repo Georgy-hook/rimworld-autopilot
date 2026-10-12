@@ -592,6 +592,17 @@ def _log(path: Path, event: dict[str, Any]) -> None:
         handle.write(json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), **event}, ensure_ascii=False) + "\n")
 
 
+def refresh_autonomy_safety(api: RimApi, ready: bool) -> None:
+    try:
+        response = api.request('/api/v1/society/autonomy-safety?' + urlencode({'enabled': str(ready).lower()}), post=True)
+        if ready and (not isinstance(response, dict) or response.get('active') is not True):
+            raise RuntimeError('Autonomy clinical drug safety lease was not confirmed')
+    except (OSError, RuntimeError, ValueError):
+        if ready:
+            api.request('/api/v1/game/speed?speed=0', post=True)
+        raise
+
+
 def _execute(api: RimApi, action: dict[str, Any]) -> None:
     kind = action["kind"]
     if kind == "ensure_speed":
@@ -728,6 +739,7 @@ def main() -> None:
                     next_window_scan = now + 1.0
                 death_until = time.time() + max(0, DEATH_SECONDS - (now - planner.shot.started)) if planner.shot and planner.shot.kind == "death" else 0
                 shot = planner.shot
+                refresh_autonomy_safety(api, runtime_ready)
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
                           "director_ready": runtime_ready,

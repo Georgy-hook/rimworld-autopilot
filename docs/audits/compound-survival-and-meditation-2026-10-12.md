@@ -1,0 +1,126 @@
+# Compound survival and meditation contracts
+
+## First harvest and competing emergencies
+
+Potential average field output is separate from stored nutrition and the first
+meal. Crop comparisons now retain native calendar growth estimates, stored days,
+first harvest and a two-day planning allowance for sowing, harvesting, delivery
+and cooking. The allowance is an estimate, not a deadline or guaranteed yield.
+A sufficient slow field cannot hide a first-harvest gap. A separate faster plot
+can be offered without replacing live food plants. An identical additional slow
+plot cannot bridge that gap; a pending faster plot prevents repeated expansion
+for the same first-harvest need. Short-reserve crop and worker commitments remain.
+
+The real successor initially chose corn twice despite the comparison facts. A
+first-food proposal now has an explicit feasibility scope: offer legal crops
+whose estimated delivery fits the reserve, or the fastest legal alternatives if
+none fit. This is a deadline check rather than a hard-coded rice preference.
+The positive gap still requires gathering/hunting/ready supplies; a new crop
+never counts as today's food. Existing live food plants remain protected. Slower
+long-term crops return when the reserve/first-harvest requirement admits them.
+
+The live successor check also found an existing native demand observation was
+not joined into the planning horizon: a Gourmand crew needed5.6nutrition/day,
+while the typical three-person fallback used4.8. Planning now uses finite positive
+native current-pawn demand (traits, genes, age and body stage) when available,
+including the compact root reserve display. Missing/malformed demand keeps an
+explicit legacy estimate. Raw stock and future field output remain separate.
+
+An active fire retains already feasible immediate food work for independent
+available actors. Busy firefighters and protected caregivers retain their jobs.
+The food and corpse-gas focus passes retain one another's feasible actions.
+Routes, workers, recipes, ingredients and actual results still need native checks.
+An accepted harvest, bill, priority or disposal job is not delivered food or care.
+
+Known zero native pollution with no wastepack stock gives a PollutionPump an
+explicit context blocker. Its loaded definition stays accounted for in the full
+catalog; missing pollution evidence is not assumed to be zero. Current power,
+fuel and output must be verified separately.
+
+## Drugs and limited model decisions
+
+Native drug observations include the loaded ingestion hediff capacity modifiers,
+appetite effects and current pawn capacities. Risky recreational policies become
+relevant during injury or malnutrition. New risky recreational schedules/policies
+are unavailable; addiction and genetic requirements retain their own choices.
+Deferral of a currently dangerous permission is finite on both wall and game
+clocks. A unique person is classified mechanically; the final exact policy edit
+or defer remains a Laya decision. An edit does not interrupt an existing job.
+
+Real cached-model checks selected the faster human-food crop in both option
+orders. The model repeatedly deferred an injured worker's optional drug policy
+edit despite retained capacity evidence. This is a documented model limitation;
+it is not reported as a successful policy decision or recovery.
+
+A short unsaved observer lease therefore also checks upcoming autonomous joy
+and scheduled drug jobs, including taking a dose from another inventory.
+Loaded sedative/appetite effects combined with current incapacity/malnutrition
+can block a nonmedical, nonessential dose. Medical drugs and addiction/genetic
+dependency doses remain available. A current high, injury or mental state is not
+removed. Human play with the API mod alone has no lease and keeps vanilla rules.
+The observer confirms this scope before maintaining autonomous speed; a failed
+confirmation holds the game. Readonly status reports blocked-dose facts.
+
+## Native meditation
+
+The previous policy route required an existing psylink and offered only Work
+hours. It excluded Natural-focus development before the first psylink and normal
+Anything timetable slots. Policies now report each pawn's native focus types,
+eligibility, last meditation tick, assigned hours and revealed anima trees/grass.
+Desired psyfocus still requires a psylink. Natural meditation can be scheduled
+without one. Sleep/recreation hours and protected care remain preserved; ordinary
+meditation, travel and actual focus/grass gains are observed separately.
+
+Free meditation spot blueprints use normal native placement/construction on
+revealed, safe, reachable cells within the loaded focus radius. Completed spots
+are assigned only with fresh native assignment and route checks. Pending spots
+prevent duplicate planning. Artificial building penalties remain native.
+
+The installed 1.6 meditation job requires Natural focus to grow anima grass;
+linking has separate native recipient/grass/ritual gates. A tree does not make a
+person eligible. Other focus types remain available to psycasters. Official
+[Royalty meditation update](https://store.steampowered.com/news/posts/?appids=294100&enddate=1626377701&feed=steam_community_announcements)
+describes personal focus and timetable mechanics; installed definitions and job
+code are used for the exact current eligibility and grass checks.
+
+## Medical bills versus production
+
+The live successor exposed another native defect: the general DoBill job was
+classified as protected care regardless of its target. A production worker was
+excluded from emergency care/combat, and its worktable was exported as a care
+patient. DoBill is now care only when its exact native target is a pawn; those
+operations also retain clinical protection at contact. Cooking, butchering and
+crafting are ordinary production. Fresh combat facts export the classification,
+and Python care/combat joins use it. Ambiguous legacy DoBill observations remain
+protected rather than guessing that a surgery can be interrupted. Native routes,
+active feeding, rescue, carrying, bleeding and exact caregiver retreat guards
+remain. Ordinary production commitments do not establish medical care.
+
+## Unsupported attacks and event placeholders
+
+A known stronger live animal must not receive an unsupported novice melee
+charge. Native animal and combat-power facts provide a coarse risk flag, not a
+prediction of victory. Prepared armored guards with actual covering fire, or
+multiple prepared guards, retain a risky choice. Distant guns, blocked firing
+lanes and protected clinical workers are excluded from support. Group and
+individual assault plans revalidate this flag before emitting commands. Contact
+self-defense, existing native attacks and withdrawal remain distinct options.
+Small or badly injured animals are outside this specific strong-animal flag.
+
+Several event response labels currently have a context-recording executor but
+no corresponding schedule, power or containment action. They are excluded from
+the action menu instead of repeatedly presenting an unexecuted remedy as work.
+The observation option records the limitation, while the normal development
+planner continues to receive the live condition and can use supported care,
+food, climate and defense actions. Observing does not resolve the event.
+
+## Verification limits
+
+Integrated Python regressions cover care, food commitments, native worker/route
+refusals, hunting/combat recovery, production/material logistics, research and
+ending transitions. Native boundary suites compile actual production methods;
+the full mod also compiles against the 1.6 reference assemblies. API inventory
+accounts for all routes without missing literal bindings or duplicate endpoints.
+Offline acknowledgments and CUDA choices cannot establish gameplay completion,
+income, a won raid or victory. Full battle histories and an unrecorded original
+Unity exception cannot be reconstructed or claimed repaired from these tests.

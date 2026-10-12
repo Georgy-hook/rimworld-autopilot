@@ -409,6 +409,8 @@ def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) 
             detail["downed"] = bool(pawn["is_downed"])
         if pawn.get("current_job") is not None:
             detail["current_job"] = str(pawn["current_job"])
+        if isinstance(pawn.get('has_care_job'),bool):
+            detail['has_care_job']=pawn['has_care_job']
 
 
 def select_work_map(maps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1405,6 +1407,8 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
                     f"nearest shooter {support_gap:.0f} cells away. "
                     "An unarmed fighter can be downed or killed before help arrives."
                 )
+                if combat_planner.unsupported_animal_charge(snapshot, [pawn]):
+                    melee_options.pop('melee_assault', None)
                 if (first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 20
                         and (not supporting_guns or (support_gap <= 30
                                  and any(first_number(gun.get("distance_to_nearest_opponent"), 9999)
@@ -1602,6 +1606,10 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
         if (role in {"melee_assault", "lure_enemy", "withdraw_and_regroup"}
                 and first_number(pawn.get("moving"), 1) < 0.65):
             role = pawn_default_role
+        if role == 'melee_assault' and combat_planner.unsupported_animal_charge(snapshot, [pawn]):
+            # Revalidate a stale per-pawn role without issuing a replacement
+            # movement order or taking the caregiver into combat.
+            continue
         groups.setdefault(role, []).append(pawn)
     commands = []
     for role, pawns in groups.items():
@@ -1857,6 +1865,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                         and combat_planner.errand_exposed(snapshot, pawn.get("position"))]
         elif choice == "withdraw_and_regroup":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65]
+        if choice in {'melee_assault', 'rush_ranged'} and combat_planner.unsupported_animal_charge(snapshot, fighters):
+            return {'kind': 'noop', 'description': 'Unsupported melee charge against a known stronger animal; reselect defense or withdrawal'}
         if choice == "backstep_fire":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65]
         if choice == "kite":

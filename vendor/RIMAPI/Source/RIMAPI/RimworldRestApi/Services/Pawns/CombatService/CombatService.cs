@@ -161,6 +161,7 @@ namespace RIMAPI.Services
                 CurrentJobTargetPosition = pawn.CurJob?.targetA.Thing is Thing jobTarget && jobTarget.Spawned
                     ? new PositionDto { X = jobTarget.Position.x, Y = jobTarget.Position.y, Z = jobTarget.Position.z } : null,
                 CareAtBedside = CombatNativeHelper.CareAtBedside(pawn),
+                HasCareJob = CombatNativeHelper.HasCareJob(pawn),
                 CareTargetId = CombatNativeHelper.CareTarget(pawn)?.thingIDNumber,
                 CareTargetPosition = CombatNativeHelper.CareTarget(pawn) is Thing careTarget && careTarget.Spawned
                     ? new PositionDto { X = careTarget.Position.x, Y = careTarget.Position.y, Z = careTarget.Position.z } : null,

@@ -7,7 +7,8 @@ CLINICAL_CARE_JOBS = {'tendpatient', 'rescue', 'feedpatient'}
 
 
 def active_clinical_care(row: dict[str, Any]) -> bool:
-    return str(row.get('current_job') or '').casefold() in CLINICAL_CARE_JOBS
+    name=str(row.get('current_job') or '').casefold()
+    return name in CLINICAL_CARE_JOBS or name=='dobill' and row.get('has_care_job') is True
 
 
 def protected_care_retreat_ids(snapshot: dict[str, Any]) -> set[int]:
@@ -158,6 +159,8 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
                  'lessongiving', 'lessonreceiving', 'prisonerinterrogateidentity'}
     protected = set()
     for row in (snapshot.get('combat') or {}).get('colonists') or []:
+        if str(row.get('current_job') or '').casefold()=='dobill' and row.get('has_care_job') is False:
+            continue
         if row.get('id') is not None and not row.get('is_dead') and active_clinical_care(row):
             protected.add(int(row['id']))
             continue
@@ -177,6 +180,49 @@ def ranged_capable(row: dict[str, Any]) -> bool:
     if row.get('is_dead') or row.get('is_downed') or row.get('is_in_mental_state'): return False
     if isinstance(row.get('ranged_attack_available'), bool): return row['ranged_attack_available']
     return float(row.get('manipulation', 1)) > 0 and float(row.get('sight', 1)) > 0
+
+
+def unsupported_animal_charge(snapshot: dict[str, Any], attackers: list[dict[str, Any]] | None = None) -> bool:
+    """Known large animals do not justify an unsupported novice charge.
+
+    Native combat power is a coarse risk flag, not predicted victory. Contact
+    self-defense and withdrawal remain separate choices. A doctor, a distant
+    gun or a gun without a firing lane cannot be counted as covering fire.
+    """
+    def positive(value: Any, default: float = 0) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return number if math.isfinite(number) and number >= 0 else default
+
+    protected = protected_emergency_care_ids(snapshot)
+    free = [p for p in (snapshot.get('combat') or {}).get('colonists') or []
+            if not any(p.get(k) for k in ('is_dead', 'is_downed', 'is_in_mental_state'))
+            and p.get('can_fight', True) and p.get('id') not in protected]
+    attackers = [p for p in (attackers if attackers is not None else free)
+                 if p in free and not p.get('has_ranged_weapon')
+                 and positive(p.get('moving'), 1) >= .65]
+    if not attackers:
+        return False
+    powers = [positive(p.get('combat_power')) for p in attackers]
+    if not all(powers):
+        return False  # Legacy telemetry cannot prove this relative-power flag.
+    prepared = [p for p in attackers if p.get('weapon_def')
+                and positive(p.get('health'), 1) >= .75
+                and min(positive(p.get(k)) for k in ('moving', 'manipulation', 'consciousness')) >= .8
+                and int(p.get('melee_skill') or 0) >= 6 and positive(p.get('armor_sharp')) >= .4]
+    for enemy in live_hostiles(snapshot):
+        if not enemy.get('is_animal') or positive(enemy.get('health'), 1) < .5:
+            continue
+        if positive(enemy.get('combat_power')) < 2 * max(powers):
+            continue
+        cover = [p for p in free if p not in attackers and ranged_capable(p)
+                 and positive(p.get('health'), 1) >= .6
+                 and isinstance(p.get('shootable_opponent_ids'), list) and has_clear_shot(p, [enemy])]
+        if len(prepared) < 2 and not (prepared and cover):
+            return True
+    return False
 
 
 def is_kidnapper(row: dict[str, Any]) -> bool:
@@ -694,6 +740,9 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
             if not in_range:
                 names = [name for name in names if name not in
                          {"hold_cover", "focus_fire", "advance_to_range", "firing_line"}]
+
+    if unsupported_animal_charge(snapshot, armed_melee):
+        names = [name for name in names if name not in {'melee_assault', 'rush_ranged'}]
 
     result: dict[str, str] = {}
     for native_tactic in ("emp_control", "smoke_advance", "mortar_counterbattery", "mortar_reload", "attack_structure"):

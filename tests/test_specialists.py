@@ -175,7 +175,7 @@ class SpecialistTests(unittest.TestCase):
         snap = snapshot()
         snap["development"]["specialists"]["gene_pawns"] = [{"pawn_id": 4, "resources": [{"def_name": "Hemogen", "level": .1, "target": .5}], "needs": [{"def_name": "Deathrest", "level": .1}]}]
         facts = specialists.summary(snap)
-        self.assertEqual(len(facts), 5)
+        self.assertEqual(len(facts), 6)
         self.assertEqual(facts["low_energy_mechs"]["count"], 1)
         self.assertEqual(facts["unsafe_containment"]["count"], 1)
         self.assertEqual(facts["pollution_waste"]["unfrozen_wastepacks"], 5)
@@ -418,7 +418,7 @@ class SpecialistCycleContracts(unittest.TestCase):
         self.assertIn('operation == "open" || operation == "select" ? RequestParser.GetIntParameter', genetics)
         self.assertIn('new[]{"assign","remove","spectate"}.Contains(operation)', ritual)
         self.assertIn('operation=="assign" || operation=="role"', ritual)
-        self.assertIn('operation=="focus" || operation=="meditation_hour" ? RequestParser.GetIntParameter', policy)
+        self.assertIn('operation=="focus" || operation.StartsWith("meditation_") ? RequestParser.GetIntParameter', policy)
         self.assertIn('assignments.RoleForPawn(p)!=role', ritual)
         self.assertIn('!assignments.SpectatorsForReading.Contains(p)', ritual)
         self.assertIn('hediffs.Where(h => h.Visible).Select(h => h.def.defName)', observed)

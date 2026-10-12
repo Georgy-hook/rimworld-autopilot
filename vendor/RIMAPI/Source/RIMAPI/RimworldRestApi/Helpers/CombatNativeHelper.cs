@@ -29,9 +29,12 @@ namespace RIMAPI.Helpers
                 if (!HasCareRetreat(CareRetreats[id].Key)) CareRetreats.Remove(id);
             return map.mapPawns.FreeColonistsSpawned.Where(HasCareRetreat).Select(p => p.thingIDNumber).ToList();
         }
-        public static bool HasCareJob(Pawn pawn) => HasCareRetreat(pawn) || Care.Contains(pawn.CurJobDef?.defName ?? "");
+        public static bool CareJobShape(string name, bool operationPatient) => name=="DoBill" ? operationPatient : Care.Contains(name ?? "");
+        public static bool HasCareJob(Pawn pawn) => pawn!=null && (HasCareRetreat(pawn)
+            || CareJobShape(pawn.CurJobDef?.defName,pawn.CurJob?.targetA.Thing is Pawn));
         public static bool HasClinicalCareJob(Pawn pawn) => pawn.CurJobDef == JobDefOf.TendPatient
-            || pawn.CurJobDef == JobDefOf.Rescue || pawn.CurJobDef == JobDefOf.FeedPatient;
+            || pawn.CurJobDef == JobDefOf.Rescue || pawn.CurJobDef == JobDefOf.FeedPatient
+            || pawn.CurJobDef == JobDefOf.DoBill && pawn.CurJob?.targetA.Thing is Pawn;
         public static bool ImmediateCareThreat(Pawn pawn, Thing enemy)
         {
             if (enemy == null || enemy.Destroyed || !enemy.Spawned || enemy.Map != pawn.Map
