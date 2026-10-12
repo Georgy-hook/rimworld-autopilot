@@ -83,6 +83,19 @@ person eligible. Other focus types remain available to psycasters. Official
 describes personal focus and timetable mechanics; installed definitions and job
 code are used for the exact current eligibility and grass checks.
 
+## Medical bills versus production
+
+The live successor exposed another native defect: the general DoBill job was
+classified as protected care regardless of its target. A production worker was
+excluded from emergency care/combat, and its worktable was exported as a care
+patient. DoBill is now care only when its exact native target is a pawn; those
+operations also retain clinical protection at contact. Cooking, butchering and
+crafting are ordinary production. Fresh combat facts export the classification,
+and Python care/combat joins use it. Ambiguous legacy DoBill observations remain
+protected rather than guessing that a surgery can be interrupted. Native routes,
+active feeding, rescue, carrying, bleeding and exact caregiver retreat guards
+remain. Ordinary production commitments do not establish medical care.
+
 ## Verification limits
 
 Integrated Python regressions cover care, food commitments, native worker/route

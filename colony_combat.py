@@ -7,7 +7,8 @@ CLINICAL_CARE_JOBS = {'tendpatient', 'rescue', 'feedpatient'}
 
 
 def active_clinical_care(row: dict[str, Any]) -> bool:
-    return str(row.get('current_job') or '').casefold() in CLINICAL_CARE_JOBS
+    name=str(row.get('current_job') or '').casefold()
+    return name in CLINICAL_CARE_JOBS or name=='dobill' and row.get('has_care_job') is True
 
 
 def protected_care_retreat_ids(snapshot: dict[str, Any]) -> set[int]:
@@ -158,6 +159,8 @@ def protected_emergency_care_ids(snapshot: dict[str, Any]) -> set[int]:
                  'lessongiving', 'lessonreceiving', 'prisonerinterrogateidentity'}
     protected = set()
     for row in (snapshot.get('combat') or {}).get('colonists') or []:
+        if str(row.get('current_job') or '').casefold()=='dobill' and row.get('has_care_job') is False:
+            continue
         if row.get('id') is not None and not row.get('is_dead') and active_clinical_care(row):
             protected.add(int(row['id']))
             continue

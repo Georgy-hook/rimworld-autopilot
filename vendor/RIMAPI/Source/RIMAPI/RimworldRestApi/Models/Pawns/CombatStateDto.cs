@@ -51,6 +51,7 @@ namespace RIMAPI.Models
         public PositionDto CurrentJobTargetPosition { get; set; }
         public PositionDto CurrentJobCell { get; set; }
         public bool CareAtBedside { get; set; }
+        public bool HasCareJob { get; set; }
         public int? CareTargetId { get; set; }
         public PositionDto CareTargetPosition { get; set; }
         public bool RangedAttackAvailable { get; set; }

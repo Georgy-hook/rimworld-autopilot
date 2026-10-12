@@ -409,6 +409,8 @@ def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) 
             detail["downed"] = bool(pawn["is_downed"])
         if pawn.get("current_job") is not None:
             detail["current_job"] = str(pawn["current_job"])
+        if isinstance(pawn.get('has_care_job'),bool):
+            detail['has_care_job']=pawn['has_care_job']
 
 
 def select_work_map(maps: list[dict[str, Any]]) -> dict[str, Any]:

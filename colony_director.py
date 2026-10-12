@@ -6860,6 +6860,18 @@ def collect_medical_thermal_context(client: bridge.RimApiClient, snapshot: dict[
         dev["item_counts"] = dict(counts)
 
 
+def protected_care_job(snapshot: dict[str, Any], pawn: dict[str, Any]) -> bool:
+    name=str(pawn.get('current_job') or '').casefold()
+    if name not in PROTECTED_CARE_JOBS:return False
+    if name!='dobill':return True
+    live=next((p for p in snapshot.get('combat',{}).get('colonists') or [] if str(p.get('id'))==str(pawn.get('id'))),{})
+    flag=live.get('has_care_job',pawn.get('has_care_job'))
+    if isinstance(flag,bool):return flag
+    # Legacy unknown DoBill remains protected; fresh native classification
+    # distinguishes a pawn operation from crafting/butchering/cooking.
+    return True
+
+
 def active_care_pawn_ids(snapshot: dict[str, Any], *, allow_thermal_yield: bool = False) -> set[str]:
     """Protect care actors/targets and actors owned by a verified hunt job."""
     result: set[str] = {str(pid) for pid in
@@ -6870,7 +6882,7 @@ def active_care_pawn_ids(snapshot: dict[str, Any], *, allow_thermal_yield: bool 
     live = {str(p.get("id")): p for p in snapshot.get("combat", {}).get("colonists") or []}
     for original in snapshot.get("colonists") or []:
         pawn = {**original, **live.get(str(original.get("id")), {})}
-        if str(pawn.get("current_job") or "").casefold() not in PROTECTED_CARE_JOBS:
+        if not protected_care_job(snapshot,pawn):
             continue
         yielding = (allow_thermal_yield and str(pawn.get("current_job") or "").casefold() == "tendpatient"
                     and routine_care_can_yield_to_warmth(snapshot, pawn.get("id")))
@@ -11737,7 +11749,7 @@ def run_downed_raider_cycle(
                  and bridge.first_number(hostile.get("bleeding_rate")) <= 0.05]
     protected = active_care_pawn_ids(snapshot) | {
         str(pawn.get("id")) for pawn in snapshot["combat"]["colonists"]
-        if str(pawn.get("current_job") or "").casefold() in PROTECTED_CARE_JOBS}
+        if protected_care_job(snapshot,pawn)}
     pending = downed_combat.reconcile(client, snapshot, map_state, protected)
     finishers = {int(target["id"]): downed_combat.available_fighters(
         snapshot, map_state, int(target["id"]), protected) for target in downed}
@@ -12354,7 +12366,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
     available_helpers = [pawn for pawn in colonists
                if not pawn.get("is_dead") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
                and not any((capabilities.get(int(pawn['id'])) or {}).get(k) for k in ('downed', 'dead', 'in_mental_state'))
-               and str(pawn.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS
+               and not protected_care_job(snapshot,pawn)
                and not pawn.get("is_drafted")
                and pawn.get('id') not in retreating
                and bridge.first_number(pawn.get("moving"), 1) > 0
@@ -12516,7 +12528,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
         can_self_tend = (
             not patient.get("is_downed") and not patient.get("is_in_mental_state")
             and not patient.get("is_drafted")
-            and str(patient.get("current_job") or "").lower() not in PROTECTED_CARE_JOBS
+            and not protected_care_job(snapshot,patient)
             and patient_id not in retreating
             and can_do_medicine(patient)
             and bridge.first_number(patient.get("moving"), 1) > 0.1
@@ -12549,7 +12561,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
                 or patient_id in active_patients or patient_id in retreating
                 or not bridge.active_recovery_diseases(details)
                 or details.get("should_seek_medical_rest") is False
-                or str(patient.get("current_job") or "").lower() in PROTECTED_CARE_JOBS | {"ingest"}):
+                or protected_care_job(snapshot,patient) or str(patient.get('current_job') or '').casefold()=='ingest'):
             continue
         safe_beds = [bed for bed in beds if int(bed["id"]) in sheltered_ids and not any(
             other.get("id") != patient_id and not other.get("is_dead")

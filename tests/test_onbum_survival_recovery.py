@@ -98,6 +98,16 @@ class FirstHarvestRecovery(unittest.TestCase):
 
 
 class ConcurrentEmergencies(unittest.TestCase):
+    def test_native_crafting_bill_is_available_for_emergency_care(self):
+        s=food_snapshot();s['colonists'][0]['current_job']='DoBill'
+        s['combat']['colonists']=[{'id':1,'current_job':'DoBill','has_care_job':False,'care_target_id':80}]
+        self.assertEqual(director.active_care_pawn_ids(s),set())
+        self.assertFalse(director.protected_care_job(s,s['colonists'][0]))
+    def test_operation_and_unknown_legacy_bill_remain_protected(self):
+        for flag in (True,None):
+            s=food_snapshot();s['colonists'][0]['current_job']='DoBill'
+            s['combat']['colonists']=[{'id':1,'current_job':'DoBill',**({'has_care_job':flag} if flag is not None else {})}]
+            self.assertIn('1',director.active_care_pawn_ids(s))
     def test_fire_leaves_safe_food_choices_for_free_actor(self):
         s=food_snapshot(); s['map']['resources']['nutrition']=0
         other=copy.deepcopy(s['colonists'][0]);other.update(id=2,current_job='BeatFire')
