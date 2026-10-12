@@ -17,7 +17,7 @@ def cold_bedside():
     s['development']['buildings'][-1].update({'def': 'Campfire'}, current_fuel=0,
         fuel_capacity=20, room_id=24, current_temperature=-3.38, roofed=True)
     s['colonists'][0].update(current_job='TendPatient', current_job_target_id=2,
-        care_target_id=2, bleeding_rate=0)
+        care_target_id=2, bleeding_rate=0, health_conditions=[])
     s['colonists'][1].update(current_bed_id=22, current_job_target_id=22,
         bleeding_rate=0, health_conditions=[{'def_name': 'Hypothermia', 'severity': .9},
                                           {'def_name': 'Frostbite', 'severity': 2, 'tendable_now': True}])
@@ -44,6 +44,58 @@ class PatientHeatMaintenance(unittest.TestCase):
         self.assertIn('50', d.routine_care_refuel_options(s, 1))
         s['development']['buildings'][-1]['current_fuel'] = 6
         self.assertFalse(d.routine_care_refuel_options(s, 1))
+
+    def test_combat_display_labels_do_not_overwrite_clinical_cold_facts(self):
+        s = cold_bedside()
+        for pawn in s['combat']['colonists']:
+            pawn['health_conditions'] = [h['def_name'] for h in pawn['health_conditions']]
+        s['colonists'].reverse()
+        s['combat']['colonists'].reverse()
+        self.assertIn('50', d.routine_care_refuel_options(s, 1))
+        choices, _ = d.candidate_actions(None, s, {'anchor': {'x': 10, 'z': 10}, 'issued': {}})
+        self.assertIn('refuel_building', choices)
+
+    def test_warm_routine_tend_with_combat_labels_does_not_crash(self):
+        s = cold_bedside()
+        s['colonists'][1]['health_conditions'] = [
+            {'def_name': 'Bruise', 'severity': 4, 'tendable_now': True}]
+        s['combat']['colonists'][0]['health_conditions'] = ['scratch scar']
+        s['combat']['colonists'][1]['health_conditions'] = ['bruise (club head)']
+        self.assertFalse(d.routine_care_refuel_options(s, 1))
+        self.assertNotIn('1', d.refuel_worker_criteria(s))
+
+    def test_display_labels_preserve_severe_hunger_for_either_exact_pawn(self):
+        for index in (0, 1):
+            with self.subTest(index=index):
+                s = cold_bedside()
+                s['colonists'][index]['health_conditions'].append(
+                    {'def_name': 'Malnutrition', 'severity': .8})
+                for pawn in s['combat']['colonists']:
+                    pawn['health_conditions'] = ['display only']
+                self.assertFalse(d.routine_care_refuel_options(s, 1))
+
+    def test_display_labels_preserve_fresh_blood_and_protected_jobs(self):
+        for change in (
+                lambda s: s['combat']['colonists'][1].update(bleeding_rate=.2),
+                lambda s: s['combat']['colonists'][0].update(current_job='FeedPatient'),
+                lambda s: s['combat']['colonists'][0].update(current_job='Rescue'),
+                lambda s: s['colonists'][1]['health_conditions'].append(
+                    {'def_name': 'WoundInfection', 'immunity_can_develop': True,
+                     'immunity': .4, 'tendable_now': True})):
+            with self.subTest(change=change):
+                s = cold_bedside()
+                for pawn in s['combat']['colonists']:
+                    pawn['health_conditions'] = ['display only']
+                change(s)
+                self.assertFalse(d.routine_care_refuel_options(s, 1))
+
+    def test_unknown_clinical_conditions_defer_only_the_heat_transfer(self):
+        for index in (0, 1):
+            for conditions in (None, ['Hypothermia'], [{'def_name': 'Hypothermia', 'severity': .9}, 'unknown']):
+                with self.subTest(index=index, conditions=conditions):
+                    s = cold_bedside()
+                    s['colonists'][index]['health_conditions'] = conditions
+                    self.assertFalse(d.routine_care_refuel_options(s, 1))
 
     def test_heat_does_not_replace_protected_care_or_supplyless_errands(self):
         changes = [

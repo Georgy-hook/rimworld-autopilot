@@ -2957,6 +2957,12 @@ def preserve_immediate_care(actions: list[str], focused: list[str]) -> list[str]
     return list(dict.fromkeys(focused + [a for a in actions if a in IMMEDIATE_CARE_ACTIONS]))
 
 
+IMMEDIATE_FOOD_ACTIONS = {"harvest_local_plants", "harvest_food_crops_early", "harvest_at_risk_crops",
+    "wildlife_hunt_plan", "wildlife_hunt_lifecycle", "prioritize_plant_cutting", "prioritize_cooking",
+    "configure_food_bills", "rebalance_cooking", "sustenance_food_batch", "unforbid_supplies",
+    "open_blocked_food_path", "build_butcher_spot", "refuel_building", "harvest_nearby_trees"}
+
+
 def focus_active_fire_choices(actions: list[str], home_fire: bool = False,
                               snapshot: dict[str, Any] | None = None) -> list[str]:
     """Respond to a verified nearby fire before routine colony work."""
@@ -2971,10 +2977,18 @@ def focus_active_fire_choices(actions: list[str], home_fire: bool = False,
             # Orders already validate exposed errands. An incapable or busy
             # crew cannot extinguish fire by endlessly expanding home/holding.
             return [a for a in actions if a not in {"prioritize_firefighting", "expand_home_area"}]
+    food = []
+    if home_fire and snapshot is not None and capabilities.food_planning_facts(snapshot)["immediate_food_gap"]:
+        protected = active_care_pawn_ids(snapshot)
+        free = [p for p in snapshot.get("colonists") or [] if not p.get("downed") and not p.get("in_mental_state")
+                and not p.get("is_drafted") and str(p.get("id")) not in protected
+                and str(p.get("current_job") or "").casefold() not in {"beatfire", "extinguishself"}]
+        if free:
+            food = [a for a in actions if a in IMMEDIATE_FOOD_ACTIONS]
     if "prioritize_firefighting" in actions:
-        return preserve_immediate_care(actions, ["prioritize_firefighting"])
+        return preserve_immediate_care(actions, ["prioritize_firefighting", *food])
     if "expand_home_area" in actions:
-        return preserve_immediate_care(actions, ["expand_home_area"])
+        return preserve_immediate_care(actions, ["expand_home_area", *food])
     if home_fire:
         # With firefighters already assigned, let them work. A research switch
         # or new construction order spends the scarce decision window while
@@ -2983,7 +2997,7 @@ def focus_active_fire_choices(actions: list[str], home_fire: bool = False,
                      "prioritize_doctor", "prepare_emergency_medical_bed",
                      "open_blocked_food_path", "feed_hungry_colonist", "hold_survival",
                      "resilience_rescue", "resilience_tend", "resilience_feed"}
-        focused = [action for action in actions if action in emergency]
+        focused = [action for action in actions if action in emergency or action in food]
         return preserve_immediate_care(actions, focused if focused else ["hold_survival"])
     return actions
 
@@ -3193,7 +3207,7 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
                   and float(o.get("calendar_days_to_harvest_estimate") or 0) > 0]
     # Starting a first field at a two-day reserve is already too late for a
     # five-day crop. Budget sowing/hauling as well as native growth time.
-    first_field_due = bool(need["crop_capacity_gap"] and crop_leads)
+    first_field_due = bool((need["crop_capacity_gap"] or need["first_harvest_gap"]) and crop_leads)
     if first_field_due:
         urgency_window = max(urgency_window, min(crop_leads) + 2.0)
     fuel_gap = needs_cooking_fuel_reserve(snapshot)
@@ -3244,7 +3258,10 @@ def focus_imminent_food_choices(snapshot: dict[str, Any], actions: list[str]) ->
         "sustenance_food_batch", "sustenance_food_policy", "sustenance_preservation",
         "production_feed_batch", "create_growing_zone", "configure_crop", "connect_power_consumer",
         "care_for_injured_animal", "sustenance_animal_welfare",
+        "resilience_shelter", "resilience_dispose_corpse",
     }
+    if not colony_society.elective_drug_policy(snapshot):
+        related.update({"society_drug_entry", "society_drug_policy"})
     # A worker lost to a mental break cannot gather food or feed patients.
     # Retain only already-feasible short recreation responses in this urgent
     # window; Laya still weighs their labor cost against immediate food/care.
@@ -6974,9 +6991,18 @@ def routine_care_refuel_options(snapshot: dict[str, Any], actor_id: Any) -> dict
     dev = snapshot.get('development') or {}
     people = {str(p['id']): p for p in snapshot.get('colonists') or [] if p.get('id') is not None}
     live = {str(p['id']): p for p in snapshot.get('combat', {}).get('colonists') or [] if p.get('id') is not None}
-    actor = {**people.get(str(actor_id), {}), **live.get(str(actor_id), {})}
+    actor_detail = people.get(str(actor_id), {})
+    actor = {**actor_detail, **live.get(str(actor_id), {})}
     target = actor.get('care_target_id') or actor.get('current_job_target_id')
-    patient = {**people.get(str(target), {}), **live.get(str(target), {})}
+    patient_detail = people.get(str(target), {})
+    patient = {**patient_detail, **live.get(str(target), {})}
+    # Combat health conditions are display labels. Clinical transfer guards
+    # require the detailed roster's structured facts for both exact pawns.
+    for pawn, detail in ((actor, actor_detail), (patient, patient_detail)):
+        conditions = detail.get('health_conditions')
+        if not isinstance(conditions, list) or any(not isinstance(h, dict) for h in conditions):
+            return {}
+        pawn['health_conditions'] = conditions
     hauling = (actor.get('work_priorities') or {}).get('Hauling') or {}
     caps = actor.get('capacities') or {}
     if (not actor or not patient or str(actor.get('current_job') or '').casefold() != 'tendpatient'
@@ -7370,7 +7396,7 @@ def focus_overdue_shelter_choices(snapshot: dict[str, Any], candidates: list[str
             or (snapshot.get("map") or {}).get("enemies")
             or dev.get("sanitation_urgent")):
         return candidates
-    allowed = IMMEDIATE_CARE_ACTIONS | {
+    allowed = IMMEDIATE_CARE_ACTIONS | IMMEDIATE_FOOD_ACTIONS | {
         "build_starter_base", "prioritize_construction", "unforbid_supplies",
         "resilience_tend", "resilience_rescue", "resilience_feed", "resilience_rest",
         "resilience_shelter", "resilience_dispose_corpse", "prioritize_firefighting",
@@ -7402,7 +7428,7 @@ def focus_contamination_choices(snapshot: dict[str, Any], candidates: list[str])
     if not (snapshot.get("development") or {}).get("sanitation_urgent") or not {
             "resilience_dispose_corpse", "resilience_shelter"}.intersection(candidates):
         return candidates
-    allowed = IMMEDIATE_CARE_ACTIONS | {
+    allowed = IMMEDIATE_CARE_ACTIONS | IMMEDIATE_FOOD_ACTIONS | {
         "resilience_dispose_corpse", "resilience_shelter", "resilience_tend", "resilience_rescue", "resilience_feed",
         "resilience_rest", "hold_survival", "unforbid_supplies", "prioritize_firefighting",
         "fight_fire", "harvest_local_plants", "configure_food_bills", "prioritize_cooking",

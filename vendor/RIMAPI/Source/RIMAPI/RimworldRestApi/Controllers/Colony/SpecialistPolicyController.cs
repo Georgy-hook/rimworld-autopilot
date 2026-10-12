@@ -23,7 +23,7 @@ namespace RIMAPI.Controllers
         }
         [Get("/api/v1/specialists/policies")]
         public async Task Context(HttpListenerContext context) {
-            var choices = new List<object>(); var dialog = Caste; int mapId=RequestParser.GetMapId(context);
+            var choices = new List<object>(); var meditation=new List<object>(); var dialog = Caste; int mapId=RequestParser.GetMapId(context);
             if (dialog != null) {
                 foreach (var mode in Field<List<GauranlenTreeModeDef>>(dialog,"allDryadModes"))
                     if (mode != Field<GauranlenTreeModeDef>(dialog,"currentMode") && (bool)AccessTools.Method(typeof(Dialog_ChangeDryadCaste),"MeetsRequirements").Invoke(dialog,new object[] { mode }))
@@ -31,15 +31,12 @@ namespace RIMAPI.Controllers
                             warning="Native confirmation; connector changes caste through work and dryads need actual cocoon time." });
                 choices.Add(new { operation="cancel", label="Cancel dryad caste choice" });
             } else foreach (var map in Find.Maps.Where(m => m.uniqueID==mapId)) {
+                if(ModsConfig.RoyaltyActive)meditation.Add(MeditationPlanningHelper.Context(map,choices));
                 if (ModsConfig.RoyaltyActive) foreach (var pawn in map.mapPawns.FreeColonistsSpawned.Where(p => p.HasPsylink && !SpecialistNativeSafety.Protected(p))) {
                     foreach (int percent in new[] { 25,50,75,95 }) if (Math.Abs(pawn.psychicEntropy.TargetPsyfocus-percent/100f) > .01f)
                         choices.Add(new { map_id=map.uniqueID, operation="focus", pawn_id=pawn.thingIDNumber, value=percent.ToString(), label=pawn.LabelShort+" desired psyfocus "+percent+"%",
                             current=pawn.psychicEntropy.CurrentPsyfocus, desired=pawn.psychicEntropy.TargetPsyfocus, current_job=pawn.CurJobDef?.defName,
                             description="Native desired-focus policy; automatic meditation needs timetable opportunity and a valid personal focus. Higher focus consumes more meditation labor." });
-                    if (pawn.timetable != null && MeditationUtility.CanMeditateNow(pawn))
-                        for (int hour=0; hour<24; hour++) if (pawn.timetable.GetAssignment(hour)==TimeAssignmentDefOf.Work)
-                            choices.Add(new { map_id=map.uniqueID, operation="meditation_hour", pawn_id=pawn.thingIDNumber, value=hour.ToString(), label=pawn.LabelShort+" Work hour "+hour+" → Meditate",
-                                current_job=pawn.CurJobDef?.defName, description="Trades one work hour for native meditation. Sleep and recreation assignments are preserved; no focus is granted instantly." });
                 }
                 if (ModsConfig.IdeologyActive) foreach (var t in map.listerThings.AllThings.Where(TreeAvailable)) {
                     var tree=t.TryGetComp<CompTreeConnection>();
@@ -69,13 +66,13 @@ namespace RIMAPI.Controllers
                     }
                 }
             }
-            await context.SendJsonResponse(ApiResult<object>.Ok(new { available=true, configuring=dialog!=null, session_id=SpecialistWindowSessionHelper.Token(dialog), map_id=dialog==null ? mapId : Field<CompTreeConnection>(dialog,"treeConnection").parent.Map.uniqueID, configuration=dialog==null ? null : (object)new {current_mode=Field<GauranlenTreeModeDef>(dialog,"currentMode")?.defName,selected_mode=Field<GauranlenTreeModeDef>(dialog,"selectedMode")?.defName}, choices }));
+            await context.SendJsonResponse(ApiResult<object>.Ok(new { available=true, configuring=dialog!=null, session_id=SpecialistWindowSessionHelper.Token(dialog), map_id=dialog==null ? mapId : Field<CompTreeConnection>(dialog,"treeConnection").parent.Map.uniqueID, configuration=dialog==null ? null : (object)new {current_mode=Field<GauranlenTreeModeDef>(dialog,"currentMode")?.defName,selected_mode=Field<GauranlenTreeModeDef>(dialog,"selectedMode")?.defName}, meditation, choices }));
         }
         [Post("/api/v1/specialists/policies")]
         public async Task Act(HttpListenerContext context) {
             if (!RequestParser.GetBooleanParameter(context,"confirmed")) { await context.SendJsonResponse(ApiResult<string>.Fail("Unconfirmed policy")); return; }
             string operation=RequestParser.GetStringParameter(context,"operation"), value=RequestParser.GetStringParameter(context,"value",false);
-            if(new[]{"focus","meditation_hour","pruning","study_mode","extract","caste"}.Contains(operation)) value=RequestParser.GetStringParameter(context,"value");
+            if(new[]{"focus","meditation_hour","meditation_spot","pruning","study_mode","extract","caste"}.Contains(operation)) value=RequestParser.GetStringParameter(context,"value");
             var dialog=Caste;
             if (dialog!=null) {
                 if(!SpecialistWindowSessionHelper.Matches(dialog,context)) { await context.SendJsonResponse(ApiResult<string>.Fail("Caste dialog session changed"));return; }
@@ -88,12 +85,13 @@ namespace RIMAPI.Controllers
                     await context.SendJsonResponse(ApiResult<string>.Ok("specialist_policy_requested")); return;
                 }
             } else {
-                int pawnId=operation=="focus" || operation=="meditation_hour" ? RequestParser.GetIntParameter(context,"pawn_id") : -1;
-                int thingId=new[]{"pruning","open_caste","capture_command","study_mode","extract"}.Contains(operation) ? RequestParser.GetIntParameter(context,"thing_id") : -1;
+                int pawnId=operation=="focus" || operation.StartsWith("meditation_") ? RequestParser.GetIntParameter(context,"pawn_id") : -1;
+                int thingId=new[]{"meditation_spot","meditation_assign","pruning","open_caste","capture_command","study_mode","extract"}.Contains(operation) ? RequestParser.GetIntParameter(context,"thing_id") : -1;
                 var pawn=PawnsFinder.AllMaps_FreeColonistsSpawned.FirstOrDefault(p=>p.thingIDNumber==pawnId && !SpecialistNativeSafety.Protected(p));
+                if(ModsConfig.RoyaltyActive && operation.StartsWith("meditation_") && MeditationPlanningHelper.Apply(MapHelper.GetMapByID(RequestParser.GetMapId(context)),pawn,operation,value,thingId))
+                {await context.SendJsonResponse(ApiResult<string>.Ok("meditation_policy_requested_not_completed"));return;}
                 if (ModsConfig.RoyaltyActive && pawn?.HasPsylink==true && int.TryParse(value,out int number)) {
                     if (operation=="focus" && new[]{25,50,75,95}.Contains(number)) { pawn.psychicEntropy.SetPsyfocusTarget(number/100f); await context.SendJsonResponse(ApiResult<string>.Ok("specialist_policy_requested")); return; }
-                    if (operation=="meditation_hour" && number>=0 && number<24 && pawn.timetable?.GetAssignment(number)==TimeAssignmentDefOf.Work && MeditationUtility.CanMeditateNow(pawn)) { pawn.timetable.SetAssignment(number,TimeAssignmentDefOf.Meditate); await context.SendJsonResponse(ApiResult<string>.Ok("specialist_policy_requested")); return; }
                 }
                 var things=Find.Maps.SelectMany(m=>m.listerThings.AllThings.Concat(m.listerBuildings.allBuildingsColonist.OfType<Building_HoldingPlatform>().Select(b=>(Thing)b.HeldPawn).Where(p=>p!=null)));
                 var t=things.FirstOrDefault(x=>x.thingIDNumber==thingId); var tree=t?.TryGetComp<CompTreeConnection>();

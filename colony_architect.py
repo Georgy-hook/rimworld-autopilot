@@ -1047,6 +1047,7 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
     stock = unreserved_construction_stock(development)
     counts = development.get("building_counts") or {}
     options: dict[str, dict[str, dict[str, Any]]] = {}
+    blockers = {}
     for row in development.get("building_catalog") or []:
         if not isinstance(row, dict) or not row.get("def_name") or not row.get("available_now") or row.get("metadata_error"):
             continue
@@ -1069,6 +1070,10 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
             if not materials:
                 continue
         name = str(row["def_name"])
+        pollution = (development.get('specialists') or {}).get('pollution_percent')
+        if name == 'PollutionPump' and pollution == 0 and not int(stock.get('Wastepack') or stock.get('WastepackToxic') or 0):
+            blockers[name] = 'Native observed pollution is zero and no wastepack stock is present; pump costs power/materials without a current pumping target.'
+            continue
         category = str(row.get("designation_category") or "Other")
         options.setdefault(category, {})[name] = {
             "def_name": name,
@@ -1090,6 +1095,7 @@ def catalog_construction_options(development: dict[str, Any]) -> dict[str, dict[
             "is_work_table": bool(row.get("is_work_table")),
             "existing_count": int(counts.get(name) or 0),
         }
+    development['construction_context_blockers'] = blockers
     return options
 
 
@@ -1106,7 +1112,8 @@ def catalog_access_audit(development: dict[str, Any],
         "unlocked": len(unlocked),
         "affordable_now": len(actionable),
         "locked_or_metadata_error": sorted(str(row["def_name"]) for row in rows if str(row["def_name"]) not in unlocked),
-        "need_materials": sorted(unlocked - actionable),
+        "need_materials": sorted(unlocked - actionable - set(development.get('construction_context_blockers') or {})),
+        "context_blockers": development.get('construction_context_blockers') or {},
         "categories": {name: len(category) for name, category in sorted(plans.items())},
     }
 

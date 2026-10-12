@@ -56,7 +56,12 @@ def summary(snapshot: dict) -> dict:
     entities = [{"platform_id": e.get("platform_id"), "strength": e.get("containment_strength"), "minimum": e.get("minimum_strength"), "activity": e.get("activity")} for e in context.get("entities") or [] if isinstance(e.get("minimum_strength"), (int, float)) and isinstance(e.get("containment_strength"), (int, float)) and e["containment_strength"] < e["minimum_strength"]]
     resources = [{"pawn_id": p.get("pawn_id"), "resource": r.get("def_name"), "level": r.get("level"), "target": r.get("target")} for p in context.get("gene_pawns") or [] for r in p.get("resources") or [] if isinstance(r.get("level"), (int, float)) and isinstance(r.get("target"), (int, float)) and r["level"] < r["target"]]
     needs = [{"pawn_id": p.get("pawn_id"), "need": n.get("def_name"), "level": n.get("level")} for p in context.get("gene_pawns") or [] for n in p.get("needs") or [] if isinstance(n.get("level"), (int, float)) and n["level"] < .2]
-    return {"low_energy_mechs": {"count": len(energies), "examples": energies[:4]},
+    meditation = (context.get('policies') or {}).get('meditation') or []
+    return {"meditation": {'natural_pawns': [p.get('pawn_id') for m in meditation for p in m.get('people') or [] if 'Natural' in (p.get('focus_types') or [])],
+                'trees': [t for m in meditation for t in m.get('trees') or []],
+                'recent_meditation': [{k:p.get(k) for k in ('pawn_id','last_meditation_tick','meditation_hours','has_psylink')} for m in meditation for p in m.get('people') or []],
+                'limits': 'Meditation job/time, anima grass and learned powers are separate observed results.'},
+            "low_energy_mechs": {"count": len(energies), "examples": energies[:4]},
             "unsafe_containment": {"count": len(entities), "examples": entities[:4]},
             "pollution_waste": {"pollution_percent": context.get("pollution_percent"), "unfrozen_wastepacks": sum(int(w.get("count") or 0) for w in context.get("wastepacks") or [] if not w.get("frozen"))},
             "low_gene_resources": {"count": len(resources), "examples": resources[:4]},
@@ -124,7 +129,7 @@ def _readiness(row, action):
     if action in ('specialists_mech_boss', 'specialists_permit'):
         result.update({k: row[k] for k in ('hostile_pawns', 'mobile_defenders', 'favor', 'on_cooldown') if k in row})
     if action == 'specialists_policy':
-        result.update({k: row[k] for k in ('pruning_hours', 'warning', 'desired', 'max_dryads') if k in row})
+        result.update({k: row[k] for k in ('pruning_hours', 'warning', 'desired', 'max_dryads', 'natural_focus', 'has_psylink', 'meditation_hours') if k in row})
     return result
 
 
