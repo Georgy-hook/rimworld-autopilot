@@ -96,6 +96,24 @@ protected rather than guessing that a surgery can be interrupted. Native routes,
 active feeding, rescue, carrying, bleeding and exact caregiver retreat guards
 remain. Ordinary production commitments do not establish medical care.
 
+## Unsupported attacks and event placeholders
+
+A known stronger live animal must not receive an unsupported novice melee
+charge. Native animal and combat-power facts provide a coarse risk flag, not a
+prediction of victory. Prepared armored guards with actual covering fire, or
+multiple prepared guards, retain a risky choice. Distant guns, blocked firing
+lanes and protected clinical workers are excluded from support. Group and
+individual assault plans revalidate this flag before emitting commands. Contact
+self-defense, existing native attacks and withdrawal remain distinct options.
+Small or badly injured animals are outside this specific strong-animal flag.
+
+Several event response labels currently have a context-recording executor but
+no corresponding schedule, power or containment action. They are excluded from
+the action menu instead of repeatedly presenting an unexecuted remedy as work.
+The observation option records the limitation, while the normal development
+planner continues to receive the live condition and can use supported care,
+food, climate and defense actions. Observing does not resolve the event.
+
 ## Verification limits
 
 Integrated Python regressions cover care, food commitments, native worker/route
