@@ -4053,7 +4053,7 @@ class DirectorTests(unittest.TestCase):
                                    "touches_map_edge": False}],
                         "item_counts": {"WoodLog": 140}, "things": [], "plants": [],
                         "work_tables": [], "forbidden": [], "current_research": {"name": "none"}}}
-        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}, 'income_strategy':'livestock'}
         choices, _ = director.candidate_actions(None, snapshot, state)
         self.assertNotIn("start_taming", choices)
         self.assertIn("build_animal_pen", choices)

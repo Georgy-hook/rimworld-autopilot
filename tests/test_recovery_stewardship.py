@@ -161,5 +161,15 @@ class RecoveryTests(unittest.TestCase):
         self.assertIsNone(director.find_starter_food_site(terrain,{'x':20,'z':20},{},{}))
         self.assertIsNone(storage.site(terrain,{'x':40,'z':40},6,6,stockpile=True))
 
+    def test_created_bulk_zone_is_recognized_without_old_name(self):
+        self.assertTrue(director.ground_bulk_zone_present([{'type':'Zone_Stockpile','label':'Laya Bulk Materials (ground)'}]))
+        self.assertTrue(director.ground_bulk_zone_present([{'type':'Stockpile','label':'Laya Main'}]))
+        self.assertFalse(director.ground_bulk_zone_present([{'type':'Zone_Growing','label':'Laya Main'}]))
+
+    def test_wild_animals_alone_are_not_a_selected_livestock_goal(self):
+        self.assertFalse(director.prospective_livestock_committed({}))
+        self.assertTrue(director.prospective_livestock_committed({'income_strategy':'livestock'}))
+        self.assertTrue(director.prospective_livestock_committed({'livestock_goal':{'target_id':7}}))
+
 
 if __name__=='__main__':unittest.main()

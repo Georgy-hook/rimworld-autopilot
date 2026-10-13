@@ -135,6 +135,15 @@ def position(x: int, z: int) -> dict[str, int]:
     return {"x": int(x), "y": 0, "z": int(z)}
 
 
+def ground_bulk_zone_present(zones):
+    return any('Stockpile' in str(z.get('type')) and (str(z.get('label') or '').startswith('Laya Bulk Materials (ground)')
+        or 'Laya Main' in str(z.get('label') or '')) for z in zones or [])
+
+
+def prospective_livestock_committed(map_state):
+    return map_state.get('income_strategy')=='livestock' or isinstance(map_state.get('livestock_goal'),dict) and bool(map_state['livestock_goal'].get('target_id'))
+
+
 def campfire_safe_placement(cells: list[dict[str, Any]], structures: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Keep an indoor flame at least three cells from known combustible structures."""
     combustible = []
@@ -4707,10 +4716,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         details["freezer_requirements"] = freezer_plan["requirements"]
         one_time.append("build_freezer")
 
-    if not any(
-        "Stockpile" in str(z.get("type")) and "Laya Main" in str(z.get("label") or "")
-        for z in zones
-    ) and not issued_recently(map_state, "stockpile", tick, retry_ticks=3000):
+    if not ground_bulk_zone_present(zones) and not issued_recently(map_state, "stockpile", tick, retry_ticks=3000):
         one_time.append("create_stockpile")
     storage_utilization = int((dev.get("storage") or {}).get("utilization_percent") or 0)
     if storage_utilization >= 90 and not issued_recently(map_state, "expand_stockpile", tick, retry_ticks=120000):
@@ -5606,7 +5612,8 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
                            and animal.get("can_tame") is True
                            and int(animal.get("minimum_handling_skill") or 0) <= best_handler
                            and squared_distance(animal.get("position") or {}, anchor) <= 60 ** 2]
-    unpenned_animals = owned_unpenned + potential_livestock
+    # A tameable animal is an opportunity, not an already selected herd goal.
+    unpenned_animals = owned_unpenned + (potential_livestock if prospective_livestock_committed(map_state) else [])
     pen_marker_present = any(str(row.get("def") or row.get("def_name") or "") == "PenMarker"
                              for row in (dev.get("buildings") or []) + (dev.get("construction_projects") or []))
     pen_materials = {material: f"{count} available; closed 9x9 pen costs about 85"

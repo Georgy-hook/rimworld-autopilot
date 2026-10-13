@@ -20,6 +20,8 @@ This audit describes changes in the 0.0.9 candidate. A compiled build, offline t
 | The same unrepresentable optional policy repeated indefinitely | Exact unchanged consequence facts suppress the same unavailable policy subject until its facts change. Another person's care remains available. | Useful cycles and outcomes; this is not a model-crash repair |
 | Nonimmunizable toxin with immunity zero was treated as an infection race | Worker planning requires actual immunity development before applying the immunity-race exclusion. Mild nonimmunizable exposure remains a shelter/work safety issue. Ordinary production bills are distinguished from medical bills using the native job shape. | Current capacities, exposure and actual care commitment |
 
+Additional startup review corrected two proposal gates: created bulk ground zones are recognized under their current names, and a pen for unowned wildlife requires a selected livestock plan. Existing owned pen animals still expose their actual enclosure need.
+
 ## Area uses and exit rules
 
 * **Fallout:** use existing roofed, clear home cells and covered connections. Prefer a connected footprint with meals/raw food, usable beds and completed work tables. A roof protects from fallout but does not refrigerate food or seal a room.
@@ -38,4 +40,4 @@ The previously reported freeze cause and Unity render/shader trigger remain unpr
 
 ## Verification
 
-The candidate passed 1,468 Python tests, all 17 native boundary suites and 315 offline route bindings, with no missing or duplicate routes. Native compilation succeeded with zero errors and warnings. New regression cases cover food deadlines, retained plants, resumption, missing components, finite goals, the freezer wall, small meal batches, clinical job shape, fresh area options, native stockpile availability and bounded model comparisons. Live gameplay outcomes require the next campaign's actual evidence.
+The candidate passed 1,470 Python tests, all 17 native boundary suites and 315 offline route bindings, with no missing or duplicate routes. Native compilation succeeded with zero errors and warnings. New regression cases cover food deadlines, retained plants, resumption, missing components, finite goals, the freezer wall, small meal batches, clinical job shape, fresh area options, native stockpile availability and bounded model comparisons. Live gameplay outcomes require the next campaign's actual evidence.
