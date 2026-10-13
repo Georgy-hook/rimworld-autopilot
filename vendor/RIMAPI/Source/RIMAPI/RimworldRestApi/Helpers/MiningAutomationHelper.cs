@@ -8,6 +8,10 @@ using RIMAPI.Core;
 using RIMAPI.Models;
 namespace RIMAPI.Helpers {
  public static class MiningAutomationHelper {
+  // Sort cheap distances before testing costly native reservations and full paths.
+  // LINQ's stable ordering preserves the previous nearest-feasible choice and ties.
+  public static T ClosestFeasible<T>(IEnumerable<T> candidates,Func<T,float> distance,Func<T,bool> feasible)
+   => candidates.OrderBy(distance).FirstOrDefault(feasible);
   public static List<int> ConnectedBatch(Dictionary<int,int[]> adjacency,int start,int limit) {
    var result=new List<int>();var seen=new HashSet<int>();var queue=new Queue<int>();queue.Enqueue(start);seen.Add(start);
    while(queue.Count>0 && result.Count<limit) {int id=queue.Dequeue();result.Add(id);
@@ -35,9 +39,9 @@ namespace RIMAPI.Helpers {
     while(unseen.Count>0) {
      var vein=ConnectedBatch(adjacency,unseen.Min(),int.MaxValue);unseen.ExceptWith(vein);
      foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(MinerReady)) {
-      var first=vein.Select(id=>byId[id]).Where(t=>worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
-       && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch))
-       .OrderBy(t=>t.Position.DistanceToSquared(worker.Position)).FirstOrDefault();
+      var first=ClosestFeasible(vein.Select(id=>byId[id]),t=>t.Position.DistanceToSquared(worker.Position),
+       t=>worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
+       && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch));
       if(first==null)continue;
       var batch=ConnectedBatch(adjacency,first.thingIDNumber,12).Select(id=>byId[id]).ToArray();
       // Test the whole batch as absent, not each block as if its neighbors remained.
