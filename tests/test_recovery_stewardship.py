@@ -154,5 +154,12 @@ class RecoveryTests(unittest.TestCase):
         s['development']['plant_catalog']['growers'].append(growing_site(plant='Plant_Smokeleaf',options=[tobacco]))
         self.assertFalse(caps.crop_sites(s,True))
 
+    def test_palette_alone_never_authorizes_stockpile_or_blind_corpse_fallback(self):
+        terrain={'width':50,'height':50,'palette':['Soil'],'grid':[2500,0]}
+        self.assertIsNone(director.find_starter_food_site(terrain,{'x':20,'z':20},{},{}))
+        terrain.update(dry_foundation_grid=[2500,1],mountain_roof_grid=[2500,0],stockpile_available_grid=[2500,0])
+        self.assertIsNone(director.find_starter_food_site(terrain,{'x':20,'z':20},{},{}))
+        self.assertIsNone(storage.site(terrain,{'x':40,'z':40},6,6,stockpile=True))
+
 
 if __name__=='__main__':unittest.main()

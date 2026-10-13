@@ -1373,9 +1373,9 @@ def find_starter_food_site(terrain: dict[str, Any], anchor: dict[str, int],
         pos = plant.get("position") or {}
         if pos.get("x") is not None and pos.get("z") is not None:
             blocked.add((int(pos["x"]), int(pos["z"])))
-    return find_terrain_rect(terrain, {"x": int(anchor["x"]) + 9,
-                                    "z": int(anchor["z"]) + 1},
-                             4, 4, dry_ground, radius=16, blocked=blocked, clearance=1)
+    return storage.site(terrain, {"x": int(anchor["x"]) + 9,
+                                "z": int(anchor["z"]) + 1},
+                        4, 4, blocked, stockpile=True, radius=16)
 
 
 def open_recreation_site(terrain: dict[str, Any], anchor: dict[str, int],
@@ -9327,10 +9327,11 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         dump_x = max(6, min(240, int(anchor["x"]) + (50 if int(anchor["x"]) < 125 else -50)))
         dump_z = max(6, min(240, int(anchor["z"]) + (45 if int(anchor["z"]) < 125 else -45)))
         terrain = client.get("/api/v1/map/terrain", map_id=map_id)
-        dump_anchor = find_terrain_rect(
-            terrain, {"x": dump_x, "z": dump_z}, 6, 6,
-            {"Soil", "SoilRich", "Gravel", "Sand", "MarshyTerrain"}, radius=35,
-        ) or {"x": dump_x, "z": dump_z}
+        dump_anchor = storage.site(terrain, {"x": dump_x, "z": dump_z}, 6, 6,
+            architecture_occupied_cells(dev,map_state),stockpile=True,radius=35)
+        if dump_anchor is None:
+            issued['human_corpse_dump']=tick
+            return {'applied':False,'reason':'no_observed_available_dry_corpse_dump_footprint'}
         dump_x, dump_z = int(dump_anchor["x"]), int(dump_anchor["z"])
         result = client.post("/api/v1/map/zone/stockpile", body={
             "map_id": map_id,
@@ -9340,8 +9341,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "priority": 5,
             "allowed_item_categories": ["CorpsesHumanlike"],
         })
-        issued["human_corpse_dump"] = tick
-        return {"applied": True, "distance_from_base": abs(dump_x - int(anchor["x"])) + abs(dump_z - int(anchor["z"])), "response": result}
+        if result.get('success') is True:issued["human_corpse_dump"] = tick
+        return {"applied": result.get('success') is True, "distance_from_base": abs(dump_x - int(anchor["x"])) + abs(dump_z - int(anchor["z"])), "response": result}
     if choice == "create_animal_corpse_dump":
         site = storage.carcass_site(snapshot, anchor)
         if site is None:
@@ -9633,8 +9634,8 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "priority": 2,
             "allowed_item_categories": ["FoodMeals", "FoodRaw"],
         })
-        issued["food_stockpile"] = tick
-        return {"applied": True, "site": site, "response": result}
+        if result.get('success') is True:issued["food_stockpile"] = tick
+        return {"applied": result.get('success') is True, "site": site, "response": result, 'completion':'zone_only; actual_food_haul_unverified'}
     if choice == "build_sleeping_spots":
         indoor = details.get("indoor_sleeping_spot")
         terrain = client.get("/api/v1/map/terrain", map_id=map_id)

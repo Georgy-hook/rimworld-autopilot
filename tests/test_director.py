@@ -2718,7 +2718,8 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn((doors[0]["rel_x"], doors[0]["rel_z"] + 1), walls)
 
     def test_first_food_stockpile_never_occupies_bedroom_or_rice_field(self):
-        terrain = {"width": 50, "height": 50, "palette": ["Soil"], "grid": [2500, 0]}
+        terrain = {"width": 50, "height": 50, "palette": ["Soil"], "grid": [2500, 0],
+            'dry_foundation_grid':[2500,1],'mountain_roof_grid':[2500,0],'stockpile_available_grid':[2500,1]}
         anchor = {"x": 20, "z": 20}
         crops = [{"def_name": "Plant_Rice", "position": {"x": x, "z": z}}
                  for x in range(13, 19) for z in range(20, 27)]
