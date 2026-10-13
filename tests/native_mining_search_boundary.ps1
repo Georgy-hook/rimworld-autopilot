@@ -1,6 +1,8 @@
 $ErrorActionPreference='Stop'
 $taskSource=Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Helpers/MiningAutomationHelper.cs')
-$taskMethod=[regex]::Match($taskSource,'public static T ClosestFeasible[^;]+;').Value
+$taskStart=$taskSource.IndexOf('public static T ClosestFeasible')
+$taskEnd=$taskSource.IndexOf('public static List<int> ConnectedBatch',$taskStart)
+$taskMethod=$taskSource.Substring($taskStart,$taskEnd-$taskStart)
 if(-not $taskMethod){throw 'Actual closest feasible boundary missing'}
 $taskCode=@'
 using System;using System.Linq;using System.Collections.Generic;

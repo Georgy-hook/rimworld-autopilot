@@ -11,8 +11,12 @@ namespace RIMAPI.Helpers {
   private static object lastProfile;
   // Sort cheap distances before testing costly native reservations and full paths.
   // LINQ's stable ordering preserves the previous nearest-feasible choice and ties.
-  public static T ClosestFeasible<T>(IEnumerable<T> candidates,Func<T,float> distance,Func<T,bool> feasible)
-   => candidates.OrderBy(distance).FirstOrDefault(feasible);
+  public static T ClosestFeasible<T>(IEnumerable<T> candidates,Func<T,float> distance,Func<T,bool> feasible) {
+   // Mono's OrderedEnumerable.FirstOrDefault(predicate) can test every predicate
+   // before choosing a minimum. Explicit iteration must stop costly native work.
+   foreach(var candidate in candidates.OrderBy(distance))if(feasible(candidate))return candidate;
+   return default(T);
+  }
   public static List<int> ConnectedBatch(Dictionary<int,int[]> adjacency,int start,int limit) {
    var result=new List<int>();var seen=new HashSet<int>();var queue=new Queue<int>();queue.Enqueue(start);seen.Add(start);
    while(queue.Count>0 && result.Count<limit) {int id=queue.Dequeue();result.Add(id);
