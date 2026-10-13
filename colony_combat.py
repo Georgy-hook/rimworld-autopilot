@@ -358,6 +358,16 @@ TACTICS: dict[str, dict[str, Any]] = {
         "description": "Choose each armed melee fighter's role separately: attack, guard, lure, or withdraw. They receive orders in one cycle, so one can draw pursuit while others attack or cover the shooters.",
         "tags": {"melee_enemy", "close_quarters", "general"},
     },
+    "lure_enemy": {
+        "label": "Move an observed pursuer under covering fire",
+        "description": "One mobile pawn moves through a checked escape corridor only while the selected enemy actually pursues them and ready guns fire at that same enemy. A pacifist may move but cannot attack. No new pursuit or hit is guaranteed.",
+        "tags": {"defense", "coordination"},
+    },
+    "contact_melee": {
+        "label": "Immediate contact self-defence",
+        "description": "One violent-capable defender uses their actual melee verb against the named adjacent enemy. Compare safe retreat with injury risk. No distant charge, pacifist attack or cancellation of protected patient care.",
+        "tags": {"defense", "close_quarters"},
+    },
     "advance_to_range": {
         "label": "Bring guns into range",
         "description": "Out-of-range shooters move in short trap-free steps while those already in range keep shooting. Advancing may expose the group.",
@@ -745,7 +755,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         names = [name for name in names if name not in {'melee_assault', 'rush_ranged'}]
 
     result: dict[str, str] = {}
-    for native_tactic in ("emp_control", "smoke_advance", "mortar_counterbattery", "mortar_reload", "attack_structure"):
+    for native_tactic in ("emp_control", "smoke_advance", "mortar_counterbattery", "mortar_reload", "attack_structure", "lure_enemy", "contact_melee"):
         if native_tactical_options(snapshot, native_tactic):
             names.append(native_tactic)
     for name in names:

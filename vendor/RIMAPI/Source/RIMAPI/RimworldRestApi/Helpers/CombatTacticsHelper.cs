@@ -44,14 +44,18 @@ namespace RIMAPI.Helpers
                 }
 
                 if (!PositioningTactics.Contains(tactic) && !new[] { "melee_assault", "rush_ranged", "melee_hold_line", "lure_enemy",
-                    "preemptive_strike", "stationary_fire", "screen_melee", "guard_shooters", "psycast_control", "psycast_support" }.Contains(tactic))
+                    "preemptive_strike", "stationary_fire", "screen_melee", "guard_shooters", "psycast_control", "psycast_support", "contact_melee" }.Contains(tactic))
                     return ApiResult<CombatTacticResponseDto>.Fail("Unknown combat tactic; no fighters drafted.");
                 List<Pawn> fighters = map.mapPawns.FreeColonistsSpawned
                     .Where(p => request.FighterIds.Contains(p.thingIDNumber) && !p.Dead && !p.Downed
-                        && !p.InMentalState && !CombatNativeHelper.Protected(p))
+                        && !p.InMentalState && !CombatNativeHelper.Protected(p) && !CareTriageHelper.QueuedCare(p))
                     .ToList();
                 if (fighters.Count == 0)
                     return ApiResult<CombatTacticResponseDto>.Fail("No selected healthy fighter is available on this map.");
+                if (!new[] {"civilian_retreat","withdraw_and_regroup","lure_enemy","psycast_support","psycast_control"}.Contains(tactic))
+                    fighters.RemoveAll(p => p.WorkTagIsDisabled(WorkTags.Violent));
+                if (fighters.Count == 0)
+                    return ApiResult<CombatTacticResponseDto>.Fail("Selected pawns cannot perform violent work; choose protected movement or care.");
                 Pawn target = request.TargetPawnId.HasValue
                     ? map.mapPawns.AllPawnsSpawned.FirstOrDefault(p => p.thingIDNumber == request.TargetPawnId.Value && !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
                     : map.mapPawns.AllPawnsSpawned
@@ -73,6 +77,17 @@ namespace RIMAPI.Helpers
                     result.Notes.Add("Target is no longer an actual kidnapper carrying a player-owned victim; no fighters drafted.");
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
+
+                if (tactic == "lure_enemy" && fighters.Any(p => !CombatInterceptHelper.Pursuing(target,p)
+                    || CombatInterceptHelper.ReadyCover(p,target).Count == 0))
+                {
+                    result.Notes.Add("Lure is not followed by the selected threat with ready guns firing at that same threat; no pawn drafted.");
+                    return ApiResult<CombatTacticResponseDto>.Ok(result);
+                }
+                if(tactic=="contact_melee" && fighters.Any(p=>target==null
+                    || !CombatInterceptMath.ContactDefence(!p.WorkTagIsDisabled(WorkTags.Violent),p.Position.DistanceTo(target.Position))
+                    || p.meleeVerbs.TryGetMeleeVerb(target)==null))
+                {result.Notes.Add("Exact melee contact changed; no defender drafted and no distant charge ordered.");return ApiResult<CombatTacticResponseDto>.Ok(result);}
 
                 foreach (Pawn pawn in fighters)
                 {
@@ -103,6 +118,28 @@ namespace RIMAPI.Helpers
                 // caster must not immediately discard it for an AttackMelee job.
                 if (tactic == "psycast_control" || tactic == "psycast_support")
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
+
+                if (!new[] {"civilian_retreat","withdraw_and_regroup","staggered_retreat","fire_retreat","lure_enemy","kite","backstep_fire"}.Contains(tactic))
+                {
+                    foreach (var pawn in fighters.ToArray())
+                    {
+                        var contact = tactic=="contact_melee" ? target : map.mapPawns.AllPawnsSpawned.Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)
+                            && CombatInterceptMath.ContactDefence(!pawn.WorkTagIsDisabled(WorkTags.Violent),pawn.Position.DistanceTo(p.Position)))
+                            .OrderBy(p => pawn.Position.DistanceToSquared(p.Position)).FirstOrDefault();
+                        if (contact == null || pawn.meleeVerbs.TryGetMeleeVerb(contact) == null) continue;
+                        if (pawn.CurJobDef == JobDefOf.AttackMelee && pawn.CurJob.targetA.Thing == contact)
+                            result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                        else
+                        {
+                            var defend = JobMaker.MakeJob(JobDefOf.AttackMelee,contact);
+                            defend.playerForced = true; defend.expiryInterval = 120; defend.checkOverrideOnExpire = true;
+                            if (MentalSafetyHelper.TakeDefenceOrder(pawn,defend)) result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                        }
+                        result.Notes.Add($"{pawn.LabelShort}: contact self-defence against {contact.thingIDNumber}; short melee job, not a distant charge or completed fight.");
+                        fighters.Remove(pawn);
+                    }
+                    if (fighters.Count == 0) return ApiResult<CombatTacticResponseDto>.Ok(result);
+                }
 
                 if (target == null)
                 {
@@ -158,36 +195,28 @@ namespace RIMAPI.Helpers
                 {
                     foreach (Pawn pawn in fighters)
                     {
-                        Pawn nearest = map.mapPawns.AllPawnsSpawned
-                            .Where(p => !p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p))
-                            .OrderBy(p => pawn.Position.DistanceToSquared(p.Position))
-                            .FirstOrDefault();
-                        if (nearest == null) continue;
-                        float dx = pawn.Position.x - nearest.Position.x;
-                        float dz = pawn.Position.z - nearest.Position.z;
-                        float distance = (float)Math.Sqrt(dx * dx + dz * dz);
-                        if (distance < 0.1f) dx = 1f;
-                        if (distance >= 8f && distance <= 14f)
+                        var guns = CombatInterceptHelper.ReadyCover(pawn,target);
+                        float dx=pawn.Position.x-target.Position.x,dz=pawn.Position.z-target.Position.z;
+                        float distance=(float)Math.Sqrt(dx*dx+dz*dz);
+                        var desired=pawn.Position+new IntVec3((int)Math.Round(dx*6/Math.Max(1,distance)),0,(int)Math.Round(dz*6/Math.Max(1,distance)));
+                        IntVec3 safe=IntVec3.Invalid;
+                        foreach (var cell in GenRadial.RadialCellsAround(desired,7f,true).OrderBy(c=>c.DistanceToSquared(desired)))
                         {
-                            pawn.jobs.StopAll();
-                            result.Notes.Add($"{pawn.LabelShortCap} stays within lure distance; reassess enemy pursuit.");
-                            continue;
+                            if (!cell.InBounds(map) || !cell.Standable(map) || cell.Fogged(map) || !pawn.CanReserve(cell)
+                                || cell.DistanceTo(target.Position)<8f || cell.DistanceTo(target.Position)>20f
+                                || !guns.Any(g=>g.equipment.Primary.TryGetComp<CompEquippable>().PrimaryVerb.CanHitTargetFrom(g.Position,new LocalTargetInfo(cell)))) continue;
+                            using(var path=map.pathFinder.FindPathNow(pawn.Position,cell,pawn,null,PathEndMode.OnCell))
+                                if(RetreatRouteSafe(pawn,path) && CombatInterceptHelper.MovementSafe(pawn,path)
+                                    && path.NodesReversed.All(c=>guns.Any(g=>g.equipment.Primary.TryGetComp<CompEquippable>().PrimaryVerb.CanHitTargetFrom(g.Position,new LocalTargetInfo(c)))))
+                                {safe=cell;break;}
                         }
-                        float step = Math.Min(6f, Math.Abs(11f - distance));
-                        float direction = distance < 8f ? 1f : -1f;
-                        IntVec3 desired = new IntVec3(
-                            pawn.Position.x + (int)Math.Round(dx * direction * step / Math.Max(distance, 1f)), 0,
-                            pawn.Position.z + (int)Math.Round(dz * direction * step / Math.Max(distance, 1f)));
-                        IntVec3 safe;
-                        if (TryFindTrapFreeCell(pawn, desired, nearest.Position, tactic, out safe, 6f, 16f))
-                        {
-                            Job move = JobMaker.MakeJob(JobDefOf.Goto, safe);
-                            move.playerForced = true;
-                            if (pawn.jobs.TryTakeOrderedJob(move))
-                                result.PositionedPawnIds.Add(pawn.thingIDNumber);
-                        }
-                        else
-                            result.Notes.Add($"No trap-free lure position exists for {pawn.LabelShortCap}.");
+                        if(!CombatInterceptMath.SupportedLure(CombatInterceptHelper.Pursuing(target,pawn),guns.Count,safe.IsValid))
+                        {result.Notes.Add($"{pawn.LabelShort}: no followed, covered escape; lure was not executed.");continue;}
+                        if(pawn.CurJobDef==JobDefOf.Goto && pawn.CurJob.targetA.Cell==safe)
+                        {result.PositionedPawnIds.Add(pawn.thingIDNumber);continue;}
+                        var move=JobMaker.MakeJob(JobDefOf.Goto,safe);move.playerForced=true;move.locomotionUrgency=LocomotionUrgency.Jog;
+                        if(pawn.jobs.TryTakeOrderedJob(move))result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                        result.Notes.Add($"{pawn.LabelShort}: observed pursuer {target.thingIDNumber}; {guns.Count} guns already firing at this same enemy. Arrival/pursuit/hits unverified.");
                     }
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
@@ -322,12 +351,9 @@ namespace RIMAPI.Helpers
                             // wall while an unarmed colonist screens the threat.
                             IntVec3 firingCell;
                             if (TryFindFiringCell(pawn, target, out firingCell)
-                                || TryFindApproachCell(pawn, target, tactic, out firingCell))
+                                || target.pather?.Moving != true && TryFindApproachCell(pawn, target, tactic, out firingCell))
                             {
-                                Job move = JobMaker.MakeJob(JobDefOf.Goto, firingCell);
-                                move.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(move))
-                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                MoveAndAim(pawn,target,firingCell,result);
                             }
                             else
                                 result.Notes.Add($"{pawn.LabelShortCap} has no safe firing route around the obstruction.");
@@ -457,30 +483,13 @@ namespace RIMAPI.Helpers
                                 result.AttackingPawnIds.Add(pawn.thingIDNumber);
                             continue;
                         }
-                        float dx = target.Position.x - pawn.Position.x;
-                        float dz = target.Position.z - pawn.Position.z;
-                        float distance = (float)Math.Sqrt(dx * dx + dz * dz);
-                        float step = Math.Min(24f, Math.Max(0f, distance - 3f));
-                        IntVec3 desired = new IntVec3(
-                            pawn.Position.x + (int)Math.Round(dx * step / Math.Max(distance, 1f)), 0,
-                            pawn.Position.z + (int)Math.Round(dz * step / Math.Max(distance, 1f)));
                         IntVec3 safe;
-                        if (!TryFindTrapFreeCell(pawn, desired, target.Position, tactic, out safe, 2f))
+                        if (!TryFindFiringCell(pawn,target,out safe))
                         {
-                            result.Notes.Add($"No trap-free pursuit route exists for {pawn.LabelShortCap}.");
+                            result.Notes.Add($"No timely predictive firing window for {pawn.LabelShort}; no blind pursuit waypoint was issued.");
                             continue;
                         }
-                        Job current = pawn.CurJob;
-                        if (current?.def == JobDefOf.Goto && current.targetA.Cell.IsValid
-                            && current.targetA.Cell.DistanceToSquared(safe) <= 9)
-                        {
-                            result.PositionedPawnIds.Add(pawn.thingIDNumber);
-                            continue;
-                        }
-                        Job chase = JobMaker.MakeJob(JobDefOf.Goto, safe);
-                        chase.playerForced = true;
-                        if (pawn.jobs.TryTakeOrderedJob(chase))
-                            result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                        MoveAndAim(pawn,target,safe,result);
                     }
                     return ApiResult<CombatTacticResponseDto>.Ok(result);
                 }
@@ -519,34 +528,12 @@ namespace RIMAPI.Helpers
                                     result.AttackingPawnIds.Add(pawn.thingIDNumber);
                                 continue;
                             }
-                            if (distance <= range - 2f)
+                            IntVec3 firingCell;
+                            if (TryFindFiringCell(pawn,target,out firingCell))
                             {
-                                IntVec3 firingCell;
-                                if (TryFindFiringCell(pawn, target, out firingCell))
-                                {
-                                    Job move = JobMaker.MakeJob(JobDefOf.Goto, firingCell);
-                                    move.playerForced = true;
-                                    if (pawn.jobs.TryTakeOrderedJob(move))
-                                        result.PositionedPawnIds.Add(pawn.thingIDNumber);
-                                }
-                                else
-                                    result.Notes.Add($"No clear trap-free firing lane exists for {pawn.LabelShortCap}.");
-                                continue;
+                                MoveAndAim(pawn,target,firingCell,result);
                             }
-                            float step = Math.Min(8f, Math.Max(0f, distance - (range - 4f)));
-                            IntVec3 approachCell = new IntVec3(
-                                pawn.Position.x + (int)Math.Round(dx * step / Math.Max(distance, 1f)), 0,
-                                pawn.Position.z + (int)Math.Round(dz * step / Math.Max(distance, 1f)));
-                            IntVec3 safeApproach;
-                            if (TryFindTrapFreeCell(pawn, approachCell, target.Position, tactic, out safeApproach, 6f))
-                            {
-                                Job move = JobMaker.MakeJob(JobDefOf.Goto, safeApproach);
-                                move.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(move))
-                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
-                            }
-                            else
-                                result.Notes.Add($"No trap-free approach exists for {pawn.LabelShortCap}; current position retained.");
+                            else result.Notes.Add($"No timely predictive firing lane for {pawn.LabelShort}; changing distant edge-of-range waypoints is not progress.");
                             continue;
                         }
                         float threatRange = nearestThreat.equipment?.Primary?.def?.Verbs?.FirstOrDefault()?.range ?? 0f;
@@ -582,15 +569,7 @@ namespace RIMAPI.Helpers
                             IntVec3 firingCell;
                             if (TryFindFiringCell(pawn, target, out firingCell))
                             {
-                                if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell == firingCell)
-                                {
-                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
-                                    continue;
-                                }
-                                Job move = JobMaker.MakeJob(JobDefOf.Goto, firingCell);
-                                move.playerForced = true;
-                                if (pawn.jobs.TryTakeOrderedJob(move))
-                                    result.PositionedPawnIds.Add(pawn.thingIDNumber);
+                                MoveAndAim(pawn,target,firingCell,result);
                                 continue;
                             }
                             // A covered firing order must not strand a shooter who
@@ -599,7 +578,7 @@ namespace RIMAPI.Helpers
                             // firing cell becomes reachable; then the next cycle
                             // uses the exact line-of-sight check above.
                             IntVec3 approach;
-                            if (TryFindApproachCell(pawn, target, tactic, out approach))
+                            if (target.pather?.Moving != true && TryFindApproachCell(pawn, target, tactic, out approach))
                             {
                                 if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell == approach)
                                 {
@@ -773,37 +752,26 @@ namespace RIMAPI.Helpers
                 || (target is Pawn victim && (victim.Dead || victim.Downed)))
                 return false;
             Verb verb = pawn.equipment.Primary.TryGetComp<CompEquippable>()?.PrimaryVerb;
-            return verb != null && verb.CanHitTargetFrom(from, target);
+            return verb != null && (from == pawn.Position ? CombatInterceptHelper.CanShootNow(pawn,target) : verb.CanHitTargetFrom(from,target));
         }
 
         private static bool TryFindFiringCell(Pawn pawn, Pawn target, out IntVec3 result)
+            => CombatInterceptHelper.TryPosition(pawn,target,out result);
+
+        private static void MoveAndAim(Pawn pawn,Pawn target,IntVec3 cell,CombatTacticResponseDto result)
         {
-            Map map = pawn.Map;
-            float range = pawn.equipment?.Primary?.def?.Verbs?.FirstOrDefault()?.range ?? 0f;
-            if (range <= 6f)
-            {
-                result = IntVec3.Invalid;
-                return false;
-            }
-            IEnumerable<IntVec3> candidates = GenRadial.RadialCellsAround(pawn.Position, 24f, true)
-                .Where(cell => cell != pawn.Position && cell.InBounds(map) && cell.Standable(map)
-                    && !cell.Fogged(map) && !cell.ContainsStaticFire(map) && !HasFriendlyTrap(cell, map)
-                    && !cell.GetThingList(map).OfType<Pawn>().Any()
-                    && cell.DistanceTo(target.Position) >= 6f
-                    && cell.DistanceTo(target.Position) <= range - 1f
-                    && CanShootTarget(pawn, cell, target))
-                .OrderBy(cell => cell.DistanceToSquared(pawn.Position));
-            foreach (IntVec3 cell in candidates)
-            {
-                PawnPath path = map.pathFinder.FindPathNow(pawn.Position, cell, pawn, null, PathEndMode.OnCell);
-                bool valid = path.Found && path.NodesReversed.All(node => !HasFriendlyTrap(node, map));
-                path.ReleaseToPool();
-                if (!valid) continue;
-                result = cell;
-                return true;
-            }
-            result = IntVec3.Invalid;
-            return false;
+            if(CareTriageHelper.QueuedCare(pawn))return;
+            bool same=pawn.CurJobDef==JobDefOf.Goto && pawn.CurJob.targetA.Cell==cell;
+            bool queued=pawn.jobs.jobQueue.Any(q=>q.job.def==JobDefOf.AttackStatic && q.job.targetA.Thing==target);
+            if(same && queued){result.PositionedPawnIds.Add(pawn.thingIDNumber);return;}
+            var move=JobMaker.MakeJob(JobDefOf.Goto,cell);move.playerForced=true;move.locomotionUrgency=LocomotionUrgency.Jog;
+            if(!pawn.jobs.TryTakeOrderedJob(move))return;
+            var shot=JobMaker.MakeJob(JobDefOf.AttackStatic,target);shot.playerForced=true;
+            shot.expiryInterval=300;shot.checkOverrideOnExpire=true;
+            pawn.jobs.jobQueue.EnqueueLast(shot);
+            result.PositionedPawnIds.Add(pawn.thingIDNumber);
+            result.Notes.Add(CombatInterceptHelper.LastPrediction ?? "Normal firing approach; arrival and selected-target shot are unverified.");
+            result.Notes.Add($"{pawn.LabelShort}: queued normal shot at exact enemy {target.thingIDNumber} after arrival; not a fired projectile or hit.");
         }
 
         private static bool TryFindApproachCell(Pawn pawn, Pawn target, string tactic, out IntVec3 result)

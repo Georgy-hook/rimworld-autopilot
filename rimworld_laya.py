@@ -1053,6 +1053,9 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                     "Immediately backstep the isolated gunner from a healthy melee attacker and keep firing; "
                     "distant allies cannot cover this contact yet."
                 )}
+        for exact_defence in ('contact_melee','lure_enemy'):
+            if combat_planner.native_tactical_options(snapshot,exact_defence):
+                criteria[exact_defence]=combat_planner.TACTICS[exact_defence]['description']
         if not staging and any(first_number(pawn.get("distance_to_nearest_opponent"), 0) > 20
                                for pawn, _ in safe_ranged_pairs):
             criteria["equip_ranged_weapon"] = "Give suitable unarmed colonists nearby ranged weapons; they must survive the trip to pick them up."
@@ -1094,7 +1097,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             # Legacy positioning/tactics resolve Pawn targets. Native weapon
             # commands explicitly support Thing targets such as active turrets.
             criteria = {key: value for key, value in criteria.items() if key in {
-                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}}
+                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}}
             criteria["hold_and_observe"] = "Keep current orders; the active hostile structure still threatens its area."
             if combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
                 criteria["continue_safe_colony_work"] = "Release idle workers outside verified turret exposure; preserve care and leave the structure intact."
@@ -1221,7 +1224,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
         choice = "keep_current_plan"
     if choice not in SAFE_WORK_TYPES and choice not in COMBAT_CHOICES and choice != "keep_current_plan":
         raise ValueError(f"Unsupported combat choice {choice!r}")
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}:
         rows = combat_planner.native_tactical_options(snapshot, choice)
         aliases = {f"n{i}": row for i, row in enumerate(rows.values())}
         criteria = {key: str(row.get("label") or key) for key, row in aliases.items()}
@@ -1410,14 +1413,11 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
                 )
                 if combat_planner.unsupported_animal_charge(snapshot, [pawn]):
                     melee_options.pop('melee_assault', None)
-                if (first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 20
-                        and (not supporting_guns or (support_gap <= 30
-                                 and any(first_number(gun.get("distance_to_nearest_opponent"), 9999)
-                                         <= first_number(gun.get("weapon_range")) + 12
-                                         for gun in supporting_guns)))):
+                if any(o.get('fighter_id') == pawn.get('id') for o in
+                        combat_planner.native_tactical_options(snapshot,'lure_enemy').values()):
                     melee_options["lure_enemy"] = (
-                        "Draw the nearest enemy into allied range with short trap-free moves, staying close enough to keep pursuit. "
-                        "If the enemy ignores the lure, the fighter may contribute no damage while allies are exposed."
+                        "Move the observed pursuer within the covering guns' corridor. This requires the actual pursuer, "
+                        "ready guns firing at that same target, a faster healthy lure and a checked escape path."
                     )
                 melee_options["withdraw_and_regroup"] = (
                     ("Retreat from the enemy and rejoin distant gunmen; this may save an isolated unarmed colonist, "
@@ -1607,6 +1607,9 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
         if (role in {"melee_assault", "lure_enemy", "withdraw_and_regroup"}
                 and first_number(pawn.get("moving"), 1) < 0.65):
             role = pawn_default_role
+        if role == 'lure_enemy' and not any(o.get('fighter_id') == pawn_id and o.get('target_id') == target_id
+                for o in combat_planner.native_tactical_options(snapshot,'lure_enemy').values()):
+            continue  # A stale role cannot expose a pawn after pursuit or same-target fire changed.
         if role == 'melee_assault' and combat_planner.unsupported_animal_charge(snapshot, [pawn]):
             # Revalidate a stale per-pawn role without issuing a replacement
             # movement order or taking the caregiver into combat.
@@ -1635,7 +1638,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
     resume_command = None
     if snapshot["map"]["enemies"] > 0 and snapshot["game"].get("is_paused"):
         resume_command = {"endpoint": "/api/v1/game/speed", "query": {"speed": 1}}
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}:
         selected = decision.get("native_plan")
         if not isinstance(selected, dict) or selected not in combat_planner.native_tactical_options(snapshot, choice).values():
             return {"kind": "noop", "description": "Native weapon/target choice changed; request a new decision"}

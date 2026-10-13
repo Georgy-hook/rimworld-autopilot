@@ -96,12 +96,22 @@ namespace RIMAPI.Helpers
             && (thing.TryGetComp<CompInitiatable>()?.Initiated ?? true) && turret.AttackVerb!=null;
         private static IEnumerable<Thing> Targets(Map map) => map.mapPawns.AllPawnsSpawned.Where(p=>!p.Dead && !p.Downed && IsPlayerThreat(p) && !p.Position.Fogged(map)).Cast<Thing>()
             .Concat(map.listerBuildings.allBuildingsNonColonist.Where(b=>!b.Destroyed && b.HostileTo(Faction.OfPlayer) && !b.Position.Fogged(map) && ActiveStructure(b)).Cast<Thing>());
-        private static bool Fighter(Pawn pawn) => !pawn.Dead && !pawn.Downed && !pawn.InMentalState && !pawn.WorkTagIsDisabled(WorkTags.Violent) && !Protected(pawn);
+        private static bool Fighter(Pawn pawn) => !pawn.Dead && !pawn.Downed && !pawn.InMentalState && !pawn.WorkTagIsDisabled(WorkTags.Violent) && !Protected(pawn) && !CareTriageHelper.QueuedCare(pawn);
         private static Dictionary<string,string> Effects(string benefit,string risk,string cost,string uncertainty)=>new Dictionary<string,string>{{"benefit",benefit},{"risk",risk},{"cost",cost},{"inaction","Hostile attacks/coverage persist; ordinary defense may suffice"},{"uncertainty",uncertainty}};
         private static bool FriendlyBlastSafe(Map map,Pawn shooter,Thing target,float radius) => !(target is Pawn carrier && carrier.carryTracker?.CarriedThing is Pawn carried && carried.Faction==Faction.OfPlayer) && !map.mapPawns.AllPawnsSpawned.Any(p=>p!=shooter && p.Faction==Faction.OfPlayer && p.Position.InHorDistOf(target.Position,radius));
         public static List<CombatNativeOptionDto> Options(Map map)
         {
             var result=new List<CombatNativeOptionDto>();var targets=Targets(map).ToList();
+            foreach (Pawn lure in map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead && !p.Downed && !p.InMentalState
+                && !Protected(p) && !CareTriageHelper.QueuedCare(p) && p.health.hediffSet.BleedRateTotal==0f && p.health.capacities.GetLevel(PawnCapacityDefOf.Moving) >= .85f
+                && p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness)>=.85f))
+            foreach (Pawn pursuer in targets.OfType<Pawn>().Where(p => CombatInterceptHelper.Pursuing(p,lure)
+                && lure.GetStatValue(StatDefOf.MoveSpeed) > p.GetStatValue(StatDefOf.MoveSpeed) * 1.1f))
+                if (CombatInterceptHelper.ReadyCover(lure,pursuer).Count > 0)
+                    result.Add(new CombatNativeOptionDto {Tactic="lure_enemy",FighterId=lure.thingIDNumber,TargetId=pursuer.thingIDNumber,
+                        Label=$"{lure.LabelShort}: move the observed pursuer {pursuer.LabelShort} inside its current covering guns' envelope",
+                        Effects=Effects("Divert this already observed pursuer while guns attack that exact enemy", "Lure can be injured; pursuit or covering fire can change",
+                            "Normal checked movement; no forced enemy target or violent job for a pacifist", "Safe destination, route, pursuit and same-target fire are checked again; no guaranteed diversion or hit")});
             foreach (Pawn caregiver in map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead && !p.Downed
                 && !p.InMentalState && HasClinicalCareJob(p) && !(p.carryTracker?.CarriedThing is Pawn)))
             {
@@ -120,6 +130,12 @@ namespace RIMAPI.Helpers
             }
             foreach(Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(Fighter))
             {
+                foreach(Pawn contact in targets.OfType<Pawn>().Where(p => CombatInterceptMath.ContactDefence(true,pawn.Position.DistanceTo(p.Position))
+                    && pawn.meleeVerbs.TryGetMeleeVerb(p)!=null))
+                    result.Add(new CombatNativeOptionDto {Tactic="contact_melee",FighterId=pawn.thingIDNumber,TargetId=contact.thingIDNumber,
+                        Label=$"{pawn.LabelShort}: immediate melee self-defence against adjacent {contact.LabelShort}",
+                        Effects=Effects("Use actual melee verb now instead of an unusable point-blank ranged order", "Adjacent opponent can seriously injure this defender",
+                            "Only this violent-capable defender; short ordinary melee job replaces their current shooting", "Contact and native verb checked again; no charge, guaranteed win or patient-care interruption")});
                 Verb verb=pawn.equipment?.Primary?.TryGetComp<CompEquippable>()?.PrimaryVerb;
                 var projectile=verb?.verbProps.defaultProjectile?.projectile;
                 bool emp=projectile?.damageDef==DamageDefOf.EMP;

@@ -143,6 +143,15 @@ def _downed_under_attack(colonists: list[dict[str, Any]], hostiles: list[dict[st
     )
 
 
+def _active_combat_threat(combat: dict[str, Any]) -> bool:
+    """Slow on observed live threats before injury; a passive animal is not one."""
+    player_ids = {_id(p) for p in (combat.get('colonists') or []) + (combat.get('colony_animals') or []) if _id(p)}
+    return any(not p.get('is_dead') and not p.get('is_downed') and (
+        p.get('is_hostile') is True or p.get('is_building') and p.get('active_threat') is True
+        or p.get('current_job') == 'PredatorHunt' and p.get('current_job_target_id') in player_ids)
+        for p in (combat.get('hostiles') or []) + (combat.get('hostile_buildings') or []))
+
+
 def _critical_disease(rows: Any) -> bool:
     """Summary health and zero bleeding can hide a fatal immunity race."""
     for row in rows if isinstance(rows, list) else []:
@@ -493,9 +502,10 @@ class ObserverPlanner:
                        critical_disease: bool = False, critical_starvation: bool = False,
                        critical_thermal: bool = False,
                        critical_mental: bool = False,
+                       critical_combat: bool = False,
                        director_is_ready: bool = True) -> list[dict[str, Any]]:
         """Run at 3x normally and give Laya more cycles during live emergencies."""
-        target = EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal or critical_mental else TARGET_GAME_SPEED
+        target = EMERGENCY_GAME_SPEED if critical_combat or home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal or critical_mental else TARGET_GAME_SPEED
         if not director_is_ready:
             target = 0
             if game.get("is_paused"):
@@ -691,6 +701,7 @@ def main() -> None:
                         _execute(api, action)
                         _log(args.log, {"action": action, "reason": "director_not_ready"})
                 combat = api.request("/api/v1/combat/state?" + urlencode({"map_id": current_map["id"]})) or {}
+                critical_combat = _active_combat_threat(combat)
                 mental_context = murderous_rage_context(combat)
                 critical_mental = bool(mental_context)
                 fires = api.request("/api/v1/map/fire/situation?" + urlencode({"map_id": current_map["id"]})) or {}
@@ -732,6 +743,7 @@ def main() -> None:
                                                  critical_starvation=critical_starvation,
                                                  critical_thermal=critical_thermal,
                                                  critical_mental=critical_mental,
+                                                 critical_combat=critical_combat,
                                                  director_is_ready=runtime_ready) + actions
                 if now >= next_window_scan:
                     windows = api.request("/api/v1/ui/windows") or []
@@ -743,13 +755,14 @@ def main() -> None:
                 status = {"pid": os.getpid(), "state": "running", "updated_at": datetime.now(timezone.utc).isoformat(),
                           "detail": "Camera is following the colony", "shot": shot.kind if shot else "waiting",
                           "director_ready": runtime_ready,
-                          "target_speed": 0 if not runtime_ready else EMERGENCY_GAME_SPEED if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal or critical_mental else TARGET_GAME_SPEED,
+                          "target_speed": 0 if not runtime_ready else EMERGENCY_GAME_SPEED if critical_combat or home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation or critical_thermal or critical_mental else TARGET_GAME_SPEED,
+                          "critical_combat": critical_combat,
                           "critical_disease": critical_disease,
                           "critical_thermal": critical_thermal,
                           "critical_mental": critical_mental,
                           "mental_context": mental_context,
                           "thermal_context": thermal_context,
-                          "speed_reason": "director_not_ready" if not runtime_ready else "active_murderous_rage" if critical_mental else "thermal_emergency" if critical_thermal else "other_emergency" if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else "normal",
+                          "speed_reason": "director_not_ready" if not runtime_ready else "active_combat_threat" if critical_combat else "active_murderous_rage" if critical_mental else "thermal_emergency" if critical_thermal else "other_emergency" if home_fire or critical_bleeding or downed_under_attack or critical_disease or critical_starvation else "normal",
                           "critical_starvation": critical_starvation,
                           "target": shot.target_name if shot else "", "remaining": round(max(0, shot.duration - (now - shot.started)), 1) if shot else 0,
                           "death_overlay_until": death_until}

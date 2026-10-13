@@ -42,6 +42,16 @@ A later live read showed a second avoidable scan: a free worker was already on a
 
 This identifies one measured source of frame stalls. It does not establish the only cause of the user's previous freezes or repair an unidentified Unity render/shader fault. Live before/after measurements and ordinary long-run observation remain distinct from the algorithmic test.
 
+## Contact defence, interception and a followed lure
+
+An observed live hostile now triggers the observer's ordinary emergency speed immediately, before injuries occur. A neutral predator hunting a player person or pet also qualifies. Passive animals do not. Normal speed resumes when active threats clear and no other emergency remains; a missing ready director still holds a pause.
+
+Violence-disabled people receive no melee or shooting jobs. An exact native contact option exposes ordinary melee self-defence to a gunner with an adjacent attacker; applicable firing tactics also resolve that contact through a short melee job. Current and queued patient care remain protected. This does not authorize a distant charge or prove a successful defence.
+
+Firing positions use the target's observed current path, loaded movement and terrain costs, actor path cost, aiming delay, projectile flight and an additional response buffer. The future shot must fit inside a range margin and a checked line of sight. A bounded candidate search favors a timely shot and cover, preserves a still viable committed waypoint, and replaces it when its future window no longer works. Normal movement explicitly uses Jog and queues a normal shot at the selected enemy after arrival. Existing valid warmups are preserved. Forecasts cannot guarantee a hit: enemies can change routes, doors can block, and movement/aiming estimates can differ from the realized execution.
+
+A lure is available only for a currently observed pursuer and ready covering guns already attacking that same enemy. The actor must be mobile, uninjured by current bleeding and faster than the pursuer. Its escape corridor must stay clear of traps, fire, gases and contact, within the covering firing envelope. A pacifist can execute this movement choice. The code does not force an enemy to choose the lure, treat another-target gun as support or label an ignored pawn as a successful distraction. Changed pursuit or support invalidates the plan before a new order.
+
 ## Verification
 
-The candidate passed 1,470 Python tests, all 18 native boundary suites and 315 offline route bindings, with no missing or duplicate routes. Native compilation succeeded with zero errors and warnings. New regression cases cover food deadlines, retained plants, resumption, missing components, finite goals, the freezer wall, small meal batches, clinical job shape, fresh area options, native stockpile availability and bounded model comparisons. Live gameplay outcomes require the next campaign's actual evidence.
+The candidate passed 1,480 Python tests, all 19 native boundary suites and 315 offline route bindings, with no missing or duplicate routes. Native compilation succeeded with zero errors and warnings. New regression cases cover food deadlines, retained plants, resumption, missing components, finite goals, the freezer wall, small meal batches, clinical job shape, fresh area options, native stockpile availability, bounded model comparisons, early threat pacing, contact defence and stale lure rejection. Live gameplay outcomes require actual evidence; offline math and option guards do not replay or establish a combat victory.

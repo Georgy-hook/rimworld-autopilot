@@ -512,6 +512,9 @@ class CombatScenarioTests(unittest.TestCase):
                  fighter(7, ranged=False, weapon="MeleeWeapon_Gladius", distance=10)]
         snapshot = raid(team, [{"id": 99, "kind_def": "Megaspider", "health": 0.8,
                                "position": {"x": 24, "z": 10}}])
+        snapshot['combat']['native_options'] = [{'tactic':'lure_enemy','fighter_id':6,'target_id':99}]
+        snapshot['combat']['hostiles'][0].update(current_job='AttackMelee',current_job_target_id=6)
+        for gun in team[:5]:gun.update(current_job='AttackStatic',current_job_target_id=99)
         state = bridge.decision_state(snapshot)
         self.assertEqual(state["force_balance"]["available_shooters"], 5)
         self.assertEqual(state["force_balance"]["available_armed_melee"], 2)
@@ -530,7 +533,9 @@ class CombatScenarioTests(unittest.TestCase):
         class SplitAgent:
             def predict(self, state, questions):
                 question = next(iter(questions))
-                chosen = {"threat_action": "coordinate_melee_roles", "melee_role_1": "lure_enemy",
+                if question.startswith('melee_role_'):
+                    assert 'lure_enemy' not in questions[question]['criteria'], 'Unsupported lure offered without covering guns'
+                chosen = {"threat_action": "coordinate_melee_roles", "melee_role_1": "melee_hold_line",
                           "melee_role_2": "melee_assault"}[question]
                 return {"answers": {question: {"choice": chosen, "confidence": 0.9}}}
 
@@ -545,7 +550,7 @@ class CombatScenarioTests(unittest.TestCase):
         action = bridge.plan_action(snapshot, decision)
         tactics = [row["body"] for row in action["commands"] if row.get("body", {}).get("tactic")]
         self.assertEqual([(row["tactic"], row["fighter_ids"]) for row in tactics], [
-            ("lure_enemy", [1]), ("melee_assault", [2]),
+            ("melee_hold_line", [1]), ("melee_assault", [2]),
         ])
 
     def test_three_swords_can_attack_together_instead_of_becoming_civilian_retreaters(self):
