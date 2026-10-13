@@ -41,7 +41,10 @@ namespace RIMAPI.Helpers {
     while(unseen.Count>0) {
      var vein=ConnectedBatch(adjacency,unseen.Min(),int.MaxValue);unseen.ExceptWith(vein);
      foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(MinerReady)) {
-      var first=ClosestFeasible(vein.Select(id=>byId[id]),t=>t.Position.DistanceToSquared(worker.Position),
+      // Touching an impassable rock requires an adjacent walkable cell now.
+      // Keep interior blocks in vein/batch geometry, but do not pathfind to each of them.
+      var first=ClosestFeasible(vein.Select(id=>byId[id]).Where(t=>GenAdj.CellsAdjacent8Way(t).Any(c=>c.InBounds(m) && c.Walkable(m))),
+       t=>t.Position.DistanceToSquared(worker.Position),
        t=>{long at=System.Diagnostics.Stopwatch.GetTimestamp();pathChecks++;
         try{return worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
          && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch);}
