@@ -8,6 +8,7 @@ namespace RIMAPI.Models
         public object Environment { get; set; }
         public List<ResilienceOptionDto> Options { get; set; } = new List<ResilienceOptionDto>();
         public List<ActiveNativeOrderDto> ActiveOrders { get; set; } = new List<ActiveNativeOrderDto>();
+        public List<object> AreaRestrictions { get; set; } = new List<object>();
     }
     public class ActiveNativeOrderDto
     {

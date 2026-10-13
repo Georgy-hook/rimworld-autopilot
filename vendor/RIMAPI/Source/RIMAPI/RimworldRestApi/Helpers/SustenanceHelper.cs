@@ -206,6 +206,7 @@ namespace RIMAPI.Helpers {
      list.Add(new Plan{key=$"pen:{marker.parent.thingIDNumber}:{species.defName}:{!allowed}",kind="pen",target_id=marker.parent.thingIDNumber,value=species.defName+":"+(!allowed),label=marker.RenamableLabel+": "+(!allowed ? "allow " : "exclude ")+species.LabelCap,cost="Handlers must perform ordinary roping/transfer work",risk="Alternate accepting enclosed pen required for exclusion; acceptance is not proof of feed or safe route; species separation can reduce grazing pressure"});
    }
    list.AddRange(AnimalProvisioningHelper.Plans(m));
+   list.AddRange(FoodProtectionHelper.Plans(m));
    return list;
   }
   public static ApiResult<object> Context(int id) {
@@ -247,6 +248,7 @@ namespace RIMAPI.Helpers {
    var m=MapHelper.GetMapByID(request.MapId);if(m==null)return ApiResult<object>.Fail("Map missing");
    var plan=Plans(m).FirstOrDefault(p=>p.key==request.Key);if(plan==null)return ApiResult<object>.Ok(new{applied=false,reason="live_option_unavailable"});
    if(plan.kind=="penfeed" || plan.kind=="warmspot")return AnimalProvisioningHelper.Apply(m,plan);
+   if(plan.kind=="pantry" || plan.kind=="protectfood")return FoodProtectionHelper.Apply(m,plan);
    var thing=m.listerThings.AllThings.FirstOrDefault(t=>t.thingIDNumber==plan.target_id);
    switch(plan.kind) {
     case "pausefeed":

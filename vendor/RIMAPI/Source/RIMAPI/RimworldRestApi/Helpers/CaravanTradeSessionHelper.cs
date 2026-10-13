@@ -34,7 +34,7 @@ namespace RIMAPI.Helpers
             {
                 case "drugs": return name == "Flake" || name == "Yayo" || name == "SmokeleafJoint";
                 case "apparel": return categories.Contains("Apparel");
-                case "art": return name.Contains("Sculpture");
+                case "art": return name.Contains("Sculpture") || LiveTradeAutomationHelper.IsFinishedArt(row);
                 case "animal_products": return name.Contains("Wool") || name.Contains("Leather") || name.Contains("Milk");
                 case "chemfuel": return name == "Chemfuel";
                 case "precious": return name == "Gold" || name == "Jade";
@@ -72,7 +72,7 @@ namespace RIMAPI.Helpers
                         && t.CountHeldBy(Transactor.Colony) > 0 && MatchesSale(t, category)
                         && t.GetPriceFor(TradeAction.PlayerSells) > 0f);
                     if (row == null) continue;
-                    float proceeds=0f, remaining=preview.TraderSilver;
+                    float proceeds=0f, remaining=preview.TraderSilver+2500f; // Conditional barter credit; final native balance required.
                     foreach (Tradeable sale in deal.AllTradeables.Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Colony)>0 && MatchesSale(t,category)))
                     {
                         float price=sale.GetPriceFor(TradeAction.PlayerSells);
@@ -149,7 +149,8 @@ namespace RIMAPI.Helpers
                 string category = request.SaleCategory ?? "none";
                 if (category != "none" && !SaleCategories.Contains(category))
                     return ApiResult<LiveTradeResponseDto>.Fail("Unknown caravan sale category.");
-                float traderSilver = deal.CurrencyTradeable?.CountHeldBy(Transactor.Trader) ?? 0;
+                float traderSilver = LiveTradeAutomationHelper.SaleCreditCeiling(deal.CurrencyTradeable?.CountHeldBy(Transactor.Trader) ?? 0,
+                    request.MaximumSpend,request.PurchasePawnId.HasValue || request.PurchaseThingId.HasValue);
                 foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
                     && t.CountHeldBy(Transactor.Colony) > 0 && MatchesSale(t, category)))
                 {

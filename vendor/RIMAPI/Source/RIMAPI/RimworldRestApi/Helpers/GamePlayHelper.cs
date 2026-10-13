@@ -80,6 +80,7 @@ namespace RIMAPI.Helpers
         public static GameStateDto GetGameStateDto()
         {
             var state = new GameStateDto();
+            state.FramePerformance = FramePerformanceHelper.Read();
 
             try
             {

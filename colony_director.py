@@ -761,7 +761,7 @@ def freezer_blueprint(*, include_generator: bool = False, wall_stuff: str = "Woo
             items.append(building("Wall", x, 5, stuff=wall_stuff))
     for z in range(1, 5):
         items.append(building("Wall", 0, z, stuff=wall_stuff))
-        if z not in {2, 3}:
+        if z != 2:
             items.append(building("Wall", 5, z, stuff=wall_stuff))
     items.append(building("Door", 3, 5, stuff=wall_stuff))
     items.append(building("Cooler", 5, 2, rotation=1))
@@ -773,6 +773,7 @@ def freezer_blueprint(*, include_generator: bool = False, wall_stuff: str = "Woo
 def freezer_resource_plan(
     building_counts: dict[str, Any], item_counts: dict[str, Any], best_builder: int, finished: set[str],
     generator_defs: set[str] | None = None,
+    catalog: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     if "Electricity" not in finished or int(building_counts.get("Cooler", 0)) > 0 or best_builder < 3:
         return None
@@ -786,6 +787,10 @@ def freezer_resource_plan(
         "steel": 90,
         "wood": 150,
     }
+    if catalog is not None:
+        costs=architect.estimated_stuff_cost(freezer_blueprint(),catalog)
+        if any(k.startswith('unknown_') for k in costs): return None
+        required={'components':costs.get('ComponentIndustrial',0),'steel':costs.get('Steel',0),'wood':costs.get('WoodLog',0)}
     if (
         int(item_counts.get("ComponentIndustrial") or 0) < required["components"]
         or int(item_counts.get("Steel") or 0) < required["steel"]
@@ -2953,6 +2958,7 @@ IMMEDIATE_CARE_ACTIONS = {"rescue_downed_colonist", "rescue_downed_animal", "ten
     "feed_hungry_colonist", "feed_hungry_animal", "eat_available_meal", "care_for_injured_animal",
     "prioritize_rescue", "prioritize_doctor", "prepare_emergency_medical_bed",
     "resilience_rescue", "resilience_tend", "resilience_feed", "resilience_rest", "resilience_roof_guard",
+    "resilience_area_shelter", "resilience_shelter",
     "society_baby_safe", "society_baby_feed", "society_hemogen_feed"}
 
 
@@ -4695,7 +4701,7 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     freezer_plan = freezer_resource_plan(counts, item_counts, best_builder, finished, {
         str(row.get("def_name")) for row in dev.get("building_catalog") or []
         if row.get("is_power_generator")
-    })
+    }, dev.get('building_catalog') or [])
     if freezer_plan and "freezer" not in map_state["issued"]:
         details["freezer_include_generator"] = freezer_plan["include_generator"]
         details["freezer_requirements"] = freezer_plan["requirements"]
@@ -7444,13 +7450,33 @@ def focus_contamination_choices(snapshot: dict[str, Any], candidates: list[str])
             "resilience_dispose_corpse", "resilience_shelter"}.intersection(candidates):
         return candidates
     allowed = IMMEDIATE_CARE_ACTIONS | IMMEDIATE_FOOD_ACTIONS | {
-        "resilience_dispose_corpse", "resilience_shelter", "resilience_tend", "resilience_rescue", "resilience_feed",
+        "resilience_dispose_corpse", "resilience_shelter", "resilience_area_shelter", "resilience_tend", "resilience_rescue", "resilience_feed",
         "resilience_rest", "hold_survival", "unforbid_supplies", "prioritize_firefighting",
         "fight_fire", "harvest_local_plants", "configure_food_bills", "prioritize_cooking",
         "rebalance_cooking", "refuel_building", "build_room_heater", "build_room_campfire",
         "build_passive_cooler", "prioritize_thermal_project",
     }
     return [name for name in candidates if name in allowed]
+
+
+def focus_fallout_choices(snapshot: dict[str, Any], candidates: list[str]) -> list[str]:
+    """Exposure needs executable protection before discretionary expansion.
+
+    Keep native validated care, covered food/storage and shelter work. A roofed
+    cell in outdoor room0 can still protect against fallout. Stock/ordinary
+    food/medical options validate their actors and routes independently.
+    """
+    dev = snapshot.get('development') or {}
+    if not dev.get('fallout_urgent'):
+        return candidates
+    allowed = IMMEDIATE_CARE_ACTIONS | IMMEDIATE_FOOD_ACTIONS | {
+        'resilience_area_release', 'resilience_dispose_corpse', 'resilience_temperature', 'sustenance_preservation',
+        'production_maintenance', 'production_utilities', 'connect_power_consumer', 'society_free_time', 'society_baby_play',
+        'society_teach', 'sustenance_food_policy', 'advance_research', 'select_research', 'production_recipe_batch',
+        'production_material_logistics', 'create_food_stockpile', 'build_house',
+        'replace_blocked_shell_material', 'prioritize_construction_project', 'prioritize_hauling',
+        'prioritize_construction', 'shelter_under_roof', 'stewardship_shell_repair', 'stewardship_crop_budget', 'stewardship_preservation_goal', 'hold_survival'}
+    return [a for a in candidates if a in allowed]
 
 
 def choose_action(agent: Any, snapshot: dict[str, Any], candidates: list[str]) -> dict[str, Any]:
@@ -8579,7 +8605,7 @@ def food_bills_need_configuration(client: bridge.RimApiClient | None,
     return bool(food_bill_targets(client, tables))
 
 
-def configure_food_bills(client: bridge.RimApiClient, tables: list[dict[str, Any]]) -> dict[str, Any]:
+def configure_food_bills(client: bridge.RimApiClient, tables: list[dict[str, Any]], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     responses, fulfilled, failures = [], [], []
     for table in tables:
         def_name = str(table.get("thing_def") or "")
@@ -8601,8 +8627,9 @@ def configure_food_bills(client: bridge.RimApiClient, tables: list[dict[str, Any
             continue
         body = {"recipe_def_name": required, "repeat_mode": "Forever"}
         if required == "CookMealSimple":
-            body.update(repeat_mode="TargetCount", target_count=20, pause_when_satisfied=True,
-                        unpause_when_you_have=8)
+            target = storage.meal_batch_target(snapshot) if snapshot is not None else 20
+            body.update(repeat_mode="TargetCount", target_count=target, pause_when_satisfied=True,
+                        unpause_when_you_have=max(1, target//3))
         error_text = None
         try:
             responses.append(client.post("/api/v1/buildings/bills/add",
@@ -9948,9 +9975,11 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         site = find_clear_layout_site(client, map_id, near, layout, dev, map_state, radius=28)
         if site is None:
             return {"applied": False, "reason": "No clear, dry freezer site is available"}
-        response = post_blueprint(client, map_id, site, layout)
-        issued["freezer"] = tick
-        return {"applied": True, "site": site, "response": response}
+        response = post_observed_blueprint(client, map_id, site, layout)
+        if response.get('applied'):
+            issued["freezer"] = tick
+            map_state.setdefault('preservation_goal',{}).update(map_id=map_id,placed=True,origin=site,layout=layout)
+        return {**response, "site": site, "completion":"unverified", "cold_temperature":"unverified"}
     if choice == "create_stockpile":
         terrain = client.get('/api/v1/map/terrain', map_id=map_id)
         site = storage.site(terrain, anchor, 6, 6, architecture_occupied_cells(dev, map_state), stockpile=True)
@@ -10056,7 +10085,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             map_state["campfire_attempts"] = int(map_state.get("campfire_attempts") or 0) + 1
         return result
     if choice == "configure_food_bills":
-        result = configure_food_bills(client, details.get("food_bill_targets") or snapshot["development"]["work_tables"])
+        result = configure_food_bills(client, details.get("food_bill_targets") or snapshot["development"]["work_tables"], snapshot)
         return result
     if choice == "advance_research":
         target = details["research_target"]
@@ -10941,6 +10970,7 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
     candidates = laya_preferences.filter_candidates(candidates, player_preferences)
     candidates = focus_overdue_shelter_choices(snapshot, candidates)
     candidates = focus_contamination_choices(snapshot, candidates)
+    candidates = focus_fallout_choices(snapshot, candidates)
     candidates, blocked_actions = filter_backed_off_choices(map_state, candidates)
     if not candidates:
         candidates = ["hold_survival"]
@@ -10969,6 +10999,10 @@ def run_development_cycle(client: bridge.RimApiClient, agent: Any, state: dict[s
         if decision.get("selection_unavailable"):
             result = {"applied": False, "reason": "selection_unavailable",
                       "selection": decision["selection_unavailable"]}
+            module = colony_modules.owner(choice)
+            remember = getattr(module, 'remember_selection_unavailable', None)
+            if remember:
+                remember(snapshot, map_state, choice, decision['selection_unavailable'])
         else:
             result = execute_action(client, snapshot, map_state, choice, details)
     except bridge.RimApiError as exc:
@@ -12624,6 +12658,36 @@ def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
 
 
 @bounded_decision_cycle
+def run_urgent_area_cycle(client, agent, snapshot, map_state, log_path):
+    """Early protection while people can still walk, before optional event/policy pages."""
+    dev = snapshot.setdefault('development', {})
+    if 'resilience' not in dev:
+        dev['resilience'] = resilience.collect(client, snapshot)
+    available = resilience.prepare(snapshot, map_state)
+    if not dev.get('area_urgent') and not dev.get('fallout_urgent'):
+        return None
+    actions = [a for a in ('resilience_area_shelter', 'resilience_area_release', 'resilience_shelter', 'resilience_rescue') if a in available]
+    if not actions:
+        return None  # Never fabricate a safe destination or a feasible caregiver.
+    choices = {a: resilience.DESCRIPTIONS[a] for a in actions}
+    effects = {a: resilience.assess(a, snapshot) for a in actions}
+    choices['defer'] = 'Preserve current protected care; exposure may continue'
+    effects['defer'] = {'benefit':'Keep current care', 'risk':'Exposure or missing food/sleep access can incapacitate and kill',
+        'cost':'No new order', 'inaction':'Current exposure/work continue', 'uncertainty':'No completed shelter response'}
+    action, raw = ask_laya_choice(agent, {'decision_facts': {'fallout':bool(dev.get('fallout_urgent')), 'area_actions':len(actions)}, 'option_effects':effects},
+        'urgent_area_response', 'Choose a native safe protection response before more outdoor work; preserve critical care.', choices, detailed=True)
+    if action == 'defer':
+        return None
+    selected, binding = resilience.choose(agent, {'decision_facts':{'fallout':bool(dev.get('fallout_urgent')), 'area_actions':len(actions)}}, action, snapshot)
+    result = resilience.execute(client, snapshot, map_state, action, selected)
+    record = {'timestamp':bridge.utc_now(), 'mode':'urgent-area', 'tick':snapshot['game'].get('tick'),
+        'decision':{'choice':action, 'selection':selected, 'response':raw, 'binding':binding}, 'result':result,
+        'blocks_development':False}
+    bridge.append_log(log_path, record)
+    return record
+
+
+@bounded_decision_cycle
 def run_urgent_thermal_cycle(client: bridge.RimApiClient, agent: Any,
                              snapshot: dict[str, Any], map_state: dict[str, Any], log_path: Path) -> dict[str, Any] | None:
     """Compare a native safe thermal relocation before wound-only bedside treatment."""
@@ -13247,7 +13311,7 @@ def run_caravan_trade_cycle(client: bridge.RimApiClient, agent: Any, snapshot: d
             key: f"{row.get('example')}, up to {row.get('maximum_units')} units at about {row.get('unit_price')} silver each; buyer has {trader_cash} silver"
             for key, row in sale_options.items()}})
     sale_row = sale_options.get(sale_choice) or {}
-    estimated_proceeds = min(trader_cash, 2500, float(sale_row.get("planned_sale_value")
+    estimated_proceeds = min(2500, float(sale_row.get("planned_sale_value")
                             if sale_row.get("planned_sale_value") is not None else float(sale_row.get("unit_price") or 0)
                             * int(sale_row.get("maximum_units") or 0)))
     reserve_options = {str(amount): f"Keep at least {amount} silver after this trade"
@@ -13641,6 +13705,12 @@ def main() -> int:
                     post_combat_care_failures = 0
                     next_post_combat_care_cycle = min(next_post_combat_care_cycle, time.monotonic())
                     next_live_threat_care_cycle = min(next_live_threat_care_cycle, time.monotonic())
+                fallout_record = run_urgent_area_cycle(client, agent, snapshot, map_state, args.log)
+                if fallout_record is not None:
+                    save_state(args.state, state)
+                    print(f"[{fallout_record['timestamp']}] area protection: {stdout_result(fallout_record['result'])}", flush=True)
+                    if fallout_record['result'].get('applied'):
+                        snapshot = bridge.collect_snapshot(client)
                 caravan_trade_record = run_caravan_trade_cycle(client, agent, snapshot, state, args.log)
                 if caravan_trade_record is not None:
                     save_state(args.state, state)

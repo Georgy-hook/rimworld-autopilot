@@ -163,6 +163,7 @@ namespace RIMAPI.Helpers
                                 })
                                 .ToList() ?? new List<SkillDto>(),
                         CurrentJob = pawn.CurJob?.def?.defName ?? "",
+                        CurrentJobIsCare = CombatNativeHelper.HasCareJob(pawn),
                         InspirationDefName = pawn.mindState?.inspirationHandler?.CurStateDef?.defName,
                         Traits = GetTraits(pawn),
                         WorkPriorities = GetWorkPriorities(pawn),

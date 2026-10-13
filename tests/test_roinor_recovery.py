@@ -78,7 +78,7 @@ class RoinorRecovery(unittest.TestCase):
         self.assertEqual(caps.harvest_products(s, [{'def_name': 'Hay', 'harvested_thing_def': 'Hay', 'harvest_yield': 20}])['expected_human_nutrition'], 0)
         self.assertEqual(caps.harvest_products(s, [{'def_name': 'Berries', 'harvested_thing_def': 'RawBerries', 'harvest_yield': 20}])['expected_human_nutrition'], 1)
 
-    def test_food_capacity_deficit_keeps_food_choices_and_later_unlocks_other_crops(self):
+    def test_food_capacity_deficit_keeps_food_choices_and_stops_unneeded_new_fields(self):
         s = snapshot()
         rice = {**crop(), 'human_edible_product': True, 'product_nutrition': .05}
         rose = {**crop('Plant_Rose'), 'human_edible_product': False, 'category': 'beauty'}
@@ -89,7 +89,9 @@ class RoinorRecovery(unittest.TestCase):
         s['map']['resources'] = {'food': 30, 'nutrition': 27}
         self.assertEqual(set(caps.crop_sites(s, True)['new_indoor_ground']['crop_options']), {'Plant_Rice'})
         s['development']['plant_catalog']['growers'].append(growing_site(plant='Plant_Rice', options=[{**rice, 'legal_cells': 100}]))
-        self.assertEqual(set(caps.crop_sites(s, True)['new_indoor_ground']['crop_options']), {'Plant_Rice', 'Plant_Rose'})
+        self.assertEqual(caps.crop_sites(s, True), {})
+        # Its standing food commitment remains represented, without a new plot.
+        self.assertGreater(caps.crop_nutrition_estimate(s),0)
 
     def test_deferral_persists_fast_clock_and_rollbacks_invalidate_future(self):
         s = snapshot()

@@ -86,7 +86,7 @@ namespace RIMAPI.Helpers
                 immunity_per_day=record == null ? (float?)null : record.ImmunityChangePerTick(p,true,h)*60000f,
                 immunity_gain_speed=p.GetStatValue(StatDefOf.ImmunityGainSpeed),
                 severity_modifiers_per_day=(h as HediffWithComps)?.comps?.OfType<HediffComp_SeverityModifierBase>().Sum(c => c.SeverityChangePerDay()),
-                lethal_severity=h.def.lethalSeverity, part=h.Part?.Label, bleeding=h.BleedRate,
+                lethal_severity=h.def.lethalSeverity, can_ever_kill=h.CanEverKill(), part=h.Part?.Label, bleeding=h.BleedRate,
                 tendable_now=h.TendableNow(), life_threatening=h.IsCurrentlyLifeThreatening,
                 tend_quality=tend?.tendQuality, treatment_ticks_left=tend?.tendTicksLeft,
                 parasite_total_tend_quality_target=tend == null || tend.TProps.disappearsAtTotalTendQuality < 0 ? (float?)null : tend.TProps.disappearsAtTotalTendQuality,
@@ -104,7 +104,7 @@ namespace RIMAPI.Helpers
         };
         private static bool NeedsCare(Pawn p) => p.health.hediffSet.hediffs.Where(h => h.Visible).Any(h => h.TendableNow() || h.IsCurrentlyLifeThreatening
             || (PawnHelper.CanDevelopImmunity(h) && h.TryGetComp<HediffComp_Immunizable>().Immunity < 1)
-            || (h.def.lethalSeverity > 0f && h.TryGetComp<HediffComp_Immunizable>() == null
+            || (h.def.lethalSeverity > 0f && h.Severity >= h.def.lethalSeverity*.5f && h.TryGetComp<HediffComp_Immunizable>() == null
                 && h.def != HediffDefOf.BloodLoss && !h.IsPermanent()));
         private static bool Idle(Pawn p) => p.IsColonistPlayerControlled && !p.Dead && !p.Downed && !p.Drafted && !p.InMentalState
             && !CombatNativeHelper.HasCareJob(p) && p.CurJobDef != JobDefOf.Ingest;
@@ -129,6 +129,8 @@ namespace RIMAPI.Helpers
         private static bool Safe(Pawn worker, Thing target, bool rescueExposure = false, bool shortThermal = false)
         {
             if (!worker.CanReach(target, PathEndMode.Touch, Danger.Some) || target.IsForbidden(worker)) return false;
+            if (!rescueExposure && (EnvironmentalAreaHelper.Managed(worker) || FalloutShelterHelper.Active(worker.Map))
+                && !EnvironmentalAreaHelper.PathSafe(worker, target.Position, false, PathEndMode.Touch)) return false;
             if (!rescueExposure && (worker.Map.gasGrid.DensityAt(target.Position, GasType.ToxGas) > 0
                 || worker.Map.gasGrid.DensityAt(target.Position, GasType.DeadlifeDust) > 0
                 || worker.Map.gasGrid.DensityAt(target.Position, GasType.RotStink) > 0)) return false;
@@ -208,16 +210,20 @@ namespace RIMAPI.Helpers
             if (kind == "dispose_corpse" && !SafeDisposalDestination(worker, job.targetB)) return null;
             foreach (LocalTargetInfo t in new[] { job.targetA, job.targetB, job.targetC })
                 if (t.HasThing && t.Thing.Spawned && !Safe(worker, t.Thing,rescueExposure && t.Thing == target)) return null;
+            if (kind == "rescue" && FalloutShelterHelper.Active(worker.Map)
+                && (!job.targetB.Cell.Roofed(worker.Map) || !FalloutShelterHelper.SafeCell(worker, job.targetB.Cell))) return null;
             if ((kind == "feed" || kind == "rescue") && !CareTriageHelper.JobRouteSafe(worker,job)) return null;
             return job;
         }
         private static bool ShelterNeeded(Pawn patient) => patient.IsColonistPlayerControlled && !patient.Dead && !patient.Downed
             && !patient.Drafted && !patient.InMentalState && !CombatNativeHelper.HasCareJob(patient)
-            && patient.Map.gasGrid.DensityAt(patient.Position,GasType.RotStink)>0;
+            && (patient.Map.gasGrid.DensityAt(patient.Position,GasType.RotStink)>0
+                || FalloutShelterHelper.Active(patient.Map) && FalloutShelterHelper.Susceptible(patient) && !patient.Position.Roofed(patient.Map));
         private static bool ShelterBedSafe(Pawn patient, Building_Bed bed) => bed != null && bed.Spawned
             && bed.Map==patient.Map && bed.Faction==Faction.OfPlayer && !bed.ForPrisoners
             && RestUtility.CanUseBedEver(patient,bed.def) && Safe(patient,bed)
-            && !NearLivingAreaCorpse(patient.Map,bed.Position,15f)
+            && (!FalloutShelterHelper.Active(patient.Map) || bed.Position.Roofed(patient.Map))
+            && (patient.Map.gasGrid.DensityAt(patient.Position,GasType.RotStink)==0 || !NearLivingAreaCorpse(patient.Map,bed.Position,15f))
             && !bed.CurOccupants.Any(p=>p!=patient) && patient.CanReserveAndReach(bed,PathEndMode.OnCell,Danger.Some);
         private static bool NearLivingAreaCorpse(Map map, IntVec3 cell, float radius)
             => map.listerThings.AllThings.OfType<Corpse>().Any(c=>c.Position.InHorDistOf(cell,radius));
@@ -408,6 +414,7 @@ namespace RIMAPI.Helpers
                 foreach (Building_Bed bed in map.listerBuildings.allBuildingsColonist.OfType<Building_Bed>().Where(b=>ShelterBedSafe(patient,b)))
                     result.Options.Add(new ResilienceOptionDto {Kind="shelter",WorkerId=patient.thingIDNumber,TargetId=patient.thingIDNumber,
                         Giver=bed.thingIDNumber.ToString(),Worker=patient.LabelShort,Target=patient.LabelShort});
+            FalloutShelterHelper.AddOptions(map,result);
             ResilienceDiagnosisHelper.AddOptions(map,result);
             return ApiResult<ResilienceContextDto>.Ok(result);
         }
@@ -416,6 +423,8 @@ namespace RIMAPI.Helpers
             var result = new CapabilityOrderResultDto { TargetId=request.TargetId };
             Pawn worker = MapHelper.GetThingOnMapById(request.MapId, request.WorkerId) as Pawn;
             Thing target = MapHelper.GetThingOnMapById(request.MapId, request.TargetId);
+            if (request.Kind == "area_shelter" || request.Kind == "area_release")
+                return FalloutShelterHelper.Execute(request, worker);
             if (request.Kind == "inspect" || request.Kind == "interrogation_policy")
                 return ResilienceDiagnosisHelper.Execute(request);
             if (request.Kind == "roof_guard" && target != null && RemovalWouldEndangerRoof(target))

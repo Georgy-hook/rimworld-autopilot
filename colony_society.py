@@ -192,6 +192,26 @@ def _recent(record, tick, delay):
     return retry_recent(record, tick, delay)
 
 
+def remember_selection_unavailable(snapshot, map_state, action, diagnostic):
+    """An unavailable drug-policy page never reaches execute/defer memory.
+
+    Remember its exact consequence facts, rather than retrying the identical
+    impossible comparison or suppressing a different patient's urgent care.
+    """
+    if action not in {'society_drug_policy', 'society_drug_entry'}:
+        return False
+    context = snapshot.get('development', {}).get('society', {})
+    rows = (context.get('options') or {}).get(action) or {}
+    blocked = map_state.setdefault('society_unavailable', {})
+    for row in rows.values():
+        blocked[_subject(action, row)] = {
+            'map_id': snapshot['map']['id'], 'tick': int(snapshot.get('game', {}).get('tick') or 0),
+            'state': _drug_guard(action, row.get('person') or {}, context),
+            'reason': diagnostic.get('reason'), 'state_budget': diagnostic.get('state_budget'),
+            'minimum_state_tokens': diagnostic.get('minimum_state_tokens')}
+    return bool(rows)
+
+
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
     context = snapshot.setdefault("development", {}).setdefault("society", {})
     plans = {action: {} for action in ACTIONS}
@@ -229,6 +249,13 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         semantic = {}
         memory['drug_deferred'] = semantic
     live_people = {str(p.get('pawn_id')) for p in context.get('people') or []}
+    unavailable = map_state.get('society_unavailable') or {}
+    if not isinstance(unavailable,dict): unavailable={}
+    map_state['society_unavailable']=unavailable
+    for subject, record in list(unavailable.items()):
+        if (not isinstance(subject,str) or not isinstance(record, dict) or record.get('map_id') != snapshot.get('map', {}).get('id')
+                or type(record.get('tick')) is not int or not 0<=record['tick']<=tick or subject.split(':')[-1] not in live_people):
+            unavailable.pop(subject, None)
     for subject, record in list(semantic.items()):
         if (not isinstance(subject, str) or not subject.startswith(('society_drug_policy:', 'society_drug_entry:'))
                 or not isinstance(record, dict) or type(record.get('map_id')) is not int
@@ -250,6 +277,12 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             subject = _subject(action, row)
             deferred = (memory.get('deferred') or {}).get(subject, {})
             if action in {'society_drug_policy', 'society_drug_entry'}:
+                old_unavailable = unavailable.get(subject)
+                if old_unavailable and old_unavailable.get('state') == _drug_guard(action, row.get('person') or {}, context):
+                    del rows[key]
+                    continue
+                if old_unavailable:
+                    unavailable.pop(subject, None)
                 old = semantic.get(subject)
                 if (old and old['state'] == _drug_guard(action, row.get('person') or {}, context)
                         and (not capacity_drug_permissions(row.get('person') or {}) or retry_recent(old,tick,30000))):

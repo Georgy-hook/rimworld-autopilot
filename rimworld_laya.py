@@ -209,6 +209,7 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "is_dead": bool(medical.get("is_dead")),
                 "downed": bool(medical.get("is_downed")),
                 "current_job": str(work.get("current_job") or work.get("job") or "unknown"),
+                "current_job_is_care": work.get('current_job_is_care'),
                 "inspiration": str(work.get("inspiration_def_name") or ""),
                 "position": pawn.get("position") or {},
                 "skills": skills,

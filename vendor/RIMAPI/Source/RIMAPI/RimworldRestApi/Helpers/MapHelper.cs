@@ -382,6 +382,11 @@ namespace RIMAPI.Helpers
                 Zone_Growing zone = map.zoneManager.AllZones.OfType<Zone_Growing>()
                     .FirstOrDefault(z => z.ID == request.ZoneId);
                 if (zone == null) return ApiResult.Fail($"Growing zone {request.ZoneId} not found.");
+                if (request.ExpectedPlantDef != null && zone.GetPlantDefToGrow()?.defName != request.ExpectedPlantDef
+                    || request.ExpectedAllowSow.HasValue && zone.allowSow != request.ExpectedAllowSow.Value)
+                    return ApiResult.Fail("growing_policy_changed_reconsider");
+                if (request.AllowSow && zone.Cells.Any(c => c.GetPlant(map)?.Blighted == true))
+                    return ApiResult.Fail("active_blight_requires_cutting_before_resowing");
                 zone.allowSow = request.AllowSow;
                 return ApiResult.Ok();
             }

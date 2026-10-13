@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 import colony_retry as retry
+import colony_storage as storage
 import colony_combat as combat
 import colony_husbandry as husbandry
 import colony_decision_context as observations
@@ -89,11 +90,11 @@ def workers(snapshot: dict[str, Any], work: str, minimum: int = 0) -> list[dict[
     skill = {"Growing": "Plants", "PlantCutting": "Plants", "Handling": "Animals", "Doctor": "Medicine"}.get(work)
     return [p for p in snapshot.get("colonists") or []
             if not p.get("downed") and not p.get("dead") and not p.get("in_mental_state") and not p.get("is_drafted")
-            and p.get("current_job") not in CARE_JOBS
+            and (p.get("current_job") not in CARE_JOBS or p.get("current_job") == 'DoBill' and p.get('current_job_is_care') is False)
             and work in (p.get("work_priorities") or {})
             and not (p["work_priorities"][work] or {}).get("disabled")
             and int(((p.get("skills") or {}).get(skill) or {}).get("level") or 0) >= minimum
-            and not any(h.get("can_ever_kill") and isinstance(h.get("immunity"), (int, float))
+            and not any(h.get("immunity_can_develop") is True and h.get("can_ever_kill") and isinstance(h.get("immunity"), (int, float))
                         and h["immunity"] < 1 for h in p.get("health_conditions") or [])]
 
 
@@ -109,10 +110,17 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
     herd = husbandry.planning_context(snapshot)
     fodder_needed = herd.get("available") and herd.get("fodder_gap")
     human_urgent = need["immediate_food_gap"]
+    income=(snapshot.get('development') or {}).get('pending_income_crop_goal')
+    products={'drugs':{'SmokeleafLeaves','RawPsychoid'},'tailoring':{'Cloth'},'brewing':{'RawHops'}}.get(income,set())
+    matching=lambda d: d.get('harvested_thing') in products or income=='crops' and d.get('human_edible_product') is True
+    existing=any(s.get('kind')!='new_ground' and matching(defs.get(s.get('plant_def')) or {})
+        for s in (snapshot.get('development',{}).get('plant_catalog') or {}).get('growers') or [])
+    economic=bool(income in {'drugs','tailoring','brewing','crops'} and not human_urgent
+        and need.get('stored_food_days') is not None and need['stored_food_days']>=5 and not existing)
     # A viable planned field is a labour commitment, not delivered food.
     # Once enough acreage is configured, finish sowing/gathering before adding
     # more fields. Short reserves still protect that commitment until harvest.
-    if new and food_required and not need["crop_capacity_gap"] and not need["first_harvest_gap"] and not (fodder_needed and not human_urgent):
+    if new and not need["crop_capacity_gap"] and not need["first_harvest_gap"] and not (fodder_needed and not human_urgent) and not economic:
         return result
     for site in (snapshot.get("development", {}).get("plant_catalog") or {}).get("growers") or []:
         if (site.get("kind") == "new_ground") != new:
@@ -160,6 +168,9 @@ def crop_sites(snapshot: dict[str, Any], new: bool) -> dict[str, dict[str, Any]]
                 plan["animal_feed_purpose"] = dedicated or pasture
                 options[option["def_name"]] = plan
         if options:
+            if new and economic and not need['crop_capacity_gap'] and not need['first_harvest_gap']:
+                options={k:p for k,p in options.items() if matching(p)}
+            if not options:continue
             edible = {k: p for k, p in options.items() if p.get("human_edible_product") is True}
             if food_required and need['first_harvest_gap'] and need['stored_food_days'] is not None:
                 timed = {k:p for k,p in edible.items() if isinstance(p.get('calendar_days_to_harvest_estimate'),(int,float))
@@ -232,6 +243,9 @@ def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
     demand = native_demand if native_demand is not None and native_demand > 0 else husbandry.number(resources.get('human_demand_nutrition_day'))
     demand = demand if demand is not None and demand > 0 else 1.6 * len(people)
     stored = stored_food_days({**resources,'human_demand_nutrition_day':demand}, len(people))
+    condition = storage.food_condition_facts(snapshot,demand)
+    if stored is not None and demand>0 and condition.get('available'):
+        stored=max(0,stored-condition['at_risk_nutrition']/demand)
     potential = crop_nutrition_estimate(snapshot)
     urgent = any(float(p.get("hunger", 1) if p.get("hunger") is not None else 1) < .12
                  or any(h.get("def_name") == "Malnutrition" and float(h.get("severity") or 0) > 0
@@ -258,6 +272,7 @@ def food_planning_facts(snapshot: dict[str, Any]) -> dict[str, Any]:
                      and (first is not None and first + 2 > stored or first is None and capacity_gap))
     protect = bool(demand and capacity_gap) or urgent or first_gap or stored is not None and stored < 5
     return {"stored_food_days": round(stored, 2) if stored is not None else None,
+            "food_condition":condition,
             "human_demand_per_day": round(demand, 1),
             "demand_basis": 'native_current_pawns' if native_demand is not None and native_demand > 0 or 'human_demand_nutrition_day' in resources else 'legacy_1.6_per_person_estimate',
             "potential_crop_nutrition_per_day": round(potential, 1),
@@ -561,6 +576,7 @@ def _at_risk_ready(snapshot, memory, plants):
 def prepare(snapshot: dict[str, Any], map_state: dict[str, Any]) -> list[str]:
     _prune(snapshot, map_state)
     dev = snapshot["development"]
+    dev['pending_income_crop_goal']=map_state.get('pending_income_crop')
     actions = []
     plans = {}
     new_sites, old_sites = crop_sites(snapshot, True), crop_sites(snapshot, False)

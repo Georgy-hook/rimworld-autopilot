@@ -15,6 +15,7 @@ namespace RIMAPI.Models
     {
         public List<SkillDto> Skills { get; set; }
         public string CurrentJob { get; set; }
+        public bool CurrentJobIsCare { get; set; }
         public List<TraitDto> Traits { get; set; }
         public List<WorkPriorityDto> WorkPriorities { get; set; }
         public string InspirationDefName { get; set; }

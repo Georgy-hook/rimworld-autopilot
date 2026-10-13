@@ -94,7 +94,7 @@ def choose(agent, state, action, snapshot):
         conditions=pawn.get('health_conditions')
         malnutrition=max((h.get('severity') or 0 for h in conditions or [] if h.get('def_name')=='Malnutrition'),default=0) if conditions is not None else None
         use = observations.material_need(snapshot, plan['product_def'])
-        material = {'stock':use['stock'], 'needed':use['remaining_build_need'] + use['selected_recipe_need']
+        material = {'stock':use['stock'], 'needed':use['remaining_build_need'] + use['selected_recipe_need'] + use.get('service_need',0)
                     if use['remaining_build_need'] is not None else None}
         # Product is the option's exact key here; the actor/vein stage repeats
         # its one selected product in shared facts rather than in every row.

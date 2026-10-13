@@ -8,6 +8,8 @@ from laya_decisions import ask_laya_choice
 from colony_retry import failure_record, recent as retry_recent
 
 DESCRIPTIONS = {
+    'resilience_area_shelter': 'Temporarily restrict a mobile civilian to the widest connected safe home area within their previous restriction: roof for toxic fallout, comfortable temperature for cold/heat injury, clear routes away from fire/gases/predators/hostiles. Preserve protected care and ingestion. Check accessible food, beds, joy and actual jobs; continue finite cooking, hauling, cleaning, care, crafting, research and recreation safely inside. Native review every 30 seconds AND 2000 ticks expands completed safe connections and restores the old area when hazards clear or thermal injury recovers. Area assignment alone is neither arrival nor recovery; drafted paths and forced jobs need separate checks.',
+    'resilience_area_release': 'Restore this person\'s earlier area after fresh native hazards clear; preserve later manual/model overrides and an unknown/deleted prior restriction. Independent native cleanup also prevents forgotten confinement. Recheck food, sleep, mood, routes and work readiness; opening the area does not cure injury.',
     'resilience_shelter': 'Move a mobile colonist currently breathing rot stink to a verified clear completed bed away from corpse sources and rest there. The native bed rest job must reach the bed before exposure ends.',
     'resilience_dispose_corpse': 'Carry one corpse away from occupied living areas with a verified native hauling or burial job and completed safe destination. Short corpse pickup exposure risks the hauler; removing the source reduces rot stink exposure. Watch the corpse move before considering disposal complete.',
     'resilience_tend': 'Schedule normal treatment with a feasible doctor and medicine selected by the game. Compare patient immunity/severity, treatment expiry and scarce medicine.',
@@ -63,14 +65,17 @@ def summary(snapshot: dict) -> dict:
     for patient in patients:
         temp, low, high = (patient.get(k) for k in ('temperature', 'comfortable_min', 'comfortable_max'))
         thermal = isinstance(temp, (int, float)) and ((isinstance(low, (int, float)) and temp < low) or (isinstance(high, (int, float)) and temp > high))
-        if thermal or any(float(v or 0) > 0 for v in (patient.get('gases') or {}).values()):
+        fallout = any(c.get('def_name') == 'ToxicFallout' for c in (context.get('environment') or {}).get('conditions') or [])
+        toxin = any(h.get('def_name') == 'ToxicBuildup' and float(h.get('severity') or 0) > 0 for h in patient.get('conditions') or [])
+        if thermal or any(float(v or 0) > 0 for v in (patient.get('gases') or {}).values()) or fallout and (not patient.get('roof') or toxin):
             environmental.append(patient)
     return {'resilience_patients': {'count': sum(bool(p.get('tendable_now') or p.get('downed') or p.get('life_threatening')) for p in patients), 'examples': patients[:4]},
             'immunity_races': {'count': sum(any(h.get('visible', True) and _immunity_race(h) is True for h in p.get('conditions') or []) for p in patients),
                                'unknown_count': sum(any(h.get('immunity') is not None and _immunity_race(h) is None for h in p.get('conditions') or []) for p in patients)},
             'environmental_exposure': {'count': len(environmental), 'examples': environmental[:4]},
             'unsafe_roof_removals': {'count': sum(row.get('kind') == 'roof_guard' for row in context.get('options') or [])},
-            'environment': context.get('environment') or {}}
+            'environment': context.get('environment') or {},
+            'temporary_areas': context.get('area_restrictions') or []}
 
 def _delay(action: str) -> int:
     return 60000 if action == 'resilience_inspect' else 600 if action in ('resilience_tend', 'resilience_rescue', 'resilience_feed') else 2500
@@ -300,6 +305,9 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         options[action][key] = row
     context['plans'] = options
     snapshot['development']['sanitation_urgent'] = bool(options['resilience_dispose_corpse'] or options['resilience_shelter'])
+    snapshot['development']['fallout_urgent'] = any(c.get('def_name') == 'ToxicFallout'
+        for c in (context.get('environment') or {}).get('conditions') or [])
+    snapshot['development']['area_urgent'] = bool(options['resilience_area_shelter'] or options['resilience_area_release'])
     return [a for a, rows in options.items() if rows]
 
 def assess(action: str, snapshot: dict) -> dict:
@@ -432,6 +440,14 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         elif row['kind'] in ('inspect', 'interrogate', 'interrogation_policy'):
             clinical = f"{patient.get('name', row['target_id'])} anomaly diagnosis; gray flesh evidence"
             exposure = 'Infected doctor can lie/infect; discovery can cause emergence'
+        if row['kind'] in ('area_shelter','area_release'):
+            area=next((a for a in context.get('area_restrictions') or [] if a.get('pawn_id')==row['target_id']),{})
+            services=area.get('services') or {}
+            return {'benefit':f"{patient.get('name',row['target_id'])}: {row['kind']}; hazards={area.get('hazards',row.get('giver'))}",
+                'risk':f"food access urgent={services.get('food_urgent')} sleep access urgent={services.get('rest_urgent')}; allowed area is not safe path or arrival",
+                'cost':'Temporary work restriction/walk; keep care and meals; ordinary indoor work/recreation',
+                'inaction':f"exposure={patient.get('temperature')}C roof={bool(patient.get('roof'))}; food={patient.get('food')}; restriction/hazards persist",
+                'uncertainty':'Native watchdog reopens/expands safe area; arrival, feeding, sleep and recovery unverified'}
         food_care = row['kind'] in ('feed', 'rescue')
         consequence = (nutrition_description(patient) + '; delay without food can kill; tending wounds supplies no calories'
                        if food_care and nutrition_facts(patient)['malnutrition'] is not None else

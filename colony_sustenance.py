@@ -4,7 +4,7 @@ from colony_retry import failure_record, recent as retry_recent
 from colony_capabilities import food_planning_facts
 import colony_husbandry as husbandry
 
-_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood"}, "animal_welfare": {"care", "area", "pen", "gather", "penfeed", "warmspot"}, "herd_policy": {"herd", "sterilize", "release"}}
+_KINDS = {"food_batch": {"bill", "job", "kitchenhome", "fish", "fishzone", "fishpolicy", "pausefeed"}, "food_policy": {"diet", "customdiet"}, "preservation": {"cooler", "storage", "stockpile", "stockfood", "pantry", "protectfood"}, "animal_welfare": {"care", "area", "pen", "gather", "penfeed", "warmspot"}, "herd_policy": {"herd", "sterilize", "release"}}
 DESCRIPTIONS = {
     "sustenance_food_batch": "Choose a feasible food or butcher recipe batch, fishing workflow, or explicit kitchen preparation. Preparation cleans or configures a kitchen and produces no food; a food bill still requires a usable table, enabled skilled worker and reachable ingredients. Compare human reserves, animal feed, fuel, spoilage and poisoning. Existing unused feed bills can be paused deliberately.",
     "sustenance_food_policy": "Choose an existing food policy for one colonist. Compare allowed reachable foods, scarcity, raw-food poisoning, ideology and mood; changing policy does not feed the pawn.",
@@ -191,6 +191,11 @@ def prepare(snapshot, map_state):
 def _effects(context, plan):
     kind = plan.get("kind")
     measured=plan.get('facts') or {}
+    if kind in {'pantry','protectfood'}:
+        return {'benefit':f"{plan.get('label')}; nutrition={measured.get('nutrition')} HP={measured.get('hit_points')}/{measured.get('max_hit_points')}",
+            'cost':str(plan.get('cost')),'risk':str(plan.get('risk')),
+            'inaction':'Exposed food can deteriorate before its rot timer expires; stock may disappear',
+            'uncertainty':'Zone/haul start is not delivered stock, refrigeration or repeated feeding'}
     if kind=='penfeed' and measured:
         return {'benefit':f"Deliver {measured.get('nutrition')} nutrition to {measured.get('hungry_animals')} hungry animals",
             'cost':f"Hauler labor; human food remaining {measured.get('human_remaining')}, minimum reserve {measured.get('human_minimum')}",
@@ -271,7 +276,7 @@ def _subject_facts(context, key):
     # Finite haul/thermal proposals carry native measured quantities rather
     # than requiring the model to infer them from a cut cost/risk sentence.
     native = plan.get('facts')
-    if kind in {'penfeed', 'warmspot'} and isinstance(native, dict):
+    if kind in {'penfeed', 'warmspot', 'protectfood'} and isinstance(native, dict):
         return {'kind':kind, **native}
     animal = next((a for a in context.get('animals') or [] if a.get('id') == plan.get('target_id')), {})
     if kind in {'care', 'warmspot', 'sterilize', 'release', 'area', 'gather'}:
@@ -402,7 +407,7 @@ def execute(client, snapshot, map_state, action, selected):
         return _failure(map_state, snapshot, action, key, "invalid_response", response=result, outcome_unknown=True)
     if not result["applied"]:
         return _failure(map_state, snapshot, action, key, result.get("reason") or "sustenance_not_applied", response=result)
-    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "penfeed", "warmspot", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
+    duration = BACKOFF_TICKS if current["kind"] in {"bill", "job", "gather", "penfeed", "warmspot", "protectfood", "pantry", "fish", "fishzone", "fishpolicy", "kitchenhome", "stockfood"} else POLICY_DWELL_TICKS
     _remember(map_state, snapshot, current_context, [current], duration)
     return {"applied": True, "reason": result.get("reason"), "response": result}
 
