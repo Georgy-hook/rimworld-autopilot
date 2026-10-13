@@ -10370,9 +10370,26 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             response = select_research_if_available(client, "Stonecutting")
             return {"applied": bool(response.get("applied", True)), "stone_type": stone_type, "phase": "research", "response": response}
         if not tables:
-            response = post_blueprint(client, map_id, anchor, workshop_blueprint("TableStonecutter", stuff="WoodLog"), dx=16, dz=20)
-            issued["stonecutting_table"] = tick
-            return {"applied": True, "stone_type": stone_type, "phase": "build_table", "response": response}
+            if any((p.get('def_name') or p.get('def')) == 'TableStonecutter'
+                   for p in dev.get('construction_projects') or []):
+                return {'applied':False,'stone_type':stone_type,'phase':'build_table',
+                        'reason':'existing_stonecutting_table_in_progress'}
+            if any((p.get('def_name') or p.get('def')) == 'TableStonecutter'
+                   for p in dev.get('buildings') or []):
+                return {'applied':False,'reason':'existing_stonecutting_table_work_read_unavailable'}
+            layout = workshop_blueprint('TableStonecutter',stuff='WoodLog')
+            terrain = client.get('/api/v1/map/terrain',map_id=map_id)
+            plot = storage.site(terrain,{'x':anchor['x']+16,'z':anchor['z']+20},6,5,
+                                architecture_occupied_cells(dev,map_state))
+            if plot is None:
+                return {'applied':False,'stone_type':stone_type,'phase':'build_table',
+                        'reason':'no_native_available_stonecutting_footprint'}
+            # Rotated table and interaction-cell margins remain inside the verified rectangle.
+            origin = {'x':plot['x']+1,'z':plot['z']+1}
+            result = post_observed_blueprint(client,map_id,origin,layout)
+            if result.get('applied'): issued['stonecutting_table'] = tick
+            return {**result,'stone_type':stone_type,'phase':'build_table','origin':origin,
+                    'completion':'blueprint_observed; building_and_blocks_unverified' if result.get('applied') else 'placement_unverified'}
         recipe = stonecutting_recipe(client, tables[0], stone_type)
         response = ensure_bill(client, tables[0], recipe, 300)
         issued["stonecutting_complete"] = tick
