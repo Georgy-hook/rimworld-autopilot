@@ -32,7 +32,7 @@ namespace RIMAPI.Helpers {
    return hp.Sum(value=>(int)Math.Ceiling((double)value/(naturalRock?80:40))*hitTicks);
   }
   static bool MinerReady(Pawn p) => OrdinaryWorkSafety.Worker(p,WorkTypeDefOf.Mining)
-   && p.needs?.food!=null && p.needs.food.CurCategory<HungerCategory.UrgentlyHungry;
+   && p.needs?.food!=null && p.needs.food.CurCategory<HungerCategory.UrgentlyHungry && OrdinaryWorkSafety.OriginSafe(p);
   static List<MiningPlanDto> Plans(Map m) {
    var total=System.Diagnostics.Stopwatch.StartNew();long routeTicks=0,roofTicks=0;int pathChecks=0,roofChecks=0;
    var result=new List<MiningPlanDto>();
@@ -96,7 +96,7 @@ namespace RIMAPI.Helpers {
    var m=MapHelper.GetMapByID(mapId);if(m==null)return ApiResult<object>.Fail("map_missing");
    var plans=Plans(m);
    var workers=m.mapPawns.FreeColonistsSpawned.Select(p=>new{pawn_id=p.thingIDNumber,current_job=p.CurJobDef?.defName,
-    blocker=OrdinaryWorkSafety.WorkerBlocker(p,WorkTypeDefOf.Mining) ?? (p.needs?.food==null || p.needs.food.CurCategory>=HungerCategory.UrgentlyHungry ? "urgently_hungry_or_food_unknown" : null),
+    blocker=OrdinaryWorkSafety.WorkerBlocker(p,WorkTypeDefOf.Mining) ?? (p.needs?.food==null || p.needs.food.CurCategory>=HungerCategory.UrgentlyHungry ? "urgently_hungry_or_food_unknown" : !OrdinaryWorkSafety.OriginSafe(p) ? "current_cell_environment_unsafe" : null),
     comfortable_min=p.GetStatValue(StatDefOf.ComfyTemperatureMin),temperature=p.Position.GetTemperature(m)}).ToArray();
    var ores=m.listerThings.AllThings.OfType<Mineable>().Where(t=>!t.Position.Fogged(m) && t.def.building?.mineableThing!=null)
     .GroupBy(t=>t.def).Select(g=>new{ore_def=g.Key.defName,product_def=g.Key.building.mineableThing.defName,visible_cells=g.Count(),

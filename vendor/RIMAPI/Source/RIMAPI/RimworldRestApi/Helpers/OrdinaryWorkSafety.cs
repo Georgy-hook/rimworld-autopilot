@@ -5,6 +5,15 @@ using Verse;
 using Verse.AI;
 namespace RIMAPI.Helpers {
  public static class OrdinaryWorkSafety {
+  public static bool WorkingTemperatureSafe(float temperature,float comfortableMin,float comfortableMax)
+   => temperature>=comfortableMin-10f && temperature<=comfortableMax+10f;
+  public static bool OriginSafe(Pawn p) {
+   Map m=p.Map;var c=p.Position;
+   return !c.Fogged(m) && !c.ContainsStaticFire(m)
+    && m.gasGrid.DensityAt(c,GasType.ToxGas)==0 && m.gasGrid.DensityAt(c,GasType.DeadlifeDust)==0 && m.gasGrid.DensityAt(c,GasType.RotStink)==0
+    && WorkingTemperatureSafe(c.GetTemperature(m),p.GetStatValue(StatDefOf.ComfyTemperatureMin),p.GetStatValue(StatDefOf.ComfyTemperatureMax))
+    && (c.Roofed(m) || !m.gameConditionManager.ActiveConditions.Any(g=>g.def.defName=="ToxicFallout"));
+  }
   public static string WorkerBlocker(Pawn p, WorkTypeDef work) {
    if(p==null || !p.Spawned || !p.IsColonistPlayerControlled || p.Dead)return "not_live_player_worker";
    if(p.Downed || p.Drafted || p.InMentalState)return "downed_drafted_or_mental_state";
@@ -23,7 +32,9 @@ namespace RIMAPI.Helpers {
   public static bool Worker(Pawn p, WorkTypeDef work) => WorkerBlocker(p,work)==null;
   public static bool Route(Pawn p, IntVec3 from, IntVec3 to, PathEndMode end) {
    Map m=p.Map;
-   if(!to.InBounds(m) || to.Fogged(m))return false;
+   // A normal work path cannot cure an already unsafe origin. Shelter transitions
+   // use their separate native contract; avoid an A* search for every rejected ore.
+   if(!to.InBounds(m) || to.Fogged(m) || from==p.Position && !OriginSafe(p))return false;
    using(var path=m.pathFinder.FindPathNow(from,to,p,null,end)) {
     if(!path.Found)return false;
     var enemies=m.mapPawns.AllPawnsSpawned.Where(e=>!e.Dead && !e.Downed && !e.Position.Fogged(m) && (e.HostileTo(p) || CombatNativeHelper.ActivePredation(e))).ToArray();
