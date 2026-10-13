@@ -28,11 +28,13 @@ namespace RIMAPI.Helpers {
     if(!path.Found)return false;
     var enemies=m.mapPawns.AllPawnsSpawned.Where(e=>!e.Dead && !e.Downed && !e.Position.Fogged(m) && (e.HostileTo(p) || CombatNativeHelper.ActivePredation(e))).ToArray();
     var turrets=m.listerBuildings.allBuildingsNonColonist.Where(b=>!b.Position.Fogged(m) && CombatNativeHelper.ActiveStructure(b)).ToArray();
+    float comfortableMin=p.GetStatValue(StatDefOf.ComfyTemperatureMin)-10f,comfortableMax=p.GetStatValue(StatDefOf.ComfyTemperatureMax)+10f;
+    bool fallout=m.gameConditionManager.ActiveConditions.Any(g=>g.def.defName=="ToxicFallout");
     foreach(var c in path.NodesReversed) {
      float temp=c.GetTemperature(m);
      if(c.Fogged(m) || c.ContainsStaticFire(m) || m.gasGrid.DensityAt(c,GasType.ToxGas)>0 || m.gasGrid.DensityAt(c,GasType.DeadlifeDust)>0 || m.gasGrid.DensityAt(c,GasType.RotStink)>0
-      || temp<p.GetStatValue(StatDefOf.ComfyTemperatureMin)-10f || temp>p.GetStatValue(StatDefOf.ComfyTemperatureMax)+10f
-      || !c.Roofed(m) && m.gameConditionManager.ActiveConditions.Any(g=>g.def.defName=="ToxicFallout")
+      || temp<comfortableMin || temp>comfortableMax
+      || !c.Roofed(m) && fallout
       || enemies.Any(e=>c.InHorDistOf(e.Position,Math.Max(12f,(e.equipment?.Primary?.def.Verbs?.FirstOrDefault()?.range ?? 0f)+3f)))
       || turrets.Any(b=>c.InHorDistOf(b.Position,Math.Max(12f,((b as Building_Turret)?.AttackVerb?.EffectiveRange ?? 0f)+3f))))return false;
     }
