@@ -1791,6 +1791,18 @@ def local_butcher_station_present(development: dict[str, Any],
     )
 
 
+def butchery_station_present(development: dict[str, Any]) -> bool:
+    """One central station or its existing project precedes remote duplicates.
+
+    A distant corpse needs hauling or a verified route remedy. Its location
+    alone does not establish an unmet processing-capacity requirement.
+    """
+    definitions = {"ButcherSpot", "TableButcher"}
+    return any(int((development.get("building_counts") or {}).get(name) or 0) > 0 for name in definitions) or any(
+        (row.get("def") or row.get("def_name")) in definitions
+        for row in (development.get("buildings") or []) + (development.get("construction_projects") or []))
+
+
 def forbidden_corpses(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     hostiles = bridge.combat_planner.live_hostiles(snapshot)
     mobile = [pawn for pawn in snapshot.get("colonists", [])
@@ -4483,10 +4495,11 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
         corpse_actions.append("build_crematorium")
     animal_corpses = [row for row in corpse_rows(snapshot, "CorpsesAnimal")
                       if not row.get("is_forbidden")]
-    if animal_corpses and not animal_dump_exists and "animal_corpse_dump" not in issued:
+    if (animal_corpses and not animal_dump_exists and "animal_corpse_dump" not in issued
+            and not retry_recent((map_state.get("spatial_retries") or {}).get("animal_corpse_dump"), tick, 5000)):
         corpse_actions.append("create_animal_corpse_dump")
     butcher_cluster, butcher_center = animal_carcass_cluster(snapshot, anchor)
-    if butcher_center and not local_butcher_station_present(dev, butcher_center):
+    if butcher_center and not butchery_station_present(dev) and not local_butcher_station_present(dev, butcher_center):
         dev["butchery_gap"] = len(butcher_cluster)
         details["butcher_cluster_center"] = butcher_center
         site = local_butcher_plan(client, snapshot, butcher_center)
@@ -9303,13 +9316,20 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         issued["unforbid_supplies"] = tick
         return {"applied": True, "stacks_unforbidden": len(ids), "response": result}
     if choice == "unforbid_corpses":
-        ids = [int(row["thing_id"]) for row in forbidden_corpses(snapshot) if row.get("thing_id") is not None]
+        selected = {int(row["thing_id"]) for row in forbidden_corpses(snapshot) if row.get("thing_id") is not None}
+        fresh = client.get("/api/v1/map/things", map_id=map_id)
+        if not isinstance(fresh, list):
+            return {"applied": False, "reason": "fresh_corpse_read_unavailable"}
+        current = {int(row["thing_id"]) for row in fresh if row.get("thing_id") is not None and row.get("is_forbidden")}
+        ids = sorted(selected & current)
         if not ids:
             return {"applied": False, "reason": "No forbidden corpses remain"}
-        result = client.post(
-            "/api/v1/things/set-forbidden",
-            body={"map_id": map_id, "thing_ids": ids, "forbidden": False},
-        )
+        try:
+            result = client.post("/api/v1/things/set-forbidden",
+                body={"map_id": map_id, "thing_ids": ids, "forbidden": False})
+        except bridge.RimApiError as exc:
+            if "404" not in str(exc) or "not found" not in str(exc).lower(): raise
+            return {"applied": False, "reason": "corpse_changed_before_unforbid", "error": str(exc)}
         issued["unforbid_corpses"] = tick
         return {"applied": True, "corpses_unforbidden": len(ids), "response": result}
     if choice == "build_cemetery":
@@ -9354,12 +9374,22 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         site = storage.carcass_site(snapshot, anchor)
         if site is None:
             return {"applied": False, "reason": "carcass_footprint_observation_unavailable"}
-        x, z = site
-        result = client.post("/api/v1/map/zone/stockpile", body={
-            "map_id": map_id, "point_a": position(x, z), "point_b": position(x+3, z+2),
-            "name": "Laya Fresh Animal Carcasses", "priority": 4,
-            "allowed_item_categories": ["CorpsesAnimal"], "allow_fresh": True, "allow_rotten": False,
-        })
+        terrain = client.get("/api/v1/map/terrain", map_id=map_id)
+        fresh_site = storage.site(terrain, {"x": site[0], "z": site[1]}, 4, 3,
+            architecture_occupied_cells(dev, map_state), stockpile=True, radius=20)
+        if fresh_site is None:
+            map_state.setdefault("spatial_retries", {})["animal_corpse_dump"] = failure_record(tick, seconds=30)
+            return {"applied": False, "reason": "no_fresh_available_dry_carcass_footprint"}
+        x, z = fresh_site["x"], fresh_site["z"]
+        try:
+            result = client.post("/api/v1/map/zone/stockpile", body={
+                "map_id": map_id, "point_a": position(x, z), "point_b": position(x+3, z+2),
+                "name": "Laya Fresh Animal Carcasses", "priority": 4,
+                "allowed_item_categories": ["CorpsesAnimal"], "allow_fresh": True, "allow_rotten": False})
+        except bridge.RimApiError as exc:
+            if "footprint conflicts" not in str(exc).lower(): raise
+            map_state.setdefault("spatial_retries", {})["animal_corpse_dump"] = failure_record(tick, seconds=30)
+            return {"applied": False, "reason": "carcass_footprint_changed", "error": str(exc)}
         applied = isinstance(result, dict) and result.get("success") is True
         if applied: issued["animal_corpse_dump"] = tick
         return {"applied": applied, "response": result, "completion": "zone_only; hauling_and_food_unverified"}
@@ -9367,7 +9397,7 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
         cluster, near_carcasses = animal_carcass_cluster(snapshot, anchor)
         if not cluster or near_carcasses is None:
             return {"applied": False, "reason": "No accessible animal carcass cluster remains"}
-        if local_butcher_station_present(snapshot["development"], near_carcasses):
+        if butchery_station_present(snapshot["development"]) or local_butcher_station_present(snapshot["development"], near_carcasses):
             return {"applied": False, "reason": "A butcher station is already planned or built beside this carcass cluster"}
         plan = local_butcher_plan(client, snapshot, near_carcasses, details.get("butcher_site"))
         if plan is None:

@@ -24,6 +24,34 @@ namespace RIMAPI.Helpers
 
         public static ApiResult<CombatTacticResponseDto> Apply(CombatTacticRequestDto request)
         {
+            var map=MapHelper.GetMapByID(request.MapId);
+            var pawns=map?.mapPawns.FreeColonistsSpawned.ToList() ?? new List<Pawn>();
+            var before=pawns.ToDictionary(p=>p.thingIDNumber,p=>Tuple.Create(p.CurJob,p.Drafted));
+            var response=ApplyCore(request);
+            if(!response.Success || response.Data==null)return response;
+            var result=response.Data;
+            result.Applied=result.PsycastQueued;
+            foreach(var pawn in pawns)
+            {
+                var prior=before[pawn.thingIDNumber];
+                bool changed=!ReferenceEquals(prior.Item1,pawn.CurJob) || prior.Item2!=pawn.Drafted;
+                result.Applied|=changed;
+                if(!request.FighterIds.Contains(pawn.thingIDNumber) && !changed)continue;
+                result.CurrentJobs.Add(new CombatOrderReadbackDto {PawnId=pawn.thingIDNumber,
+                    JobDefName=pawn.CurJobDef?.defName,TargetThingId=pawn.CurJob?.targetA.Thing?.thingIDNumber,
+                    Drafted=pawn.Drafted,QueuedJobDefs=pawn.jobs.jobQueue.Select(q=>q.job.def.defName).ToList()});
+                bool attack=result.AttackingPawnIds.Contains(pawn.thingIDNumber)
+                    && (pawn.CurJobDef==JobDefOf.AttackStatic || pawn.CurJobDef==JobDefOf.AttackMelee)
+                    && pawn.CurJob?.targetA.Thing?.thingIDNumber==result.TargetPawnId;
+                bool move=result.PositionedPawnIds.Contains(pawn.thingIDNumber)
+                    && pawn.CurJobDef==JobDefOf.Goto && pawn.pather.Moving;
+                if(!changed && (attack || move))result.PreservedPawnIds.Add(pawn.thingIDNumber);
+            }
+            return response;
+        }
+
+        private static ApiResult<CombatTacticResponseDto> ApplyCore(CombatTacticRequestDto request)
+        {
             try
             {
                 Map map = MapHelper.GetMapByID(request.MapId);
@@ -567,7 +595,7 @@ namespace RIMAPI.Helpers
                                 continue;
                             }
                             IntVec3 firingCell;
-                            if (TryFindFiringCell(pawn, target, out firingCell))
+                            if (CombatInterceptHelper.TryPosition(pawn, target, out firingCell, defensive:true))
                             {
                                 MoveAndAim(pawn,target,firingCell,result);
                                 continue;
@@ -578,7 +606,9 @@ namespace RIMAPI.Helpers
                             // firing cell becomes reachable; then the next cycle
                             // uses the exact line-of-sight check above.
                             IntVec3 approach;
-                            if (target.pather?.Moving != true && TryFindApproachCell(pawn, target, tactic, out approach))
+                            if (target.pather?.Moving != true && TryFindApproachCell(pawn, target, tactic, out approach)
+                                && CombatInterceptMath.DefensiveAdvance(approach.DistanceTo(pawn.Position),
+                                    pawn.Position.DistanceTo(target.Position),approach.DistanceTo(target.Position),false))
                             {
                                 if (pawn.CurJob?.def == JobDefOf.Goto && pawn.CurJob.targetA.Cell == approach)
                                 {
@@ -761,6 +791,21 @@ namespace RIMAPI.Helpers
         private static void MoveAndAim(Pawn pawn,Pawn target,IntVec3 cell,CombatTacticResponseDto result)
         {
             if(CareTriageHelper.QueuedCare(pawn))return;
+            if(cell==pawn.Position)
+            {
+                if(CombatInterceptHelper.CanShootNow(pawn,target))
+                {
+                    if(pawn.CurJobDef==JobDefOf.AttackStatic && pawn.CurJob.targetA.Thing==target)
+                        result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                    else
+                    {
+                        var immediate=JobMaker.MakeJob(JobDefOf.AttackStatic,target);immediate.playerForced=true;
+                        if(MentalSafetyHelper.TakeDefenceOrder(pawn,immediate))result.AttackingPawnIds.Add(pawn.thingIDNumber);
+                    }
+                }
+                else result.Notes.Add("Already at the predicted firing cell; no zero-distance move or replacement shot queued. A fresh native firing opportunity is required.");
+                return;
+            }
             bool same=pawn.CurJobDef==JobDefOf.Goto && pawn.CurJob.targetA.Cell==cell;
             bool queued=pawn.jobs.jobQueue.Any(q=>q.job.def==JobDefOf.AttackStatic && q.job.targetA.Thing==target);
             if(same && queued){result.PositionedPawnIds.Add(pawn.thingIDNumber);return;}

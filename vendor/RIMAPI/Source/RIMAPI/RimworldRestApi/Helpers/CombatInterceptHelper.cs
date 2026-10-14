@@ -18,6 +18,11 @@ namespace RIMAPI.Helpers
             => violent && distance >= 0f && distance <= 1.5f;
         public static bool SupportedLure(bool pursuit, int readySameTargetGuns, bool escapeRoute)
             => pursuit && readySameTargetGuns > 0 && escapeRoute;
+        public static bool ImmediateWindow(bool hitNow, bool futureObserved, bool hitFuture)
+            => hitNow && (!futureObserved || hitFuture);
+        public static bool DefensiveAdvance(float travel, float separation, float nextSeparation, bool cover)
+            => travel <= 8f && nextSeparation >= Math.Min(6f, separation)
+                && (cover || nextSeparation >= separation - 1f);
         public static float StraightTravelTicks(int dx,int dz,float cardinal,float diagonal)
             => Math.Min(Math.Abs(dx),Math.Abs(dz))*diagonal + Math.Abs(Math.Abs(dx)-Math.Abs(dz))*cardinal;
     }
@@ -86,14 +91,17 @@ namespace RIMAPI.Helpers
             if(route==null || route.Count<2)return true;
             float aim=pawn.stances.curStance is Stance_Warmup active ? active.ticksLeft
                 : verb.verbProps.warmupTime*60f*pawn.GetStatValue(StatDefOf.AimingDelayFactor);
-            float flight=projectile?.speed>0 ? verb.verbProps.range/projectile.speed*60f : 0;
-            float horizon=Math.Max(0,aim)+flight+30;
-            if(horizon>route[route.Count-1].Item2)return false;
+            float flight=projectile?.speed>0 ? pawn.Position.DistanceTo(target.Position)/projectile.speed*60f : 0;
+            float horizon=Math.Max(0,aim)+flight;
+            // A short observed path is unknown beyond its end, not evidence
+            // that a currently available shot is impossible.
+            if(horizon>route[route.Count-1].Item2)
+                return CombatInterceptMath.ImmediateWindow(true,false,false);
             var future=Future(route,horizon);
             return pawn.Position.DistanceTo(future)<=verb.verbProps.range-1f
                 && verb.CanHitTargetFrom(pawn.Position,new LocalTargetInfo(future));
         }
-        public static bool TryPosition(Pawn pawn, Pawn target, out IntVec3 result)
+        public static bool TryPosition(Pawn pawn, Pawn target, out IntVec3 result, bool defensive=false)
         {
             result = IntVec3.Invalid; LastPrediction = null;
             var verb = pawn.equipment?.Primary?.TryGetComp<CompEquippable>()?.PrimaryVerb;
@@ -137,6 +145,8 @@ namespace RIMAPI.Helpers
                         || !verb.CanHitTargetFrom(cell, new LocalTargetInfo(predicted))) continue;
                     bool cover = GenAdj.CardinalDirections.Any(d => (cell+d).InBounds(map)
                         && ((cell+d).GetEdifice(map)?.def.fillPercent ?? 0f) >= .5f);
+                    if(defensive && !CombatInterceptMath.DefensiveAdvance(cell.DistanceTo(pawn.Position),
+                        pawn.Position.DistanceTo(target.Position),cell.DistanceTo(target.Position),cover))continue;
                     float score = horizon + cell.DistanceTo(predicted) * 2f - (cover ? 20f : 0f);
                     if (score >= best) continue;
                     best = score; result = cell; bestTravel = travel; bestHorizon = horizon; bestTarget = predicted;

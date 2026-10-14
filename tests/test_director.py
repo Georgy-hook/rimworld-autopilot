@@ -2488,12 +2488,11 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_butcher_spot", actions)
         self.assertNotIn("configure_food_bills", actions)
 
-        # A station on the far side of the map cannot process this pile in time.
+        # Distance alone does not justify another station; use the existing capacity.
         snapshot["development"]["buildings"][0]["position"] = {"x": 90, "z": 39}
         snapshot["development"]["construction_projects"] = []
         actions, details = director.candidate_actions(client, snapshot, state)
-        self.assertIn("build_butcher_spot", actions)
-        self.assertEqual(details["butcher_cluster_center"], {"x": 25, "y": 0, "z": 17})
+        self.assertNotIn("build_butcher_spot", actions)
 
     def test_butcher_spot_targets_dense_carcass_pile_not_remote_single_kill(self):
         snapshot = {"development": {"corpses": [

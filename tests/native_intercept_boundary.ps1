@@ -26,6 +26,14 @@ Check(!CombatInterceptMath.SupportedLure(true,1,false),"Unsafe bait route accept
 Check(CombatInterceptMath.SupportedLure(true,1,true),"Followed covered escape rejected");
 Check(CombatInterceptMath.StraightTravelTicks(3,4,12,17)==63,"Diagonal loaded movement timing ignored");
 Check(CombatInterceptMath.StraightTravelTicks(-3,-4,12,17)==63,"Direction changed loaded movement timing");
+Check(CombatInterceptMath.ImmediateWindow(true,false,false),"Short path cancelled an available shot");
+Check(!CombatInterceptMath.ImmediateWindow(false,false,true),"Forecast fabricated a present shot");
+Check(!CombatInterceptMath.ImmediateWindow(true,true,false),"Observed escape ignored");
+Check(CombatInterceptMath.ImmediateWindow(true,true,true),"Valid immediate shot rejected");
+Check(!CombatInterceptMath.DefensiveAdvance(35,60,25,false),"Hold cover became a long advance");
+Check(!CombatInterceptMath.DefensiveAdvance(7,20,13,false),"Uncovered approach treated as defence");
+Check(CombatInterceptMath.DefensiveAdvance(7,20,13,true),"Short covered reposition rejected");
+Check(!CombatInterceptMath.DefensiveAdvance(3,7,4,true),"Cover justified moving into contact");
 return n;}}
 '@
 Add-Type -TypeDefinition ($taskCode.Replace('MATH',$taskMath)) -Language CSharp

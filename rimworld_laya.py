@@ -2269,6 +2269,7 @@ def command_acceptance(command: dict[str, Any], response: Any) -> bool | None:
 def command_result(commands, responses):
     statuses = [command_acceptance(command, response) for command, response in zip(commands, responses)]
     return {"applied": any(value is True for value in statuses), "responses": responses,
+            "order_preserved": any(isinstance(r, dict) and bool(r.get("preserved_pawn_ids")) for r in responses),
             "command_acceptance": statuses, "outcome_unknown": any(value is None for value in statuses) or any(isinstance(r, dict) and r.get("outcome_unknown") for r in responses),
             "completion": "unverified"}
 
@@ -2539,13 +2540,16 @@ def _combat_retry_prepare(snapshot, memory, signature):
 
 
 def combat_tactical_acceptance(response):
-    """Native CombatTacticResponseDto has order IDs, and no Applied property."""
+    """A changed order or exact preserved native job; neither proves a hit."""
     if not isinstance(response, dict): return False
-    if 'applied' in response and response['applied'] is not True: return False
     if 'success' in response and response['success'] is not True: return False
-    for field in ('positioned_pawn_ids', 'attacking_pawn_ids'):
+    for field in ('positioned_pawn_ids', 'attacking_pawn_ids', 'preserved_pawn_ids'):
         if field in response and (not isinstance(response[field], list) or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in response[field])):
             return False
+    preserved = set(response.get('preserved_pawn_ids') or [])
+    observed = set((response.get('positioned_pawn_ids') or []) + (response.get('attacking_pawn_ids') or []))
+    if not preserved.issubset(observed): return False
+    if 'applied' in response and response['applied'] is not True and not preserved: return False
     if 'psycast_queued' in response and not isinstance(response['psycast_queued'], bool): return False
     return response.get('psycast_queued') is True or any(
         isinstance(response.get(field), list) and bool(response[field])

@@ -61,6 +61,9 @@ namespace RIMAPI.Models
 
     public class CombatTacticResponseDto
     {
+        public bool Applied { get; set; }
+        public List<int> PreservedPawnIds { get; set; } = new List<int>();
+        public List<CombatOrderReadbackDto> CurrentJobs { get; set; } = new List<CombatOrderReadbackDto>();
         public string Tactic { get; set; }
         public List<int> DraftedPawnIds { get; set; } = new List<int>();
         public List<int> PositionedPawnIds { get; set; } = new List<int>();
@@ -69,5 +72,13 @@ namespace RIMAPI.Models
         public string Psycast { get; set; }
         public int? TargetPawnId { get; set; }
         public List<string> Notes { get; set; } = new List<string>();
+    }
+    public class CombatOrderReadbackDto
+    {
+        public int PawnId { get; set; }
+        public string JobDefName { get; set; }
+        public int? TargetThingId { get; set; }
+        public bool Drafted { get; set; }
+        public List<string> QueuedJobDefs { get; set; } = new List<string>();
     }
 }

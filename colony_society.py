@@ -45,6 +45,8 @@ def collect(client: Any, snapshot: dict) -> dict:
         return {"available": False, "reason": str(exc)}
 
 def _delay(action):
+    if action in {'society_drug_policy', 'society_drug_entry'}:
+        return 30000
     if action in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'}:
         return 600
     if action in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'}:
@@ -277,6 +279,11 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             subject = _subject(action, row)
             deferred = (memory.get('deferred') or {}).get(subject, {})
             if action in {'society_drug_policy', 'society_drug_entry'}:
+                committed = (memory.get('issued') or {}).get(subject, {})
+                # A policy assignment itself changes the policy/offer IDs. Do
+                # not interpret that as a new medical reason to switch back.
+                if committed.get('clinical') is not None and committed['clinical'] != _clinical(row):
+                    (memory.get('issued') or {}).pop(subject, None)
                 old_unavailable = unavailable.get(subject)
                 if old_unavailable and old_unavailable.get('state') == _drug_guard(action, row.get('person') or {}, context):
                     del rows[key]
@@ -520,7 +527,10 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
         raise
     if isinstance(result, dict) and result.get("applied") is True:
-        memory.setdefault('issued', {})[_subject(action, row)] = {'tick': tick}
+        record = {'tick': tick}
+        if action in {'society_drug_policy', 'society_drug_entry'}:
+            record = {**failure_record(tick, seconds=120), 'clinical': _clinical(row)}
+        memory.setdefault('issued', {})[_subject(action, row)] = record
     else:
         memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
     if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):

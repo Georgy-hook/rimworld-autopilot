@@ -11,8 +11,15 @@ def food_condition_facts(snapshot, demand):
     rows = (snapshot.get('development', {}).get('production') or {}).get('perishables')
     if not isinstance(rows, list):
         return {'available':False, 'at_risk_nutrition':0, 'critical_stack_ids':[]}
+    native = snapshot.get('development', {}).get('sustenance') or {}
+    eligible = native.get('human_food')
+    eligible_defs = ({p.get('def_name') for p in eligible if float(p.get('fresh_eligible_nutrition') or 0) > 0}
+                     if native.get('available') is True and isinstance(eligible, list)
+                     and snapshot.get('colonists') else None)
     food = []
     for p in rows:
+        if eligible_defs is not None and p.get('def_name') not in eligible_defs:
+            continue  # Generic corpse edibility is not this roster's food policy.
         if p.get('human_edible') is not True or p.get('forbidden') or p.get('burning') or p.get('rot_stage') not in ('Fresh', None):
             continue
         nutrition = p.get('nutrition')
