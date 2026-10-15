@@ -139,7 +139,9 @@ class HourlyRegressionTests(unittest.TestCase):
                    "position": {"x": 100, "z": 100}}
         for job in ("Goto", "AttackStatic", "Wait_Combat"):
             gunner = fighter(1, distance=105, range_cells=26)
-            gunner.update(is_drafted=True, current_job=job)
+            gunner.update(is_drafted=True, current_job=job,
+                          combat_plan='preemptive_strike',queued_attack_target_ids=[99],
+                          is_warming_up=job!='Goto')
             criteria = bridge.make_questions(raid([gunner], [hostile]))["threat_action"]["criteria"]
             self.assertNotIn("prepare_undrafted", criteria)
 

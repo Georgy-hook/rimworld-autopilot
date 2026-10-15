@@ -305,6 +305,10 @@ namespace RIMAPI.Services
                 }
                 else if (CombatNativeHelper.HasClinicalCareJob(doctor) || CombatNativeHelper.HasCareRetreat(doctor))
                     return ApiResult.Fail("Selected doctor is already providing patient care");
+                if (doctor != patient && (CombatNativeHelper.HasClinicalCareJob(patient)
+                    || CombatNativeHelper.HasCareRetreat(patient) || CareTriageHelper.QueuedCare(patient)
+                    || patient.carryTracker?.CarriedThing is Pawn))
+                    return ApiResult.Fail("Patient is providing protected care; do not turn a working caregiver into another treatment target");
                 if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))
                     return ApiResult.Fail("Selected doctor cannot reserve and reach the patient");
                 if (!(patient.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false))

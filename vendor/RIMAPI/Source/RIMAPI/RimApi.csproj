@@ -60,4 +60,11 @@
       <SpecificVersion>False</SpecificVersion>
     </Reference>
   </ItemGroup>
+  <!-- Laboratory endpoints exist only in an explicitly selected test build. -->
+  <PropertyGroup Condition="'$(CombatLab)' == 'true'">
+    <DefineConstants>$(DefineConstants);LAYA_COMBAT_LAB</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CombatLab)' == 'true'">
+    <Compile Include="$(MSBuildProjectDirectory)/../../../../tests/native_combat_lab/*.cs" />
+  </ItemGroup>
 </Project>

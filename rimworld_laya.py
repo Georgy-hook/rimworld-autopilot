@@ -957,9 +957,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if weapon.get("is_ranged") and capabilities.weapon_compatible(pawn, weapon) and not combat_planner.errand_exposed(
                 snapshot, weapon.get("position"), pawn.get("position"))
         ]
-        actively_fighting = any(pawn.get("is_drafted") and str(pawn.get("current_job") or "").lower() in {
-            "attackstatic", "attackmelee", "goto", "wait_combat", "castverb",
-        } for pawn in living_colonists)
+        actively_fighting = bool(combat_planner.engaged_fighter_ids(snapshot))
         staging_distance = 70 if actively_fighting else 35
         staging = bool(fighters) and bool(living_colonists) and all(
             first_number(pawn.get("distance_to_nearest_opponent"), 9999) > staging_distance
@@ -1078,10 +1076,29 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 criteria["prepare_undrafted"] = "Undraft exhausted or defenseless colonists so they can seek safety."
         if any(combat_planner.is_kidnapper(row) for row in hostile_rows):
             criteria.pop("prepare_undrafted", None)
+            if any(name in criteria for name in ('intercept_kidnapper', 'focus_fire', 'stationary_fire')):
+                for passive in ('hold_cover', 'firing_line', 'hold_and_observe', 'advance_to_range'):
+                    criteria.pop(passive, None)
+        if combat_planner.held_defensive_corridor(snapshot):
+            for movement in ('backstep_fire','kite','withdraw_and_regroup','coordinate_retreat','fallback_line',
+                             'wide_flank','pincer','advance_to_range','spread_out','preemptive_strike'):
+                criteria.pop(movement,None)
+            criteria['stationary_fire']='Keep the healthy guns firing through the verified narrow approach. Leaving it opens the base to melee; reassess immediately if the approach is breached or a defender is wounded.'
         if capabilities.combat_animals(snapshot):
             criteria["release_trained_animals"] = "Release trained healthy following animals with their master into combat. Compare allied power, enemy fire, melee danger and animal losses; this does not draft livestock."
         if capabilities.combat_animals(snapshot, released=True):
             criteria["recall_combat_animals"] = "Disable release with the master; animals resume following, though recall may not stop an attack instantly. Preserve wounded or outmatched animals."
+        if not combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
+            criteria.pop('prepare_undrafted', None)
+        if staging and combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
+            # Preparation offers two real plans. Generic defense orders used
+            # to draft the colony and repeatedly wait through the whole stage.
+            criteria = {key: value for key, value in criteria.items() if key in {
+                'preemptive_strike', 'equip_ranged_weapon', 'emergency_self_tend',
+                'civilian_retreat', 'caregiver_retreat', 'recall_combat_animals'}}
+            criteria['continue_safe_colony_work'] = (
+                'Raiders are still staging outside contact. Undraft idle defenders to eat, sleep, cook and work; '
+                'prepare only feasible defenses with available materials/workers, and recheck the live raid phase.')
         if combat_planner.guarded_hive_outside_contact(snapshot):
             # A generic focus-fire order repositions out-of-range shooters
             # toward its target. At a passive hive that is an attack order,
@@ -1203,9 +1220,10 @@ def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] 
 def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) -> dict[str, Any]:
     if snapshot["map"]["enemies"] > 0 and not snapshot["combat"]["available"]:
         return {
-            "choice": "prepare_undrafted",
+            "choice": "hold_and_observe",
             "confidence": 0.0,
-            "reason": "Combat API is unavailable, so no target can be validated; undraft instead of exhausting colonists.",
+            "reason": "Combat API is unavailable during a known threat; preserve existing orders and hold for fresh telemetry.",
+            "combat_sensor_unavailable": True,
             "raw": None,
         }
     questions = make_questions(snapshot)
@@ -1627,6 +1645,10 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
 
 def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
     choice = decision["choice"]
+    if decision.get("combat_sensor_unavailable"):
+        return {"kind": "commands", "description": "Pause while hostile combat state cannot be read; preserve pawn orders",
+                "combat_sensor_unavailable": True,
+                "commands": [{"endpoint": "/api/v1/game/speed", "query": {"speed": 0}}]}
     if combat_planner.guarded_hive_outside_contact(snapshot) and choice in (
         set(combat_planner.TACTICS) | {
             "engage_ranged", "engage_melee", "draft_best_defender", "preemptive_strike",
@@ -1694,10 +1716,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                          if combat_planner.active_clinical_care(c))
         drafted = [c for c in snapshot["combat"]["colonists"]
                    if c.get("is_drafted") and c.get("id") not in protected]
-        commands = [
-            {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": c["id"], "is_drafted": False}}
-            for c in drafted
-        ]
+        commands = [{"endpoint": "/api/v1/combat/tactic", "body": {
+            "map_id": snapshot['map']['id'], "tactic": "stand_down", "fighter_ids": [c['id'] for c in drafted]}}]
         for master in {a.get("master_pawn_id") for a in snapshot["combat"].get("colony_animals") or snapshot.get("animals") or [] if a.get("animals_released")}:
             if master and master not in protected:
                 commands.insert(0, {"endpoint": "/api/v1/combat/animals/release", "body": {"map_id": snapshot["map"]["id"], "master_pawn_id": master, "release": False}})
@@ -1817,8 +1837,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         hostiles = combat_planner.live_hostiles(snapshot)
         commands = []
         for pawn in snapshot['combat'].get('colonists') or []:
-            if (pawn.get('id') in protected or not combat_planner.ranged_capable(pawn)
-                    or not isinstance(pawn.get('shootable_opponent_ids'), list)): continue
+            if pawn.get('id') in protected or not combat_planner.stationary_firing_candidate(pawn): continue
             visible = pawn.get('shootable_opponent_ids')
             targets = [target for target in hostiles if not target.get('is_building')
                        and (target.get('id') in visible if visible is not None else combat_planner.has_clear_shot(pawn, [target]))]
@@ -1998,8 +2017,12 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
     if choice == "prepare_undrafted":
         protected = combat_planner.protected_emergency_care_ids(snapshot)
+        safe = combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True)
+        if combat_planner.live_hostiles(snapshot) and not safe:
+            return {'kind': 'noop', 'description': 'No fresh staging work window; preserve active defenders and care'}
         drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")
                    and c.get("id") not in protected
+                   and (not combat_planner.live_hostiles(snapshot) or c.get('id') in safe)
                    and not (c.get("current_job") == "Goto"
                             and combat_planner.errand_exposed(snapshot, c.get("position")))]
         if not drafted:
@@ -2159,10 +2182,14 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             ] + [
                 {"endpoint": "/api/v1/pawn/job", "body": {
                     "pawn_id": pawn["id"], "job_def": "AttackMelee", "target_thing_id": contact_targets[pawn["id"]]["id"],
-                }} for pawn in contact if pawn["id"] in contact_targets and not (
+                }} for pawn in contact if pawn["id"] in contact_targets and not pawn.get('has_ranged_weapon') and not (
                     pawn.get("current_job") == "AttackMelee"
                     and pawn.get("current_job_target_id") == contact_targets[pawn["id"]]["id"])
             ]
+            commands += [{"endpoint":"/api/v1/combat/tactic","body":{
+                "map_id":snapshot['map']['id'],"tactic":"contact_melee","fighter_ids":[pawn['id']],
+                "target_pawn_id":contact_targets[pawn['id']]['id']}}
+                for pawn in contact if pawn['id'] in contact_targets and pawn.get('has_ranged_weapon')]
             if support:
                 commands.append({"endpoint": "/api/v1/combat/tactic", "body": {
                     "map_id": snapshot["map"]["id"], "tactic": "focus_fire",
@@ -2633,6 +2660,19 @@ def protect_response_commands(snapshot: dict[str, Any], action: dict[str, Any]) 
     return {**action,'commands':commands,'kind':'commands' if commands else 'noop'}
 
 
+def refresh_combat_control(client: RimApiClient, snapshot: dict[str, Any], *, apply: bool) -> dict[str, Any] | None:
+    """Fresh director observation renews only already selected native plans."""
+    controlled = [p['id'] for p in snapshot.get('combat', {}).get('colonists', [])
+                  if p.get('combat_plan') and p.get('id') is not None]
+    if not apply or not controlled:
+        return None
+    try:
+        return client.post('/api/v1/combat/tactic', body={
+            'map_id': snapshot['map']['id'], 'tactic': 'refresh_control', 'fighter_ids': controlled})
+    except RimApiError as exc:
+        return {'error': str(exc), 'renewed': False}
+
+
 def run_cycle(
     client: RimApiClient,
     agent: Any,
@@ -2646,6 +2686,7 @@ def run_cycle(
     protected_response_plans: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     snapshot = collect_snapshot(client)
+    control_lease = refresh_combat_control(client, snapshot, apply=apply)
     snapshot['combat']['protected_response_plans'] = protected_response_plans or []
     if protected_noncombat_pawn_ids and not combat_planner.live_hostiles(snapshot):
         # An observed neutral hunt can own drafted actors while unrelated
@@ -2675,6 +2716,7 @@ def run_cycle(
         "decision": decision,
         "action": action,
         "result": result,
+        "control_lease": control_lease,
     }
     preferences = laya_preferences.load_preferences()
     if preferences.get("technical_logging"):

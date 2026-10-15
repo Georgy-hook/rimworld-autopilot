@@ -50,6 +50,19 @@ class RecoveryFaults(unittest.TestCase):
         self.assertTrue(director.urgent_care_actionable(s))
         self.assertIn('stable patient 2',plans['tend_1_3']['summary'])
 
+    def test_wounded_working_doctor_is_not_another_tend_target(self):
+        s=self.snapshot()
+        s['combat']['colonists'][1]['bleeding_rate']=2
+        worker=s['combat']['colonists'][2]
+        worker.update(tendable_now=True,bleeding_rate=1.4,health=.6)
+        s['combat']['colonists'].append({'id':4,'current_job':'Wait','moving':1,'manipulation':1,'medicine_skill':8})
+        s['colonists'].append({'id':4,'skills':{'Medicine':{'disabled':False}}})
+        plans=director.post_combat_care_options(s)
+        self.assertNotIn('tend_3_4',plans)
+        self.assertIn('tend_1_4',plans)
+        worker['current_job']='Wait'
+        self.assertIn('tend_3_4',director.post_combat_care_options(s))
+
     def test_continuing_bleed_or_active_illness_or_surgery_keeps_doctor(self):
         for mutation in ('bleed','disease','surgery'):
             s=self.snapshot()

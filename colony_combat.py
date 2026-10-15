@@ -31,7 +31,26 @@ def self_tend_candidates(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             and not ((details.get(p.get('id'), {}).get('work_priorities') or {}).get('Doctor') or {}).get('disabled')
             and float(p.get('manipulation', 1) if p.get('manipulation') is not None else 1) > 0
             and float(p.get('moving', 1) if p.get('moving') is not None else 1) >= .65
-            and opponent_distance(p, 0) > 4]
+            and opponent_distance(p, 0) > 4 and safe_new_self_tend(snapshot, p)]
+
+
+def safe_new_self_tend(snapshot: dict[str, Any], pawn: dict[str, Any]) -> bool:
+    """Starting treatment needs time out of contact and incoming fire.
+
+    Existing clinical jobs retain their separate protection and escape contract.
+    """
+    here = _cell(pawn)
+    for enemy in live_hostiles(snapshot):
+        there = _cell(enemy)
+        distance = math.dist(here, there) if here is not None and there is not None else opponent_distance(pawn, 0)
+        if distance <= 18 or enemy.get('current_job_target_id') == pawn.get('id'):
+            return False
+        if pawn.get('id') in (enemy.get('shootable_opponent_ids') or []):
+            return False
+        if enemy.get('has_ranged_weapon') and not isinstance(enemy.get('shootable_opponent_ids'), list):
+            if distance <= float(enemy.get('weapon_range') or 35) + 3:
+                return False
+    return True
 
 
 def opponent_distance(row: dict[str, Any], unknown: float = 9999) -> float:
@@ -58,6 +77,53 @@ def live_hostiles(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             if not row.get("is_dead") and not row.get("is_downed") and row.get("active_threat", True)]
 
 
+def stationary_firing_candidate(row: dict[str, Any]) -> bool:
+    """An exposed mobile gun needs a cover review; an immobile gun can still fire."""
+    exposure = row.get('incoming_ranged_exposure')
+    return (ranged_capable(row) and isinstance(row.get('shootable_opponent_ids'), list)
+            and not (isinstance(exposure, (int, float)) and math.isfinite(exposure)
+                     and exposure > .6 and float(row.get('moving', 1)) >= .65))
+
+
+def held_defensive_corridor(snapshot: dict[str, Any]) -> bool:
+    """A healthy firing group must not abandon a still working native choke."""
+    foes=live_hostiles(snapshot)
+    if not foes or any(p.get('has_ranged_weapon') or p.get('is_building') or is_kidnapper(p) for p in foes):
+        return False
+    if any(opponent_distance(p,0)<=3 for p in foes):return False
+    guns=[p for p in snapshot.get('combat',{}).get('colonists') or []
+          if ranged_capable(p) and not p.get('is_dead') and not p.get('is_downed')]
+    if any(p.get('bleeding_rate') is None or p.get('health') is None or p.get('moving') is None for p in guns):return False
+    if any(float(p.get('bleeding_rate') or 0)>0 or float(p.get('health',1))<.85
+           or float(p.get('moving',1))<.85 or p.get('is_in_mental_state') for p in guns):
+        return False
+    ready=[p for p in guns if p.get('is_drafted') and has_clear_shot(p,foes)
+           and (p.get('current_job')=='AttackStatic' or p.get('is_warming_up'))]
+    if len(ready)<2 or len(foes)>len(ready)*2:return False
+    observed={p.get('id') for p in foes}
+    return any(sum(enemy in (p.get('defended_approach_target_ids') or []) for p in ready)>=2 for enemy in observed)
+
+
+def engaged_fighter_ids(snapshot: dict[str, Any]) -> set[int]:
+    """An actual shot/contact or committed strike, not the drafted waiting job."""
+    targets = {p.get('id'): p for p in live_hostiles(snapshot)}
+    result = set()
+    for pawn in (snapshot.get('combat') or {}).get('colonists') or []:
+        if pawn.get('is_dead') or pawn.get('is_downed') or not pawn.get('is_drafted'):
+            continue
+        job = str(pawn.get('current_job') or '').casefold()
+        target = targets.get(pawn.get('current_job_target_id'))
+        actual = pawn.get('is_warming_up') is True or job in {'attackmelee', 'castverb'}
+        if job == 'attackstatic' and target and has_clear_shot(pawn, [target]):
+            actual = True
+        if (job == 'goto' and pawn.get('combat_plan') in {'preemptive_strike', 'intercept_kidnapper'}
+                and set(pawn.get('queued_attack_target_ids') or []).intersection(targets)):
+            actual = True
+        if actual and pawn.get('id') is not None:
+            result.add(int(pawn['id']))
+    return result
+
+
 def safe_work_actor_ids(snapshot: dict[str, Any], *, allow_idle_drafted: bool = False) -> set[int]:
     """A conservative observed work window, never a declaration of raid victory.
 
@@ -75,19 +141,24 @@ def safe_work_actor_ids(snapshot: dict[str, Any], *, allow_idle_drafted: bool = 
         if not enemy.get("is_building") and not hostile_is_preparing(enemy):
             return set()
     radius = max(35, max((float(e.get("weapon_range") or 0) + 12 for e in hostiles), default=35))
-    if any(opponent_distance(p, 0) <= radius for p in allies):
-        return set()
+    if any(opponent_distance(p, float('inf')) <= 12 for p in allies):
+        return set()  # A nearby exposed ally requires defense/care, not optional development.
     protected = protected_emergency_care_ids(snapshot)
+    engaged = engaged_fighter_ids(snapshot)
     actors = set()
     for pawn in allies:
+        if opponent_distance(pawn, 0) <= radius:
+            continue
         if pawn.get("is_downed") or pawn.get("is_in_mental_state") or pawn.get("id") in protected:
             continue
         job = str(pawn.get("current_job") or "").casefold()
-        if job in {"attackstatic", "attackmelee", "castverb", "predatorhunt"}:
-            return set()
+        if pawn.get('id') in engaged or job == 'predatorhunt':
+            continue
         if pawn.get("is_drafted"):
-            if not allow_idle_drafted or job not in {"wait_combat", "wait", "wait_maintainposture"}:
-                return set()
+            idle = job in {'wait_combat', 'wait', 'wait_maintainposture', 'attackstatic'}
+            idle |= job == 'goto' and pawn.get('combat_plan') not in {'preemptive_strike','intercept_kidnapper'} and not pawn.get('queued_attack_target_ids')
+            if not allow_idle_drafted or not idle:
+                continue
         if pawn.get("id") is not None:
             actors.add(int(pawn["id"]))
     return actors
@@ -226,8 +297,11 @@ def unsupported_animal_charge(snapshot: dict[str, Any], attackers: list[dict[str
 
 
 def is_kidnapper(row: dict[str, Any]) -> bool:
-    """A hostile kidnapping job must actually carry a player-owned victim."""
-    intent = row.get("kidnapping_intent") or "kidnap" in str(row.get("current_job") or "").lower() or "kidnap" in str(row.get("lord_job_type") or "").lower()
+    """A hostile must carry our pawn with observed kidnapping/exit intent."""
+    if row.get('is_colonist') is True and not row.get('kidnapping_intent'):
+        return False
+    text=' '.join(str(row.get(k) or '') for k in ('current_job','lord_job_type','lord_toil_name')).lower()
+    intent = row.get("kidnapping_intent") or "kidnap" in text or 'exitmap' in text or row.get('exit_map_on_arrival') is True
     return bool(row.get("carrying_pawn_id") and row.get("carrying_player_pawn") is True and intent)
 
 
@@ -300,7 +374,7 @@ def errand_exposed(snapshot: dict[str, Any], destination: dict[str, Any] | None,
 TACTICS: dict[str, dict[str, Any]] = {
     "stationary_fire": {
         "label": "Fire from the current position",
-        "description": "Shoot a native verified target without approaching or relocating; a wounded shooter risks remaining exposed.",
+        "description": "Keep the current verified firing lane and concentrate fire without unnecessary movement, including a prepared choke. Recheck contact and incoming fire; a wounded shooter can remain exposed.",
         "tags": {"ranged", "defense"},
     },
     "hold_cover": {
@@ -365,7 +439,7 @@ TACTICS: dict[str, dict[str, Any]] = {
     },
     "contact_melee": {
         "label": "Immediate contact self-defence",
-        "description": "One violent-capable defender uses their actual melee verb against the named adjacent enemy. Compare safe retreat with injury risk. No distant charge, pacifist attack or cancellation of protected patient care.",
+        "description": "Defend against the named adjacent enemy. A gunner first tries a short checked escape and queued shot; melee is the fallback when no such route is feasible. No distant charge, pacifist attack or cancellation of protected patient care.",
         "tags": {"defense", "close_quarters"},
     },
     "advance_to_range": {
@@ -516,16 +590,23 @@ def hostile_is_preparing(row: dict[str, Any]) -> bool:
     lord_toil = str(row.get("lord_toil_name") or "").lower()
     # A raider pauses in Wait_Combat while aiming during an active assault.
     # Treating that pause as staging repeatedly undrafts the defenders.
-    if job == "wait_combat" or any(token in lord_toil for token in (
+    if row.get('is_warming_up') is True or any(token in lord_toil for token in (
             "assault", "breach", "sap", "kidnap", "steal")):
         return False
-    if job == "goto" or any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
+    if any(token in job for token in ("attack", "breach", "sap", "kidnap", "steal")):
         return False
     animal = row.get('is_animal') is True or (row.get('is_animal') is None and
         str(row.get('kind_def') or '').casefold() in {'rat', 'yorkshireterrier', 'squirrel', 'hare', 'tortoise', 'iguana', 'raccoon'})
     if row.get('is_in_mental_state') and row.get('is_hostile'):
         return False
     if animal:
+        return False
+    # StageThenAttack names the entire raid, including its later assault.
+    # The current toil is authoritative: walking inside a staging camp or a
+    # drafted Wait_Combat job alone does not mean the assault has started.
+    if any(token in lord_toil for token in ('stage', 'siege')):
+        return True
+    if job in {'wait_combat', 'goto'}:
         return False
     hive_guard = "defendandexpandhive" in str(row.get("lord_job_type") or "").lower()
     return hive_guard or any(token in job for token in ("wait", "wander", "prepare", "siege")) or any(
@@ -642,8 +723,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
     hostile_text = [_text(row) for row in hostiles]
     hostile_jobs = " ".join(hostile_text)
     defenses = _defense_types(snapshot)
-    stationary = [row for row in fighters if ranged_capable(row)
-                  and isinstance(row.get("shootable_opponent_ids"), list) and has_clear_shot(row, hostiles)]
+    stationary = [row for row in fighters if stationary_firing_candidate(row) and has_clear_shot(row, hostiles)]
     ranged = [row for row in fighters if ranged_capable(row) and float(row.get('manipulation', 1)) >= .65
               and float(row.get('sight', 1)) >= .65 and float(row.get('moving', 1)) >= .65]
     armed_melee = [row for row in fighters if row.get("weapon_def") and not row.get("has_ranged_weapon")
@@ -665,7 +745,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
                          and opponent_distance(row, 9999) <= 18]
     contact = [row for row in ranged if opponent_distance(row, 9999) <= 2]
     names: list[str] = ["hold_cover"] if ranged and len(contact) < len(ranged) else []
-    if any(row not in ranged for row in stationary): names.append("stationary_fire")
+    if stationary: names.append("stationary_fire")
     if armed_melee:
         names += ["melee_assault", "melee_hold_line"]
         if len(armed_melee) >= 2:
@@ -686,7 +766,7 @@ def available_tactics(snapshot: dict[str, Any]) -> dict[str, str]:
         names.append("civilian_retreat")
     if len(ranged) >= 2:
         names.append("firing_line")
-    if len(ranged) >= 2 and (has_explosives or len(hostiles) >= 8):
+    if len(ranged) >= 2 and has_explosives:
         names.append("spread_out")
     if armored_melee and "door" in defenses:
         names += ["melee_block", "door_defense"]

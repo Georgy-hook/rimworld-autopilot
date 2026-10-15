@@ -28,7 +28,7 @@ namespace RIMAPI.Services
                     .ToList();
                 var hostiles = map.mapPawns.AllPawnsSpawned
                     .Where(p => p != null && !p.Dead && CombatNativeHelper.IsPlayerThreat(p)
-                        && IsActionableHostile(p, colonists, map))
+                        && CombatNativeHelper.ActionableHostile(p, colonists, map))
                     .ToList();
                 var prisoners = map.mapPawns.PrisonersOfColony
                     .Where(p => p != null && !p.Dead)
@@ -89,24 +89,6 @@ namespace RIMAPI.Services
             }
         }
 
-        private static bool IsActionableHostile(Pawn pawn, List<Pawn> colonists, Map map)
-        {
-            string job = pawn.CurJobDef?.defName?.ToLowerInvariant() ?? "";
-            bool attacking = job.Contains("attack") || job.Contains("breach") || job.Contains("sap")
-                || job.Contains("kidnap") || job.Contains("steal") || job == "goto";
-            if (attacking || CombatNativeHelper.Kidnapper(pawn))
-                return true;
-
-            string lordJob = pawn.GetLord()?.LordJob?.GetType().Name ?? "";
-            bool passiveHive = lordJob.Contains("DefendAndExpandHive");
-            if (passiveHive && (!colonists.Any()
-                || colonists.Min(c => c.Position.DistanceToSquared(pawn.Position)) > 45 * 45))
-                return false;
-            if (pawn.Position.Fogged(map))
-                return false;
-            return colonists.Any(c => c.CanReach(pawn, PathEndMode.Touch, Danger.Deadly));
-        }
-
         private static CombatPawnDto ToCombatPawn(Pawn pawn, bool hostile, List<Pawn> opponents)
         {
             var primary = pawn.equipment?.Primary;
@@ -154,6 +136,12 @@ namespace RIMAPI.Services
                 WeaponLabel = primary?.LabelShortCap,
                 HasRangedWeapon = primary?.def?.IsRangedWeapon ?? false,
                 CurrentJob = pawn.CurJobDef?.defName,
+                IsWarmingUp = pawn.stances?.curStance is Stance_Warmup,
+                WarmupTicksLeft = (pawn.stances?.curStance as Stance_Warmup)?.ticksLeft ?? 0,
+                IsMoving = pawn.pather?.Moving == true,
+                CombatPlan = CombatControlHelper.CurrentPlan(pawn),
+                QueuedAttackTargetIds = pawn.jobs?.jobQueue.Where(q=>q.job.def==JobDefOf.AttackStatic && q.job.targetA.Thing!=null)
+                    .Select(q=>q.job.targetA.Thing.thingIDNumber).ToList() ?? new List<int>(),
                 CurrentJobKillIncappedTarget = pawn.CurJob?.killIncappedTarget,
                 CurrentJobTargetId = pawn.CurJob?.targetA.Thing?.thingIDNumber,
                 CurrentJobTargetIdB = pawn.CurJob?.targetB.Thing?.thingIDNumber,
@@ -188,10 +176,17 @@ namespace RIMAPI.Services
                 ShootableOpponentIds = primary?.def?.IsRangedWeapon == true
                     ? (opponents ?? new List<Pawn>())
                         .Where(other => !other.Dead && !other.Downed
-                            && primary.TryGetComp<CompEquippable>()?.PrimaryVerb?.CanHitTargetFrom(pawn.Position, other) == true)
+                            && (hostile
+                                ? primary.TryGetComp<CompEquippable>()?.PrimaryVerb?.CanHitTargetFrom(pawn.Position,other)==true
+                                : CombatInterceptHelper.CanShootNow(pawn,other)))
                         .Select(other => other.thingIDNumber).ToList()
                     : new List<int>(),
                 ArmorSharp = pawn.GetStatValue(StatDefOf.ArmorRating_Sharp),
+                IncomingRangedExposure = !hostile ? CombatControlHelper.IncomingRangedExposure(pawn,pawn.Position) : 0f,
+                DefendedApproachTargetIds = !hostile && primary?.def.IsRangedWeapon==true
+                    ? (opponents ?? new List<Pawn>()).Where(other=>!other.Dead && !other.Downed
+                        && CombatInterceptHelper.DefendedApproach(pawn,other)).Select(other=>other.thingIDNumber).ToList()
+                    : new List<int>(),
                 CarryingPlayerPawn = pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer,
                 CarriedPawnFaction = (pawn.carryTracker?.CarriedThing as Pawn)?.Faction?.def?.defName,
                 KidnappingIntent = CombatNativeHelper.Kidnapper(pawn),

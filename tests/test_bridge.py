@@ -225,12 +225,15 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("farm", state)
         self.assertIn("resources", state)
 
-    def test_threat_without_target_ids_undrafts_instead_of_exhausting_colonists(self):
+    def test_unreadable_threat_pauses_without_undrafting_or_resuming(self):
         snapshot = self.snapshot()
         snapshot["map"]["enemies"] = 2
         snapshot["combat"] = {"available": False, "colonists": [], "hostiles": []}
         decision = bridge.decide(None, snapshot, 0.6)
-        self.assertEqual(decision["choice"], "prepare_undrafted")
+        self.assertEqual(decision["choice"], "hold_and_observe")
+        action = bridge.plan_action(snapshot, decision)
+        self.assertEqual(action["commands"], [{"endpoint": "/api/v1/game/speed", "query": {"speed": 0}}])
+        self.assertTrue(action["combat_sensor_unavailable"])
 
     def test_post_combat_draft_cannot_loop_without_a_live_threat(self):
         snapshot = self.snapshot()
@@ -248,8 +251,8 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(people[10]["drafted"])
         self.assertTrue(people[11]["downed"])
         action = bridge.plan_action(snapshot, decision)
-        self.assertIn({"endpoint": "/api/v1/pawn/edit/status", "body": {
-            "pawn_id": 10, "is_drafted": False}}, action["commands"])
+        self.assertIn({"endpoint": "/api/v1/combat/tactic", "body": {
+            "map_id": snapshot['map']['id'], "tactic": "stand_down", "fighter_ids": [10]}}, action["commands"])
         snapshot["combat"]["colonists"][0]["is_drafted"] = False
         self.assertIn("colony_action", bridge.make_questions(snapshot))
 
@@ -261,7 +264,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("threat_action", questions)
         self.assertNotIn("stand_down", questions["threat_action"]["criteria"])
 
-    def test_staging_raid_keeps_active_drafted_line_and_combat_options(self):
+    def test_staging_raid_releases_idle_drafted_line_for_work(self):
         snapshot = self.snapshot()
         snapshot["map"]["enemies"] = 2
         snapshot["combat"] = {
@@ -282,8 +285,8 @@ class BridgeTests(unittest.TestCase):
             "available_weapons": [],
         }
         criteria = bridge.make_questions(snapshot)["threat_action"]["criteria"]
-        self.assertTrue({"hold_and_observe", "preemptive_strike",
-                         "advance_to_range", "hold_cover"}.issubset(criteria))
+        self.assertTrue({"continue_safe_colony_work", "preemptive_strike"}.issubset(criteria))
+        self.assertNotIn('hold_cover',criteria)
         self.assertNotIn("prepare_undrafted", criteria)
         action = bridge.plan_action(snapshot, {"choice": "prepare_undrafted"})
         self.assertEqual(action["commands"][0]["body"], {"pawn_id": 10, "is_drafted": False})
@@ -308,9 +311,9 @@ class BridgeTests(unittest.TestCase):
         }
         action = bridge.plan_action(snapshot, {"choice": "engage_melee"})
         self.assertEqual(action["kind"], "commands")
-        self.assertTrue(any(command["endpoint"] == "/api/v1/pawn/job"
-                            and command["body"].get("pawn_id") == 10
-                            and command["body"].get("job_def") == "AttackMelee"
+        self.assertTrue(any(command["endpoint"] == "/api/v1/combat/tactic"
+                            and command["body"].get("fighter_ids") == [10]
+                            and command["body"].get("tactic") == "contact_melee"
                             for command in action["commands"]))
         self.assertTrue(any(command["endpoint"] == "/api/v1/combat/tactic"
                             and command["body"].get("fighter_ids") == [11]

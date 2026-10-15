@@ -34,6 +34,14 @@ Check(!CombatInterceptMath.DefensiveAdvance(35,60,25,false),"Hold cover became a
 Check(!CombatInterceptMath.DefensiveAdvance(7,20,13,false),"Uncovered approach treated as defence");
 Check(CombatInterceptMath.DefensiveAdvance(7,20,13,true),"Short covered reposition rejected");
 Check(!CombatInterceptMath.DefensiveAdvance(3,7,4,true),"Cover justified moving into contact");
+Check(CombatInterceptMath.ShotCommitment(60,20,100,90,0)==270,"Burst/cooldown lock omitted from escape horizon");
+Check(CombatInterceptMath.ShotCommitment(0,0,0,30,80)==110,"Existing immobile stance treated as immediate escape");
+Check(CombatInterceptMath.InterveningAlly(0,0,20,0,10,0,1.5f),"Ally directly between shooter and target ignored");
+Check(!CombatInterceptMath.InterveningAlly(0,0,20,0,10,2,1.5f),"Safe side lane rejected");
+Check(!CombatInterceptMath.InterveningAlly(0,0,20,0,-2,0,1.5f),"Ally behind shooter blocks firing");
+Check(CombatInterceptMath.InterveningAlly(0,0,20,0,21,0,1.5f),"Ally near the target's miss envelope ignored");
+Check(!CombatInterceptMath.InterveningAlly(0,0,20,0,23,0,1.5f),"Far beyond target treated as an intervening ally");
+Check(CombatInterceptMath.InterveningAlly(0,0,20,20,10,10,1.5f),"Diagonal friendly lane ignored");
 return n;}}
 '@
 Add-Type -TypeDefinition ($taskCode.Replace('MATH',$taskMath)) -Language CSharp

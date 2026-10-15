@@ -15,6 +15,22 @@ namespace RIMAPI.Helpers
             pawn.CurJobDef?.defName, pawn.CurJob?.targetA.Thing is Pawn prey && prey.Faction == Faction.OfPlayer);
         public static bool IsPlayerThreat(Pawn pawn) => pawn != null
             && (pawn.HostileTo(Faction.OfPlayer) || ActivePredation(pawn));
+        public static bool ActionableHostile(Pawn pawn, List<Pawn> colonists, Map map)
+        {
+            if (pawn == null || pawn.Dead || !pawn.Spawned || pawn.Map != map || !IsPlayerThreat(pawn)) return false;
+            string job = pawn.CurJobDef?.defName?.ToLowerInvariant() ?? "";
+            if (job.Contains("attack") || job.Contains("breach") || job.Contains("sap")
+                || job.Contains("kidnap") || job.Contains("steal") || job == "goto" || Kidnapper(pawn)) return true;
+            string lordJob = pawn.GetLord()?.LordJob?.GetType().Name ?? "";
+            if (lordJob.Contains("DefendAndExpandHive") && (!colonists.Any()
+                || colonists.Min(c => c.Position.DistanceToSquared(pawn.Position)) > 45 * 45)) return false;
+            if (pawn.Position.Fogged(map)) return false;
+            // A shooter across an impassable gap is still a present threat.
+            Verb verb = pawn.CurrentEffectiveVerb;
+            if (!pawn.Downed && verb != null && !verb.IsMeleeAttack && verb.Available()
+                && colonists.Any(c => !c.Dead && verb.CanHitTarget(c))) return true;
+            return colonists.Any(c => c.CanReach(pawn, PathEndMode.Touch, Danger.Deadly));
+        }
         private static readonly HashSet<string> Care=new HashSet<string>{"TendPatient","Rescue","FeedPatient","DoBill","Deathrest","Breastfeed","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafety","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessongiving","Lessonreceiving","PrisonerInterrogateIdentity"};
         private static readonly Dictionary<int, KeyValuePair<Pawn, Job>> CareRetreats = new Dictionary<int, KeyValuePair<Pawn, Job>>();
         public static void RememberCareRetreat(Pawn pawn, Job job) =>
@@ -89,8 +105,14 @@ namespace RIMAPI.Helpers
                 return false;
             return true;
         }
-        public static bool Kidnapper(Pawn pawn) => pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer
-            && (pawn.CurJobDef?.defName.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0 || pawn.GetLord()?.LordJob?.GetType().Name.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0);
+        public static bool Kidnapper(Pawn pawn) => pawn!=null && IsPlayerThreat(pawn)
+            && pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer
+            && (pawn.CurJobDef?.defName.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0
+                || pawn.GetLord()?.LordJob?.GetType().Name.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0
+                || pawn.GetLord()?.CurLordToil?.GetType().Name.IndexOf("Kidnap",StringComparison.OrdinalIgnoreCase)>=0
+                || pawn.GetLord()?.CurLordToil?.GetType().Name.IndexOf("ExitMap",StringComparison.OrdinalIgnoreCase)>=0
+                || pawn.GetLord()?.LordJob?.GetType().Name.IndexOf("ExitMap",StringComparison.OrdinalIgnoreCase)>=0
+                || pawn.CurJob?.exitMapOnArrival==true);
         public static bool ActiveStructure(Thing thing) => thing is Building_Turret turret && !thing.Destroyed && thing.HostileTo(Faction.OfPlayer)
             && (thing.TryGetComp<CompCanBeDormant>()?.Awake ?? true) && (thing.TryGetComp<CompPowerTrader>()?.PowerOn ?? true)
             && (thing.TryGetComp<CompInitiatable>()?.Initiated ?? true) && turret.AttackVerb!=null;
@@ -102,7 +124,10 @@ namespace RIMAPI.Helpers
         public static List<CombatNativeOptionDto> Options(Map map)
         {
             var result=new List<CombatNativeOptionDto>();var targets=Targets(map).ToList();
-            foreach (Pawn lure in map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead && !p.Downed && !p.InMentalState
+            // MapPawns exposes a reusable filtered list. Nested readiness checks
+            // query it too, so never enumerate that live cache across helpers.
+            var colonists=map.mapPawns.FreeColonistsSpawned.ToArray();
+            foreach (Pawn lure in colonists.Where(p => !p.Dead && !p.Downed && !p.InMentalState
                 && !Protected(p) && !CareTriageHelper.QueuedCare(p) && p.health.hediffSet.BleedRateTotal==0f && p.health.capacities.GetLevel(PawnCapacityDefOf.Moving) >= .85f
                 && p.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness)>=.85f))
             foreach (Pawn pursuer in targets.OfType<Pawn>().Where(p => CombatInterceptHelper.Pursuing(p,lure)
@@ -112,7 +137,7 @@ namespace RIMAPI.Helpers
                         Label=$"{lure.LabelShort}: move the observed pursuer {pursuer.LabelShort} inside its current covering guns' envelope",
                         Effects=Effects("Divert this already observed pursuer while guns attack that exact enemy", "Lure can be injured; pursuit or covering fire can change",
                             "Normal checked movement; no forced enemy target or violent job for a pacifist", "Safe destination, route, pursuit and same-target fire are checked again; no guaranteed diversion or hit")});
-            foreach (Pawn caregiver in map.mapPawns.FreeColonistsSpawned.Where(p => !p.Dead && !p.Downed
+            foreach (Pawn caregiver in colonists.Where(p => !p.Dead && !p.Downed
                 && !p.InMentalState && HasClinicalCareJob(p) && !(p.carryTracker?.CarriedThing is Pawn)))
             {
                 Pawn patient = CareTarget(caregiver) as Pawn;
@@ -128,14 +153,14 @@ namespace RIMAPI.Helpers
                         $"Only {caregiver.LabelShort}'s exact current care is interrupted; remaining caregivers keep their jobs",
                         "Route is checked before suspension; escape and patient survival are not guaranteed") });
             }
-            foreach(Pawn pawn in map.mapPawns.FreeColonistsSpawned.Where(Fighter))
+            foreach(Pawn pawn in colonists.Where(Fighter))
             {
                 foreach(Pawn contact in targets.OfType<Pawn>().Where(p => CombatInterceptMath.ContactDefence(true,pawn.Position.DistanceTo(p.Position))
                     && pawn.meleeVerbs.TryGetMeleeVerb(p)!=null))
                     result.Add(new CombatNativeOptionDto {Tactic="contact_melee",FighterId=pawn.thingIDNumber,TargetId=contact.thingIDNumber,
-                        Label=$"{pawn.LabelShort}: immediate melee self-defence against adjacent {contact.LabelShort}",
-                        Effects=Effects("Use actual melee verb now instead of an unusable point-blank ranged order", "Adjacent opponent can seriously injure this defender",
-                            "Only this violent-capable defender; short ordinary melee job replaces their current shooting", "Contact and native verb checked again; no charge, guaranteed win or patient-care interruption")});
+                        Label=$"{pawn.LabelShort}: immediate contact defence against adjacent {contact.LabelShort}",
+                        Effects=Effects("A gunner tries a short checked escape and queued shot; use the melee verb if escape is unavailable", "Adjacent opponent can seriously injure this defender",
+                            "Only this violent-capable defender; movement or a last-resort short melee job interrupts shooting", "Contact, route and native verb checked again; no charge, guaranteed win or patient-care interruption")});
                 Verb verb=pawn.equipment?.Primary?.TryGetComp<CompEquippable>()?.PrimaryVerb;
                 var projectile=verb?.verbProps.defaultProjectile?.projectile;
                 bool emp=projectile?.damageDef==DamageDefOf.EMP;

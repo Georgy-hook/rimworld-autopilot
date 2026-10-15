@@ -743,10 +743,10 @@ class CombatScenarioTests(unittest.TestCase):
             "patient_pawn_id": 1, "doctor_pawn_id": 1, "self_tend": True,
         })
         patient["distance_to_nearest_opponent"] = 8
-        self.assertIn("emergency_self_tend", bridge.make_questions(snapshot)["threat_action"]["criteria"])
-        self.assertIn("Close enemies", bridge.make_questions(snapshot)["threat_action"]["criteria"]["emergency_self_tend"])
+        patient["position"] = {"x": 42, "z": 50}
+        self.assertNotIn("emergency_self_tend", bridge.make_questions(snapshot)["threat_action"]["criteria"])
         close_action = bridge.plan_action(snapshot, {"choice": "emergency_self_tend", "medical_target_id": 1})
-        self.assertTrue(any(row["endpoint"] == "/api/v1/pawn/medical/tend" for row in close_action["commands"]))
+        self.assertEqual(close_action['kind'], 'noop')
 
     def test_staging_tournament_still_exposes_preemptive_strike(self):
         class ModelLikeAgent:
@@ -768,12 +768,12 @@ class CombatScenarioTests(unittest.TestCase):
                         [{"id": 99, "kind_def": "Raider", "current_job": "Wait_Wander",
                           "distance_to_nearest_opponent": 80, "position": {"x": 100, "z": 100}}])
         offered = set(bridge.make_questions(snapshot)["threat_action"]["criteria"])
-        self.assertGreater(len(offered), 6)
+        self.assertEqual(offered, {'continue_safe_colony_work','preemptive_strike'})
         agent = ModelLikeAgent()
         decision = bridge.decide(agent, snapshot, 0.0)
         self.assertEqual(decision["choice"], "preemptive_strike")
         considered = set().union(*(set(next(iter(questions.values()))["criteria"])
-                                  for _, questions in agent.calls if "_round_" in next(iter(questions))))
+                                  for _, questions in agent.calls))
         self.assertEqual(considered, offered)
         self.assertIn("forces", decision["raw"]["visible_state"])
 
@@ -809,8 +809,8 @@ class CombatScenarioTests(unittest.TestCase):
         )
         options = bridge.make_questions(snapshot)["threat_action"]["criteria"]
         self.assertNotIn("prepare_undrafted", options)
-        self.assertIn("hold_and_observe", options)
-        self.assertIn("advance_to_range", options)
+        self.assertIn("continue_safe_colony_work", options)
+        self.assertNotIn("advance_to_range", options)
         self.assertNotIn("preemptive_strike", options)
 
     def test_enemy_goto_is_an_assault_not_preparation(self):
@@ -828,6 +828,8 @@ class CombatScenarioTests(unittest.TestCase):
         self.assertTrue(colony_combat.hostile_is_preparing(hostile))
         self.assertIn("preemptive_strike", bridge.make_questions(snapshot)["threat_action"]["criteria"])
         hostile["current_job"] = "Goto"
+        self.assertTrue(colony_combat.hostile_is_preparing(hostile))
+        hostile['lord_toil_name']='LordToil_AssaultColony'
         self.assertFalse(colony_combat.hostile_is_preparing(hostile))
 
     def test_outnumbered_insect_raid_exposes_preemptive_risk_to_laya(self):
@@ -853,7 +855,7 @@ class CombatScenarioTests(unittest.TestCase):
 
     def test_staging_does_not_undraft_active_defenders_near_the_enemy(self):
         shooters = [fighter(1, distance=48, range_cells=37), fighter(2, distance=50, range_cells=26)]
-        shooters[0].update(is_drafted=True, current_job="AttackStatic", current_job_target_id=99)
+        shooters[0].update(is_drafted=True, current_job="AttackStatic", current_job_target_id=99, is_warming_up=True)
         snapshot = raid(shooters, [{"id": 99, "kind_def": "Raider", "health": 1.0,
                                     "current_job": "Wait_Wander", "position": {"x": 100, "z": 100}}])
         self.assertNotIn("prepare_undrafted", bridge.make_questions(snapshot)["threat_action"]["criteria"])

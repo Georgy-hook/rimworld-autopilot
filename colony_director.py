@@ -12463,7 +12463,8 @@ def post_combat_care_options(snapshot: dict[str, Any],
     doctors = [pawn for pawn in available_helpers if can_do_medicine(pawn)]
     patients = sorted(
         [pawn for pawn in colonists if pawn.get("tendable_now")
-         and not pawn.get("is_dead") and int(pawn["id"]) not in active_patients],
+         and not pawn.get("is_dead") and int(pawn["id"]) not in active_patients
+         and not protected_care_job(snapshot,pawn)],
         key=lambda pawn: (medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1]
                           if medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1] is not None else float("inf"),
                           -bridge.first_number(pawn.get("bleeding_rate")),
@@ -13520,6 +13521,13 @@ def run_letter_cycle(client: bridge.RimApiClient, agent: Any, snapshot: dict[str
     return None
 
 
+def landing_cargo_pending(snapshot: dict[str, Any]) -> bool:
+    """Partial landing cargo delays base planning, never an actual defense."""
+    return int((snapshot.get('game') or {}).get('tick') or 0) < 600 and not any(
+        not bridge.combat_planner.hostile_is_preparing(enemy)
+        for enemy in bridge.combat_planner.live_hostiles(snapshot))
+
+
 def staging_development_allowed(snapshot: dict[str, Any], combat_record: dict[str, Any] | None) -> bool:
     """Laya may keep planning normal work after choosing to stand down during staging."""
     if (combat_record or {}).get("decision", {}).get("choice") not in {
@@ -13572,6 +13580,26 @@ def clinical_reassessment_due(snapshot: dict[str, Any], prior_signature: tuple |
     return signature, bool(needs_care and signature != prior_signature)
 
 
+def release_idle_combat_workers(client: bridge.RimApiClient, snapshot: dict[str, Any],
+                                protected_ids: set[int] | None = None) -> dict[str, Any] | None:
+    """A finisher or patient cannot keep unrelated idle defenders drafted."""
+    if not snapshot.get('combat', {}).get('available') or bridge.combat_planner.live_hostiles(snapshot):
+        return None
+    protected = bridge.combat_planner.protected_emergency_care_ids(snapshot) | set(protected_ids or ())
+    downed_targets = {p.get('id') for p in snapshot['combat'].get('hostiles') or []
+                      if p.get('is_downed') and not p.get('is_dead')}
+    ids = [p['id'] for p in snapshot['combat'].get('colonists') or []
+           if p.get('is_drafted') and not p.get('is_dead') and not p.get('is_downed')
+           and p.get('id') not in protected
+           and not (p.get('current_job') == 'AttackMelee' and p.get('current_job_kill_incapped_target')
+                    and p.get('current_job_target_id') in downed_targets)]
+    if not ids:
+        return None
+    # Native validates the whole current threat state and each named actor again.
+    return client.post('/api/v1/combat/tactic', body={'map_id': snapshot['map']['id'],
+                       'tactic': 'stand_down', 'fighter_ids': ids})
+
+
 def main() -> int:
     # The standalone director may be launched by an older packaged GUI or a
     # console whose code page cannot encode pawn names and modded item labels.
@@ -13622,8 +13650,11 @@ def main() -> int:
     last_care_signature = None
     retry_not_before = 0.0
     consecutive_cycle_errors = 0
-    runtime_state = "running"
-    runtime_detail = "Ready for the next decision cycle"
+    # Loading the model is not yet an inspected and dispatched first cycle.
+    # Keep the observer's existing startup pause until that cycle completes,
+    # including a selected defense when the process starts during an assault.
+    runtime_state = "starting"
+    runtime_detail = "Inspecting and dispatching the first decision cycle"
     print("Laya colony director active: survival -> doctrine -> chosen endgame. Ctrl+C stops safely.", flush=True)
     try:
         while True:
@@ -13688,6 +13719,14 @@ def main() -> int:
                     time.sleep(max(0.0, 2.0 - (time.monotonic() - started)))
                     continue
                 snapshot = bridge.collect_snapshot(client)
+                if snapshot["map"].get("enemies", 0) > 0 and not snapshot.get("combat", {}).get("available"):
+                    client.post("/api/v1/game/speed", query={"speed": 0})
+                    raise bridge.RimApiError("Combat state unavailable with observed hostiles; paused without replacing pawn orders: "
+                                             + "; ".join(snapshot.get("warnings") or []))
+                control_lease = bridge.refresh_combat_control(client, snapshot, apply=True)
+                if control_lease and control_lease.get('error'):
+                    client.post('/api/v1/game/speed', query={'speed': 0})
+                    raise bridge.RimApiError('Selected combat control could not be refreshed: ' + str(control_lease['error']))
                 map_state = map_state_for_snapshot(state, snapshot)
                 mental_record = run_mental_safety_cycle(client, agent, snapshot, map_state, args.log)
                 if mental_record is not None:
@@ -13810,7 +13849,9 @@ def main() -> int:
                 # drop-pod cargo arrives.  Planning a base against that partial
                 # map permanently pins it to the wrong end of the colony.
                 # Advance a few in-game minutes, then let Laya see the cargo.
-                if int(snapshot["game"].get("tick") or 0) < 600:
+                if landing_cargo_pending(snapshot):
+                    runtime_state, runtime_detail = "running", "Observed safe landing; waiting for cargo"
+                    publish_status(runtime_state, runtime_detail)
                     if snapshot["game"].get("is_paused"):
                         client.post("/api/v1/game/speed", query={"speed": 1})
                     elapsed = time.monotonic() - started
@@ -13829,6 +13870,12 @@ def main() -> int:
                     if nutrition_record["result"].get("applied"):
                         # A fresh food/rescue job must be observed before a
                         # wound-only care pass can choose the same actor again.
+                        snapshot = bridge.collect_snapshot(client)
+                release = release_idle_combat_workers(client, snapshot, peaceful_hunt_ids)
+                if release is not None:
+                    bridge.append_log(args.log, {'timestamp': bridge.utc_now(), 'mode': 'postcombat-release',
+                        'tick': snapshot['game'].get('tick'), 'decision': {'choice': 'release_idle_defenders'}, 'result': release})
+                    if release.get('applied'):
                         snapshot = bridge.collect_snapshot(client)
                 care_gate = downed_colonist_care_gate(client, snapshot)
                 if care_gate is not None:

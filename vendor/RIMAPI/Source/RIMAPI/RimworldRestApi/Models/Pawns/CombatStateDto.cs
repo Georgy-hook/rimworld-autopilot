@@ -45,6 +45,11 @@ namespace RIMAPI.Models
         public bool HasShieldBelt { get; set; }
         public bool HasRangedWeapon { get; set; }
         public string CurrentJob { get; set; }
+        public bool IsWarmingUp { get; set; }
+        public int WarmupTicksLeft { get; set; }
+        public bool IsMoving { get; set; }
+        public string CombatPlan { get; set; }
+        public List<int> QueuedAttackTargetIds { get; set; } = new List<int>();
         public bool? CurrentJobKillIncappedTarget { get; set; }
         public int? CurrentJobTargetId { get; set; }
         public int? CurrentJobTargetIdB { get; set; }
@@ -73,6 +78,8 @@ namespace RIMAPI.Models
         public float CombatPower { get; set; }
         public float WeaponRange { get; set; }
         public List<int> ShootableOpponentIds { get; set; } = new List<int>();
+        public List<int> DefendedApproachTargetIds { get; set; } = new List<int>();
+        public float IncomingRangedExposure { get; set; }
         public float ArmorSharp { get; set; }
         public bool CarryingPlayerPawn { get; set; }
         public string CarriedPawnFaction { get; set; }
