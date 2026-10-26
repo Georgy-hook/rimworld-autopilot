@@ -1,5 +1,22 @@
 # 0.0.9 — unreleased
 
+- Preserve selected combat control through bounded native deferrals, exact job
+  ownership and ordinary movement startup. A found path alone does not prove a
+  new withdrawal has started. Completed arrival receipts cannot close a later
+  withdrawal without new movement.
+- Coordinate finite covering-fire transfers, physician access and separate
+  firing positions. A covering gun's cooldown does not complete its movement
+  commitment; optional range changes retain actual remaining fire support.
+- Protect current and queued treatment, food/sleep recovery and safe return to
+  care. Bound native path searches, release owned paths and retain explicit
+  partial/error readback without repeating already accepted actions.
+- Extend native projectile/friendly-fire checks and isolated raid regression
+  coverage. Passed 1,663 Python tests and 61 native boundary suites. The latest
+  rush/ranged focus pair cleared with all defenders alive and stabilized, but
+  included downed defenders; sustained reliability and the complete eleven-case
+  series remain unqualified. See the
+  [combat candidate audit](docs/audits/combat-control-candidate-2026-10-26.md).
+
 - Keep wood, metals and stone on ground rather than shelves, including loaded
   material derivatives. Separate hay, incubation, corpses, unfinished work,
   hazardous goods and special biological/anomaly items from ordinary shelves.

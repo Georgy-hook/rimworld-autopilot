@@ -21,6 +21,7 @@ namespace RIMAPI.Helpers {
    if(p.carryTracker.CarriedThing!=null)return "carrying";
    if(CareTriageHelper.QueuedCare(p) || CombatNativeHelper.HasCareJob(p))return "protected_patient_care";
    if(p.CurJob?.def.forceCompleteBeforeNextJob ?? false)return "job_must_complete";
+   if(CaregiverRecoveryHelper.Protected(p))return "caregiver_recovery_window";
    if(new[]{"Ingest","LayDown","GotoSafeTemperature","Hunt","DoBill","ButcherDoBill","Mine","AttackMelee","AttackStatic","HaulToCell"}.Contains(p.CurJobDef?.defName))return "protected_current_job";
    if(p.health.hediffSet.BleedRateTotal!=0f)return "worker_bleeding";
    if(CareTriageHelper.DiseaseCareProtected(p))return "worker_disease_care";

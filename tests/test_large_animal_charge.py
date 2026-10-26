@@ -81,7 +81,7 @@ class LargeAnimalChargeTests(unittest.TestCase):
         snapshot['combat']['colonists'][0]['distance_to_nearest_opponent'] = 1
         snapshot['combat']['hostiles'][0]['position']['x'] = 11
         plan = bridge.plan_action(snapshot, {'choice': 'engage_melee'})
-        self.assertTrue(any(c.get('body', {}).get('job_def') == 'AttackMelee'
+        self.assertTrue(any(c.get('body', {}).get('tactic') == 'contact_melee'
                             for c in plan['commands']))
 
     def test_unimplemented_event_remedy_is_not_repeated_as_work(self):

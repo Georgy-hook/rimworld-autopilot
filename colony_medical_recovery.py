@@ -1,8 +1,272 @@
 """Observed bedside recovery prerequisites, independent of elective colony work."""
+import math
 import rimworld_laya as bridge
 from colony_retry import failure_record, recent
 
 CARE_JOBS = {"tendpatient", "rescue", "feedpatient"}
+
+
+def refresh_competing_tend_context(client, snapshot):
+    """A stand-down refresh must not discard the next finite clinical review.
+
+    Only new competing-care decisions need this read. It never changes a job,
+    shortens existing care, or treats an unavailable patient list as empty.
+    """
+    people = [p for p in (snapshot.get('combat') or {}).get('colonists') or []
+              if p.get('id') is not None and not p.get('is_dead')]
+    rates = [p['bleeding_rate'] for p in people
+             if isinstance(p.get('bleeding_rate'), (int, float))
+             and not isinstance(p['bleeding_rate'], bool)
+             and math.isfinite(p['bleeding_rate']) and p['bleeding_rate'] >= .1]
+    tendable = [p for p in people if p.get('tendable_now') is True]
+    initial_drafted_care = (not bridge.combat_planner.live_hostiles(snapshot)
+                            and any(p.get('is_downed') and bridge.first_number(p.get('bleeding_rate')) >= 1.5 for p in people)
+                            and any(p.get('is_drafted') for p in people))
+    # One remaining minor bleed still needs a fresh competing-care context.
+    # A former >=1.5 gate let stale stable-patient treatment run indefinitely.
+    if not rates and not tendable:
+        return None
+    dev = snapshot.setdefault('development', {})
+    tick = snapshot.get('game', {}).get('tick')
+    old = dev.get('competing_tend_context_read')
+    if tick is not None and isinstance(old, dict) and old.get('snapshot_tick') == tick:
+        return old
+    try:
+        context = client.get('/api/v1/resilience/context', map_id=int(snapshot.get('map', {}).get('id') or 0))
+        if not isinstance(context, dict):
+            context = {'available': False, 'error': 'invalid_native_clinical_context'}
+        else:
+            context = dict(context)
+            patients = context.get('patients')
+            if context.get('available') is True:
+                expected = {p['id'] for p in people if p.get('tendable_now') is True
+                            or isinstance(p.get('bleeding_rate'), (int, float))
+                            and not isinstance(p['bleeding_rate'], bool) and p['bleeding_rate'] >= .1}
+                observed = {p.get('pawn_id') for p in patients or [] if isinstance(p, dict)} if isinstance(patients, list) else set()
+                if not isinstance(patients, list) or not expected.issubset(observed):
+                    context['read_errors'] = {**(context.get('read_errors') if isinstance(context.get('read_errors'), dict) else {}),
+                                              'patient_coverage': sorted(expected - observed)}
+                incomplete = [p.get('pawn_id') for p in patients or [] if isinstance(p, dict)
+                              and p.get('pawn_id') in expected
+                              and p.get('bleeding_evidence_complete') is not True]
+                if incomplete:
+                    context['read_errors'] = {**(context.get('read_errors') if isinstance(context.get('read_errors'), dict) else {}),
+                                              'incomplete_bleeding_evidence': sorted(incomplete)}
+            context['patients'] = [{**p, 'conditions': [h for h in p.get('conditions') or []
+                                                       if isinstance(h, dict) and h.get('visible', True)]}
+                                   for p in patients or [] if isinstance(p, dict)] if isinstance(patients, list) else []
+    except bridge.RimApiError as error:
+        context = {'available': False, 'error': str(error)}
+    dev['resilience'] = context
+    available = context.get('available') is True and not any(context.get(k) for k in ('error', 'errors', 'read_errors'))
+    info = {'snapshot_tick': tick, 'attempted': True, 'available': available}
+    if not available:
+        info['error'] = next((context[k] for k in ('error', 'errors', 'read_errors', 'reason') if context.get(k)),
+                             'native_clinical_context_unavailable')
+        snapshot.setdefault('warnings', []).append('Current native comparison between patients is unavailable; existing care remains protected.')
+    dev['competing_tend_context_read'] = info
+    return info
+
+
+def combat_release_tend_options(snapshot):
+    """Native offered first aid for exact selected jobs, before broad undraft."""
+    context = (snapshot.get('development') or {}).get('resilience') or {}
+    if (context.get('available') is not True
+            or context.get('combat_release_tends_available') is not True
+            or not isinstance(context.get('combat_release_tends'), list)
+            or any(context.get(k) for k in ('error', 'errors', 'read_errors'))
+            or bridge.combat_planner.live_hostiles(snapshot)
+            or any(p.get('active_threat') for p in (snapshot.get('combat') or {}).get('hostile_buildings') or [])):
+        return {}
+    people = {p.get('id'): p for p in (snapshot.get('combat') or {}).get('colonists') or []}
+    capable = bridge.combat_planner.medically_capable_ids(snapshot)
+    options = {}
+    for offer in context['combat_release_tends']:
+        if not isinstance(offer, dict):
+            continue
+        did, pid, jid = (offer.get(k) for k in ('doctor_id', 'patient_id', 'release_combat_job_id'))
+        if any(type(x) is not int for x in (did, pid, jid)) or did == pid:
+            continue
+        doctor, patient = people.get(did), people.get(pid)
+        if (not doctor or not patient or did not in capable
+                or doctor.get('is_drafted') is not True or doctor.get('has_care_job') is not False
+                or type(doctor.get('queued_job_count')) is not int or doctor['queued_job_count'] != 0
+                or doctor.get('carrying_pawn_id') or doctor.get('carrying_player_pawn')
+                or any(doctor.get(k) for k in ('is_dead', 'is_downed', 'is_in_mental_state'))
+                or offer.get('expected_current_job') not in {'AttackStatic', 'Wait_Combat'}
+                or doctor.get('current_job') != offer['expected_current_job']
+                or patient.get('is_downed') is not True or patient.get('is_dead')
+                or patient.get('has_care_job') or patient.get('carrying_pawn_id')
+                or patient.get('carrying_player_pawn')
+                or bridge.first_number(patient.get('bleeding_rate')) < 1.5):
+            continue
+        values = [offer.get(k) for k in ('travel_ticks', 'locked_ticks', 'medical_tend_speed', 'medical_tend_quality')]
+        if (any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < 0 for v in values)
+                or offer['medical_tend_speed'] <= 0):
+            continue
+        deadline = offer.get('bleedout_ticks')
+        if deadline is not None and (not isinstance(deadline, (int, float))
+                or isinstance(deadline, bool) or not math.isfinite(deadline) or deadline < 0):
+            continue
+        name = f'tend_{pid}_{did}'
+        options[name] = dict(kind='tend', doctor_id=did, patient_id=pid, self_tend=False,
+            release_combat_job_id=jid, expected_combat_job=offer['expected_current_job'],
+            estimated_bleedout_ticks=deadline, native_travel_ticks=offer['travel_ticks'],
+            native_locked_ticks=offer['locked_ticks'],
+            summary=(f"First aid after observed combat: {offer.get('doctor') or did} -> {offer.get('patient') or pid}. "
+                     f"Native approach {offer['travel_ticks']:.0f} ticks plus current lock {offer['locked_ticks']:.0f}; "
+                     f"native tend speed {offer['medical_tend_speed']:.0%}, quality {offer['medical_tend_quality']:.0%}. "
+                     + (f"Remaining bleedout estimate {deadline:.0f} ticks. " if deadline is not None else "Bleedout deadline unknown. ")
+                     + "Choose this initial patient before releasing the doctor to ordinary work. "
+                     "Native POST rechecks this exact combat job, no active threat, medical ability, patient and route; "
+                     "only this doctor is undrafted and assigned a normal tend job. Arrival and completed treatment remain unverified."))
+    return options
+
+
+def competing_tend_review(snapshot, row):
+    """Complete one native tend, then re-read a competing bleeding triage."""
+    context = (snapshot.get('development') or {}).get('resilience') or {}
+    if (row.get('kind') != 'tend' or context.get('available') is not True
+            or any(context.get(k) for k in ('error', 'errors', 'read_errors'))):
+        return False
+    living = {str(p.get('id')) for p in (snapshot.get('combat') or {}).get('colonists') or []
+              if not p.get('is_dead')}
+    rates = []
+    for patient in context.get('patients') or []:
+        rate = patient.get('bleeding_total')
+        if (str(patient.get('pawn_id')) not in living
+                or patient.get('bleeding_evidence_complete') is not True
+                or patient.get('tendable_now') is not True
+                or not isinstance(rate, (int, float)) or isinstance(rate, bool)
+                or not math.isfinite(rate)):
+            continue
+        if rate >= .1:
+            rates.append(rate)
+    selected = row.get('patient_id')
+    if type(selected) is int:
+        patient = next((p for p in context.get('patients') or [] if p.get('pawn_id') == selected), {})
+        if (str(selected) not in living or patient.get('bleeding_evidence_complete') is not True
+                or patient.get('tendable_now') is not True):
+            return False
+        # Routine injury treatment has a native completion boundary even for
+        # the last bleeding patient. Independent acute disease care keeps its
+        # existing protection, rather than yielding on a guessed deadline.
+        for h in patient.get('conditions') or []:
+            if h.get('def_name') in {'BloodLoss', 'Malnutrition'}:
+                continue
+            immunity = h.get('immunity')
+            if (h.get('life_threatening') is True
+                    or h.get('immunity_can_develop') is True and isinstance(immunity, (int,float)) and immunity < 1
+                    or h.get('tendable_now') and (float(h.get('lethal_severity') or 0)>0
+                        or 'infection' in str(h.get('def_name') or '').lower())):
+                return False
+        return True
+    return len(rates) >= 2
+
+
+def critical_caregiver_self_tend(snapshot, row):
+    """Keep validated major caregiver bleeding in a new care comparison."""
+    actor_id = row.get('doctor_id')
+    if (row.get('kind') != 'tend' or row.get('self_tend') is not True
+            or type(actor_id) is not int or type(row.get('patient_id')) is not int
+            or row['patient_id'] != actor_id):
+        return False
+    actor = next((p for p in (snapshot.get('combat') or {}).get('colonists') or []
+                  if p.get('id') == actor_id), None)
+    if actor is None:
+        return False
+    binding = bridge.combat_planner.stable_patient_self_tend_binding(snapshot, actor)
+    if binding is not None:
+        return (type(row.get('reassign_from_patient_id')) is int
+                and all(row.get(key) == value for key, value in binding.items()))
+    # A completed finite tend leaves a genuinely free doctor. Do not require
+    # an old patient binding at that boundary, or drop self-care again solely
+    # because another patient's death deadline is earlier. This does not
+    # authorize interrupting treatment or a later queued instruction.
+    context = (snapshot.get('development') or {}).get('resilience') or {}
+    if (context.get('available') is not True
+            or any(context.get(k) for k in ('error', 'errors', 'read_errors'))
+            or any(row.get(k) is not None for k in ('reassign_from_patient_id',
+                   'reassign_from_rescue_patient_id', 'care_yield_reason'))
+            or actor_id not in bridge.combat_planner.medically_capable_ids(snapshot)
+            or not isinstance(actor.get('current_job'), str) or not actor['current_job']
+            or bridge.combat_planner.active_clinical_care(actor)
+            or actor.get('has_care_job') is True
+            or type(actor.get('queued_job_count')) is not int or actor['queued_job_count'] != 0
+            or actor.get('is_drafted') or actor.get('carrying_pawn_id')
+            or actor.get('carrying_player_pawn')
+            or actor_id in bridge.combat_planner.protected_care_retreat_ids(snapshot)
+            or not bridge.combat_planner.safe_new_self_tend(snapshot, actor)):
+        return False
+    own = bridge.combat_planner.native_care_patient(snapshot, actor)
+    rate = own.get('bleeding_total')
+    return (own.get('bleeding_evidence_complete') is True and own.get('tendable_now') is True
+            and isinstance(rate, (int, float)) and not isinstance(rate, bool)
+            and math.isfinite(rate) and rate >= 1.5)
+
+
+def clinical_order_frontier(snapshot, plans):
+    """Compare new assignments for the same free doctor using native deadlines.
+
+    Running care is untouched. A validated critically bleeding caregiver may
+    self-tend instead of taking a new patient: death deadlines do not predict
+    when the last mobile doctor will become incapable. Both choices remain.
+    Unknown deadlines and independent acute disease, starvation or thermal
+    crises remain alternatives rather than assumed safe.
+    Call after rejected assignments are removed so a blocked patient cannot
+    exclude the doctor's feasible care for everybody else.
+    """
+    patients = {str(p.get('pawn_id')): p for p in
+                (snapshot.get('development') or {}).get('resilience', {}).get('patients') or []}
+
+    def deadline(pid):
+        p = patients.get(str(pid), {})
+        value, rate = p.get('bleedout_ticks'), p.get('bleeding_total')
+        return (value if p.get('bleeding_evidence_complete') is True
+                and isinstance(rate, (int, float)) and rate >= .1
+                and isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else None)
+
+    def independent_crisis(pid, earliest):
+        p = patients.get(str(pid), {})
+        starvation = p.get('starvation_ticks')
+        if isinstance(starvation, (int, float)) and math.isfinite(starvation) and starvation <= earliest + 1800:
+            return True
+        for h in p.get('conditions') or []:
+            if not isinstance(h, dict) or h.get('def_name') == 'BloodLoss':
+                continue
+            if h.get('life_threatening') is True:
+                return True
+            immunity = h.get('immunity')
+            if (h.get('tendable_now') and h.get('immunity_can_develop') is True
+                    and isinstance(immunity, (int, float)) and 0 <= immunity < 1):
+                return True
+        return False
+
+    earliest = {}
+    for row in plans.values():
+        limit = deadline(row.get('patient_id'))
+        if row.get('kind') == 'tend' and limit is not None:
+            actor = str(row.get('doctor_id'))
+            earliest[actor] = min(earliest.get(actor, float('inf')), limit)
+    result, excluded = {}, {}
+    for key, row in plans.items():
+        actor = str(row.get('doctor_id')); first = earliest.get(actor)
+        limit = deadline(row.get('patient_id'))
+        native = patients.get(str(row.get('patient_id')), {})
+        rate = native.get('bleeding_total')
+        stable_bleeding = (native.get('bleeding_evidence_complete') is True
+                           and isinstance(rate, (int, float)) and math.isfinite(rate) and 0 <= rate < .1)
+        if (first is not None and row.get('kind') in {'tend', 'rescue', 'rest'}
+                and row.get('thermal_rescue') is not True
+                and not critical_caregiver_self_tend(snapshot, row)
+                and (stable_bleeding if limit is None else limit > first + 1800)
+                and not independent_crisis(row.get('patient_id'), first)):
+            excluded[key] = dict(doctor_id=row.get('doctor_id'), patient_id=row.get('patient_id'),
+                                 earliest_native_bleedout_ticks=first, this_native_bleedout_ticks=limit)
+        else:
+            result[key] = row
+    snapshot.setdefault('development', {})['clinical_order_frontier'] = excluded
+    return result
 
 
 def helpers(snapshot, patient_id, doctor=False):
@@ -152,6 +416,8 @@ def build_options(client, snapshot, map_state):
             continue
         if action is None or patient is None or (pid in active and not (yield_worker and (row.get("kind") == "feed" or row.get("thermal_rescue") is True)
                 and str(row.get("expected_care_patient_id")) == pid)):
+            continue
+        if action == "tend_colonist" and not bridge.combat_planner.new_treatment_window(snapshot, patient):
             continue
         eligible = {str(p["id"]): p for p in helpers(snapshot, pid, doctor=action in {"tend_colonist", "feed_hungry_colonist", "rescue_downed_colonist"})}
         worker = eligible.get(str(row.get("worker_id"))) or yield_worker
@@ -431,8 +697,11 @@ def validate_post_combat_plan(client, snapshot, plan, options_for):
         raise bridge.RimApiError('Incomplete care readback')
     actor = next((p for p in combat['colonists'] if p.get('id') == plan.get('doctor_id')), {})
     patient = next((p for p in combat['colonists'] if p.get('id') == plan.get('patient_id')), {})
+    initial_release = (plan.get('kind') == 'tend' and plan.get('self_tend') is False
+                       and type(plan.get('release_combat_job_id')) is int)
     if (not actor or not patient or patient.get('is_dead') or actor.get('is_dead')
-            or actor.get('is_downed') or actor.get('is_in_mental_state') or actor.get('is_drafted')):
+            or actor.get('is_downed') or actor.get('is_in_mental_state')
+            or actor.get('is_drafted') and not initial_release):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_or_patient_changed'}, combat
     if actor.get('id') in bridge.combat_planner.protected_care_retreat_ids({'combat': combat}):
         return {'applied': False, 'assignment_accepted': False, 'job_observed': False,
@@ -451,10 +720,35 @@ def validate_post_combat_plan(client, snapshot, plan, options_for):
                           and not actor.get('carrying_pawn_id') and not actor.get('carrying_player_pawn'))):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_actor_is_providing_other_care'}, combat
     fresh = {**snapshot, 'combat': combat}
-    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id', 'reassign_from_rescue_patient_id')
+    identity = ('kind', 'patient_id', 'doctor_id', 'bed_id', 'self_tend', 'reassign_from_patient_id', 'reassign_from_rescue_patient_id', 'release_combat_job_id')
     if not any(all(row.get(k) == plan.get(k) for k in identity) for row in options_for(fresh).values()):
         return {'applied': False, 'assignment_accepted': False, 'reason': 'care_selection_changed'}, combat
     return None, combat
+
+
+def ordinary_bed_candidate(bed, pawn_id):
+    """Native ownership and body compatibility; a missing DTO is not a free bed."""
+    owners = bed.get('bed_owner_ids')
+    compatible = bed.get('bed_compatible_pawn_ids')
+    return (type(pawn_id) is int and isinstance(owners, list) and isinstance(compatible, list)
+            and all(type(owner) is int and owner == pawn_id for owner in owners)
+            and any(type(actor) is int and actor == pawn_id for actor in compatible)
+            and not bed.get('medical') and not bed.get('for_prisoners'))
+
+
+def bound_native_refusal(response, identities):
+    """An explicit unchanged-state refusal bound to this command, never acceptance."""
+    native = response.get('data', response) if isinstance(response, dict) else {}
+    if (not isinstance(native, dict) or native.get('applied') is not False
+            or native.get('blocked') is not True or not isinstance(native.get('reason'), str)
+            or not native['reason'].strip()):
+        return None
+    for key, value in identities.items():
+        actual = native.get(key)
+        if (value is None and actual is not None
+                or value is not None and (type(actual) is not int or actual != value)):
+            return None
+    return native
 
 
 def observe_post_combat_assignment(client, snapshot, plan, result):
@@ -463,6 +757,11 @@ def observe_post_combat_assignment(client, snapshot, plan, result):
     endpoint = {'tend': '/api/v1/pawn/medical/tend', 'rest': '/api/v1/pawn/medical/bed-rest'}.get(plan.get('kind'), '/api/v1/pawn/job')
     accepted = bridge.command_acceptance({'endpoint': endpoint}, response)
     result.update(applied=accepted is True, assignment_accepted=accepted, completion='unverified')
+    native = bound_native_refusal(response, {'patient_pawn_id': plan.get('patient_id'),
+                                           'doctor_pawn_id': plan.get('doctor_id')})
+    refusal = plan.get('kind') == 'tend' and accepted is False and native is not None
+    if refusal:
+        result.update(blocked=True, native_refusal=native['reason'], reason=native['reason'])
     try:
         combat = client.get('/api/v1/combat/state', map_id=snapshot['map']['id'])
         if not isinstance(combat, dict) or not isinstance(combat.get('colonists'), list):
@@ -470,7 +769,7 @@ def observe_post_combat_assignment(client, snapshot, plan, result):
         result['job_observed'] = post_combat_job_observed(combat, plan)
         if result['job_observed']:
             result['in_progress'] = True
-        else:
+        elif not refusal:
             result['reason'] = 'care_job_not_observed'
     except bridge.RimApiError:
         result.update(job_observed=None, outcome_unknown=True, reason='care_readback_unknown')

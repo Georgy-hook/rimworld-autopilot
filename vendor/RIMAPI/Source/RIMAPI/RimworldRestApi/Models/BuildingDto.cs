@@ -39,6 +39,8 @@ namespace RIMAPI.Models
         public string Type { get; set; }
         public bool Medical { get; set; }
         public bool ForPrisoners { get; set; }
+        public List<int> BedOwnerIds { get; set; }
+        public List<int> BedCompatiblePawnIds { get; set; }
         public bool RequiresFuel { get; set; }
         public float? CurrentFuel { get; set; }
         public float? FuelCapacity { get; set; }

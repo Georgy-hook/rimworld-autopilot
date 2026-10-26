@@ -32,13 +32,13 @@ namespace RIMAPI.Helpers
             return colonists.Any(c => c.CanReach(pawn, PathEndMode.Touch, Danger.Deadly));
         }
         private static readonly HashSet<string> Care=new HashSet<string>{"TendPatient","Rescue","FeedPatient","DoBill","Deathrest","Breastfeed","BottleFeedBaby","BreastfeedCarryToMom","BringBabyToSafety","BringBabyToSafetyUnforced","CarryToMomAfterBirth","BabySuckle","BabyPlay","PlayStatic","PlayWalking","PlayToys","Lessongiving","Lessonreceiving","PrisonerInterrogateIdentity"};
-        private static readonly Dictionary<int, KeyValuePair<Pawn, Job>> CareRetreats = new Dictionary<int, KeyValuePair<Pawn, Job>>();
+        private static readonly Dictionary<int, KeyValuePair<Pawn, CombatJobStamp>> CareRetreats = new Dictionary<int, KeyValuePair<Pawn, CombatJobStamp>>();
         public static void RememberCareRetreat(Pawn pawn, Job job) =>
-            CareRetreats[pawn.thingIDNumber] = new KeyValuePair<Pawn, Job>(pawn, job);
+            CareRetreats[pawn.thingIDNumber] = new KeyValuePair<Pawn, CombatJobStamp>(pawn, new CombatJobStamp(job));
         public static bool HasCareRetreat(Pawn pawn) => pawn != null && !pawn.Dead && !pawn.Downed
             && !pawn.InMentalState && pawn.Spawned && Find.Maps.Contains(pawn.Map)
             && pawn.CurJobDef == JobDefOf.Goto && CareRetreats.TryGetValue(pawn.thingIDNumber, out var record)
-            && record.Key == pawn && record.Value == pawn.CurJob;
+            && record.Key == pawn && record.Value.Value == pawn.CurJob;
         public static List<int> CareRetreatPawnIds(Map map)
         {
             foreach (int id in CareRetreats.Keys.ToList())
@@ -47,10 +47,12 @@ namespace RIMAPI.Helpers
         }
         public static bool CareJobShape(string name, bool operationPatient) => name=="DoBill" ? operationPatient : Care.Contains(name ?? "");
         public static bool HasCareJob(Pawn pawn) => pawn!=null && (HasCareRetreat(pawn)
+            || BurningPawnSafetyHelper.ProtectsPatient(pawn.CurJob)
             || CareJobShape(pawn.CurJobDef?.defName,pawn.CurJob?.targetA.Thing is Pawn));
         public static bool HasClinicalCareJob(Pawn pawn) => pawn.CurJobDef == JobDefOf.TendPatient
             || pawn.CurJobDef == JobDefOf.Rescue || pawn.CurJobDef == JobDefOf.FeedPatient
-            || pawn.CurJobDef == JobDefOf.DoBill && pawn.CurJob?.targetA.Thing is Pawn;
+            || pawn.CurJobDef == JobDefOf.DoBill && pawn.CurJob?.targetA.Thing is Pawn
+            || BurningPawnSafetyHelper.ProtectsPatient(pawn.CurJob);
         public static bool ImmediateCareThreat(Pawn pawn, Thing enemy)
         {
             if (enemy == null || enemy.Destroyed || !enemy.Spawned || enemy.Map != pawn.Map
@@ -67,6 +69,7 @@ namespace RIMAPI.Helpers
         {
             Job job = pawn.CurJob;
             if (job == null || !HasCareJob(pawn)) return null;
+            if (BurningPawnSafetyHelper.ProtectsPatient(job)) return ((Fire)job.targetA.Thing).parent;
             if (job.def == JobDefOf.FeedPatient) return job.targetB.Thing;
             string name = job.def.defName;
             if (name.IndexOf("Baby", StringComparison.OrdinalIgnoreCase) >= 0
@@ -113,6 +116,17 @@ namespace RIMAPI.Helpers
                 || pawn.GetLord()?.CurLordToil?.GetType().Name.IndexOf("ExitMap",StringComparison.OrdinalIgnoreCase)>=0
                 || pawn.GetLord()?.LordJob?.GetType().Name.IndexOf("ExitMap",StringComparison.OrdinalIgnoreCase)>=0
                 || pawn.CurJob?.exitMapOnArrival==true);
+        public static bool AbductionThreat(Pawn pawn)
+        {
+            if(pawn==null || pawn.Dead || pawn.Downed || !pawn.Spawned || pawn.Map==null
+                || !IsPlayerThreat(pawn) || pawn.Position.Fogged(pawn.Map))return false;
+            if(Kidnapper(pawn))return true;
+            // Observe the native pickup job before the raider reaches our
+            // patient. A Goto, unrelated carrying or a faction label is not it.
+            return pawn.CurJobDef?.defName=="Kidnap" && pawn.CurJob.targetA.Thing is Pawn victim
+                && victim.Faction==Faction.OfPlayer && !victim.Dead && victim.Downed
+                && victim.Spawned && victim.Map==pawn.Map;
+        }
         public static bool ActiveStructure(Thing thing) => thing is Building_Turret turret && !thing.Destroyed && thing.HostileTo(Faction.OfPlayer)
             && (thing.TryGetComp<CompCanBeDormant>()?.Awake ?? true) && (thing.TryGetComp<CompPowerTrader>()?.PowerOn ?? true)
             && (thing.TryGetComp<CompInitiatable>()?.Initiated ?? true) && turret.AttackVerb!=null;

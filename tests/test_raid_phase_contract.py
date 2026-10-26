@@ -15,6 +15,17 @@ def staged():
     return raid([gunner],[enemy])
 
 class RaidPhaseContract(unittest.TestCase):
+    def test_downed_enemy_nearest_distance_does_not_offer_contact(self):
+        p=fighter(1,distance=1);p['position']={'x':10,'z':10}
+        fallen={'id':91,'position':{'x':11,'z':10},'is_downed':True}
+        live={'id':92,'position':{'x':30,'z':10},'current_job':'AttackMelee'}
+        s=raid([p],[fallen,live])
+        self.assertEqual(combat.contact_opponents(s,p),[])
+        self.assertNotIn('engage_melee',bridge.make_questions(s)['threat_action']['criteria'])
+        live['position']={'x':11,'z':10}
+        self.assertEqual([e['id'] for e in combat.contact_opponents(s,p)],[92])
+        self.assertIn('engage_melee',bridge.make_questions(s)['threat_action']['criteria'])
+
     def test_initial_cargo_wait_cannot_hide_an_actual_assault(self):
         s=staged();s['game']['tick']=17
         self.assertTrue(director.landing_cargo_pending(s))
@@ -101,6 +112,8 @@ class RaidPhaseContract(unittest.TestCase):
         enemy.update(current_job_target_id=None,current_job='Wait_Combat',position={'x':10,'z':0})
         self.assertEqual(combat.self_tend_candidates(s),[])
         enemy.update(position={'x':30,'z':0})
+        self.assertEqual(combat.self_tend_candidates(s),[])
+        enemy.update(position={'x':50,'z':0})
         self.assertEqual(combat.self_tend_candidates(s),[pawn])
 
     def test_completed_battle_releases_idle_workers_while_finisher_and_care_continue(self):
@@ -191,5 +204,97 @@ class RaidPhaseContract(unittest.TestCase):
         self.assertIn('stationary_fire',bridge.make_questions(s)['threat_action']['criteria'])
         orders=bridge.plan_action(s,{'choice':'stationary_fire'})['commands']
         self.assertEqual(orders[0]['body']['fighter_ids'],[1])
+
+    def test_mobile_gun_cannot_pin_itself_to_an_escaping_carrier(self):
+        s=staged();pawn=s['combat']['colonists'][0]
+        pawn.update(distance_to_nearest_opponent=20,shootable_opponent_ids=[99],incoming_ranged_exposure=0)
+        s['combat']['hostiles'][0].update(current_job='Kidnap',carrying_pawn_id=21,
+            carrying_player_pawn=True,distance_to_nearest_opponent=20)
+        self.assertNotIn('stationary_fire',bridge.make_questions(s)['threat_action']['criteria'])
+        self.assertEqual(bridge.plan_action(s,{'choice':'stationary_fire'})['kind'],'noop')
+
+    def test_stationary_volley_uses_the_lane_shared_by_the_guns(self):
+        guns=[fighter(i,distance=20) for i in (1,2,3)]
+        for i,p in enumerate(guns):
+            p.update(position={'x':10,'z':10+i*4},shootable_opponent_ids=[99,100] if i<2 else [100])
+        enemies=[{'id':99,'position':{'x':12,'z':10},'health':1},
+                 {'id':100,'position':{'x':26,'z':14},'health':1}]
+        commands=bridge.plan_action(raid(guns,enemies),{'choice':'stationary_fire'})['commands']
+        self.assertEqual([c['body']['target_pawn_id'] for c in commands if c['endpoint']=='/api/v1/combat/tactic'],[100,100,100])
+
+    def test_impaired_interceptor_can_take_an_available_last_shot(self):
+        s=staged();pawn=s['combat']['colonists'][0]
+        pawn.update(distance_to_nearest_opponent=20,shootable_opponent_ids=[99],moving=.3)
+        s['combat']['hostiles'][0].update(current_job='ExitMapBest',carrying_pawn_id=21,
+            carrying_player_pawn=True,distance_to_nearest_opponent=20)
+        self.assertIn('stationary_fire',bridge.make_questions(s)['threat_action']['criteria'])
+        self.assertEqual(bridge.plan_action(s,{'choice':'stationary_fire'})['commands'][0]['body']['fighter_ids'],[1])
+
+    def test_mobile_covering_gun_keeps_an_actual_shot_at_close_pursuit(self):
+        s=staged();gun=s['combat']['colonists'][0]
+        gun.update(distance_to_nearest_opponent=20,shootable_opponent_ids=[99])
+        ally=fighter(2,distance=7);ally.update(position={'x':80,'z':100})
+        s['combat']['colonists'].append(ally)
+        enemy=s['combat']['hostiles'][0]
+        enemy.update(position={'x':87,'z':100},current_job='AttackMelee',current_job_target_id=2,
+            lord_toil_name='LordToil_AssaultColony',distance_to_nearest_opponent=7)
+        self.assertTrue(combat.stationary_firing_candidate(gun,s))
+        self.assertEqual(bridge.plan_action(s,{'choice':'stationary_fire'})['kind'],'commands')
+        gun['shootable_opponent_ids']=[]
+        self.assertFalse(combat.stationary_firing_candidate(gun,s))
+        self.assertEqual(bridge.plan_action(s,{'choice':'stationary_fire'})['kind'],'noop')
+        enemy['position']['x']=90
+        self.assertTrue(combat.stationary_firing_candidate(gun,s))
+
+    def test_distant_pursuers_do_not_split_the_requested_shared_volley(self):
+        guns=[fighter(i,distance=15) for i in (1,2)]
+        for i,p in enumerate(guns):p.update(position={'x':10,'z':10+i*4},shootable_opponent_ids=[99,100])
+        enemies=[{'id':99,'position':{'x':24,'z':10},'current_job':'AttackMelee','current_job_target_id':1},
+                 {'id':100,'position':{'x':24,'z':14},'current_job':'AttackMelee','current_job_target_id':2}]
+        commands=bridge.plan_action(raid(guns,enemies),{'choice':'stationary_fire'})['commands']
+        self.assertEqual([c['body']['target_pawn_id'] for c in commands if c['endpoint']=='/api/v1/combat/tactic'],[99,99])
+
+    def test_shared_volley_uses_loaded_damage_resistance_not_just_displayed_health(self):
+        guns=[fighter(i,distance=20) for i in (1,2)]
+        for p in guns:p.update(position={'x':10,'z':10},shootable_opponent_ids=[99,100])
+        enemies=[{'id':99,'position':{'x':25,'z':10},'health':1,'incoming_damage_factor':.5,'body_size':1},
+                 {'id':100,'position':{'x':25,'z':10},'health':1,'incoming_damage_factor':1,'body_size':1}]
+        commands=bridge.plan_action(raid(guns,enemies),{'choice':'stationary_fire'})['commands']
+        self.assertEqual([c['body']['target_pawn_id'] for c in commands if c['endpoint']=='/api/v1/combat/tactic'],[100,100])
+
+    def test_medical_skill_alone_is_not_a_ready_doctor(self):
+        p=fighter(1,distance=20)
+        p.update(medicine_skill=8,medical_work_enabled=True,consciousness=1,moving=1,manipulation=1)
+        s=raid([p],[])
+        self.assertEqual(combat.medically_capable_ids(s),{1})
+        for field,value in [('medical_work_enabled',False),('is_downed',True),('is_in_mental_state',True),
+                            ('consciousness',.1),('moving',0),('manipulation',None)]:
+            prior=p.get(field);p[field]=value
+            self.assertEqual(combat.medically_capable_ids(s),set(),field)
+            p[field]=prior
+
+    def test_observed_attack_on_remaining_medic_has_shared_cover_but_not_carrier_priority(self):
+        guns=[fighter(i,distance=20) for i in (1,2)]
+        for i,p in enumerate(guns):p.update(position={'x':10,'z':10+i*4},shootable_opponent_ids=[99,100])
+        guns[1].update(medical_work_enabled=True,consciousness=1,moving=1,manipulation=1)
+        enemies=[{'id':99,'position':{'x':23,'z':10},'current_job':'AttackMelee','current_job_target_id':1},
+                 {'id':100,'position':{'x':25,'z':14},'current_job':'Wait_Combat','observed_attack_target_id':2}]
+        s=raid(guns,enemies)
+        def targets():
+            return [c['body']['target_pawn_id'] for c in bridge.plan_action(s,{'choice':'stationary_fire'})['commands']
+                    if c['endpoint']=='/api/v1/combat/tactic']
+        self.assertEqual(targets(),[100,100])
+        enemies[0].update(current_job='Kidnap',carrying_player_pawn=True,carrying_pawn_id=7)
+        # The stationary option belongs only to immobile interceptors in a carrier emergency.
+        for p in guns:p['moving']=.3
+        self.assertEqual(targets(),[99,99])
+
+    def test_distant_downed_enemy_does_not_cancel_an_ordinary_stationary_shot(self):
+        s=staged();pawn=s['combat']['colonists'][0]
+        pawn.update(distance_to_nearest_opponent=20,shootable_opponent_ids=[99])
+        s['combat']['hostiles'][0].update(current_job='AttackStatic',distance_to_nearest_opponent=20)
+        s['combat']['hostiles'].append({'id':98,'is_downed':True,'current_job':'Kidnap',
+            'carrying_player_pawn':True,'carrying_pawn_id':21})
+        self.assertIn('stationary_fire',bridge.make_questions(s)['threat_action']['criteria'])
 
 if __name__=='__main__':unittest.main()

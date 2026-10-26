@@ -73,6 +73,8 @@ class RecordingClient:
             return []
         if endpoint == "/api/v1/game/settings":
             return {"language": "English"}
+        if endpoint == "/api/v1/resilience/context":
+            return {"available": False, "reason": "This hive fixture does not supply clinical comparison data"}
         raise AssertionError(endpoint)
 
     def post(self, endpoint, *, body=None, query=None):

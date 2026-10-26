@@ -36,6 +36,30 @@ namespace RIMAPI.Helpers
             // In a complete native hediff set absence of BloodLoss is known zero.
             return Math.Max(0f, 1f - (blood?.Severity ?? 0f)) * 60000f / rate;
         }
+        // Read loaded stages without applying a hypothetical hediff to the pawn.
+        // This is a conservative functional warning, not a simulated downing tick.
+        public static float? BloodFunctionTicks(Pawn p)
+        {
+            if(p?.health==null || p.Dead || p.Downed)return null;
+            float rate=p.health.hediffSet.BleedRateTotal;
+            if(rate<.1f)return null;
+            var blood=p.health.hediffSet.GetFirstHediffOfDef(HediffDefOf.BloodLoss);
+            float severity=blood?.Severity ?? 0f;
+            var stages=HediffDefOf.BloodLoss.stages;
+            if(stages==null)return null;
+            var dangerous=stages.Where(s=>s.lifeThreatening || s.capMods!=null && s.capMods.Any(m=>
+                m.capacity==PawnCapacityDefOf.Consciousness && m.setMax<=.3f
+                || (m.capacity==PawnCapacityDefOf.Moving || m.capacity==PawnCapacityDefOf.Manipulation) && m.setMax<=.2f))
+                .OrderBy(s=>s.minSeverity).FirstOrDefault();
+            return dangerous==null?(float?)null:Math.Max(0f,dangerous.minSeverity-severity)*60000f/rate;
+        }
+        public static float? SelfTendBudgetTicks(Pawn p)
+        {
+            if(p?.health==null || p.Dead || p.Downed)return null;
+            int wounds=p.health.hediffSet.hediffs.Count(h=>h.TendableNow() && h.Bleeding);
+            float speed=p.GetStatValue(StatDefOf.MedicalTendSpeed);
+            return wounds>0 && speed>0f?600f*wounds/speed*1.5f:(float?)null;
+        }
         public static bool ThermalTransferBeneficial(bool cold, bool hot, float source, float destination, float comfortableMin, float comfortableMax)
             => destination >= comfortableMin && destination <= comfortableMax
                 && (cold && source < comfortableMin && destination - source >= 5f
@@ -113,7 +137,8 @@ namespace RIMAPI.Helpers
             else if (job.def != JobDefOf.FeedPatient || first.ParentHolder != actor.inventory) return false;
             return RouteSafe(actor,from,second,job.def == JobDefOf.Rescue ? PathEndMode.OnCell : PathEndMode.Touch);
         }
-        public static bool Care(Job j) => j != null && (j.def == JobDefOf.FeedPatient || j.def == JobDefOf.Rescue || j.def == JobDefOf.TendPatient);
+        public static bool Care(Job j) => j != null && (j.def == JobDefOf.FeedPatient || j.def == JobDefOf.Rescue || j.def == JobDefOf.TendPatient
+            || BurningPawnSafetyHelper.ProtectsPatient(j));
         public static bool QueuedCare(Pawn p) => p.jobs.jobQueue.Any(q=>Care(q.job));
         public static bool QueuedFor(Map map, Pawn patient, string kind) => map.mapPawns.AllPawnsSpawned.Any(p=>p.jobs.jobQueue.Any(q=>
             q.job != null && (kind == "feed" ? q.job.def == JobDefOf.FeedPatient && q.job.targetB.Thing == patient

@@ -268,11 +268,40 @@ namespace RIMAPI.Models
         public PositionDto TargetPosition { get; set; }
     }
 
+    public class MedicalTendResultDto
+    {
+        public bool Applied { get; set; }
+        public bool InProgress { get; set; }
+        public bool Blocked { get; set; }
+        public string Reason { get; set; }
+        public int PatientPawnId { get; set; }
+        public int? DoctorPawnId { get; set; }
+        public string Detail { get; set; }
+        // A native reservation/path refusal is an observed unchanged state,
+        // not an accepted job or an exception. Never clear another caregiver.
+        public static MedicalTendResultDto Refused(int patient,int? doctor,string reason="patient_reserved_or_unreachable",string detail=null)
+            =>new MedicalTendResultDto{Applied=false,Blocked=true,
+                Reason=reason,Detail=detail,PatientPawnId=patient,DoctorPawnId=doctor};
+    }
+
+    public class SleepingBedResultDto
+    {
+        public bool Applied { get; set; }
+        public bool InProgress { get; set; }
+        public bool Assigned { get; set; }
+        public bool Blocked { get; set; }
+        public string Reason { get; set; }
+        public int PatientPawnId { get; set; }
+        public int? BedBuildingId { get; set; }
+    }
+
     public class MedicalTendRequestDto
     {
         public int PatientPawnId { get; set; }
         public int? DoctorPawnId { get; set; }
         public bool SelfTend { get; set; }
+        public bool ReviewAfterTend { get; set; }
+        public int? ReleaseCombatJobId { get; set; }
         public int? ReassignFromPatientId { get; set; }
         public int? ReassignFromRescuePatientId { get; set; }
     }

@@ -48,7 +48,8 @@ namespace RIMAPI.Controllers
                 nearby_player_buildings = map.listerBuildings.allBuildingsColonist.Count(
                     building => (building.Position - fire.Position).LengthHorizontalSquared <= 64),
             }).ToList();
-            await context.SendJsonResponse(ApiResult<object>.Ok(new { fires }));
+            await context.SendJsonResponse(ApiResult<object>.Ok(new { fires, burning_pawns_available=true,
+                burning_pawns=BurningPawnSafetyHelper.Facts(map) }));
         }
     }
 }

@@ -43,6 +43,7 @@ import colony_wildlife as wildlife
 import colony_mental_safety as mental_safety
 import colony_sessions
 import colony_shipbuilding
+import colony_fire_safety
 from colony_actions import ACTION_DESCRIPTIONS, ACTION_LABELS, ACTION_LABELS_EN
 import laya_preferences
 from laya_decisions import ChoiceContextOverflow, NoFeasibleChoice, ask_laya_choice
@@ -4628,7 +4629,10 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
     }
     sleeping_spot_ids = {int(b["id"]) for b in dev.get("buildings") or []
                          if str(b.get("def") or "") == "SleepingSpot" and b.get("id") is not None}
-    assigned_beds = set(map(int, (map_state.get("assigned_real_beds") or {}).values())) & sheltered_bed_ids
+    # The saved local assignment is only historical intent. Native owners can
+    # change after death, capture or a later assignment; never reserve stale beds.
+    assigned_beds = {int(b["id"]) for b in real_beds if b.get("bed_owner_ids")}
+    real_bed_by_id = {int(b["id"]): b for b in real_beds}
     combat_by_id = {int(p["id"]): p for p in (snapshot.get("combat") or {}).get("colonists") or []
                     if p.get("id") is not None}
     bed_pairs = {}
@@ -4637,15 +4641,21 @@ def candidate_actions(client: bridge.RimApiClient, snapshot: dict[str, Any], map
             continue
         pawn_id = int(pawn["id"])
         live = combat_by_id.get(pawn_id) or {}
+        if (live.get("is_drafted") or live.get("queued_job_count", 0) != 0
+                or live.get("carrying_pawn_id") or live.get("has_care_job")
+                or live.get("caregiver_recovery_active")):
+            continue
         current_bed_id = live.get("current_job_target_id")
         prior_assignment = (map_state.get("assigned_real_beds") or {}).get(str(pawn_id))
         if (str(pawn.get("current_job") or "") != "LayDown"
                 or current_bed_id not in sleeping_spot_ids | {int(b["id"]) for b in real_beds}
                 or (current_bed_id in sheltered_bed_ids and current_bed_id not in sleeping_spot_ids)
-                or (prior_assignment is not None and int(prior_assignment) in sheltered_bed_ids)):
+                or (prior_assignment is not None and int(prior_assignment) in sheltered_bed_ids
+                    and pawn_id in (real_bed_by_id.get(int(prior_assignment), {}).get("bed_owner_ids") or []))):
             continue
         for bed in real_beds:
-            if bed.get("medical") or int(bed["id"]) not in sheltered_bed_ids or int(bed["id"]) in assigned_beds:
+            if (int(bed["id"]) not in sheltered_bed_ids
+                    or not medical_recovery.ordinary_bed_candidate(bed, pawn_id)):
                 continue
             if int(bed["id"]) == current_bed_id:
                 continue
@@ -6888,6 +6898,9 @@ def collect_medical_thermal_context(client: bridge.RimApiClient, snapshot: dict[
 
 def protected_care_job(snapshot: dict[str, Any], pawn: dict[str, Any]) -> bool:
     name=str(pawn.get('current_job') or '').casefold()
+    if name=='beatfire':
+        live=next((p for p in snapshot.get('combat',{}).get('colonists') or [] if str(p.get('id'))==str(pawn.get('id'))),pawn)
+        return live.get('has_care_job') is True
     if name not in PROTECTED_CARE_JOBS:return False
     if name!='dobill':return True
     live=next((p for p in snapshot.get('combat',{}).get('colonists') or [] if str(p.get('id'))==str(pawn.get('id'))),{})
@@ -9700,11 +9713,26 @@ def execute_action(client: bridge.RimApiClient, snapshot: dict[str, Any], map_st
             "patient_pawn_id": pawn_id, "bed_building_id": bed_id,
         })
         accepted = bridge.command_acceptance({"endpoint": "/api/v1/pawn/bed/assign"}, result)
-        if accepted is not True:
-            return {"applied": False, "reason": "sleeping_bed_assignment_unconfirmed", "response": result,
-                    "outcome_unknown": accepted is None}
-        map_state.setdefault("assigned_real_beds", {})[str(pawn_id)] = bed_id
-        return {"applied": True, "pawn_id": pawn_id, "bed_id": bed_id, "response": result}
+        native = result.get('data', result) if isinstance(result, dict) else {}
+        bound = (isinstance(native, dict)
+                 and type(native.get('patient_pawn_id')) is int and native['patient_pawn_id'] == pawn_id
+                 and type(native.get('bed_building_id')) is int and native['bed_building_id'] == bed_id)
+        if isinstance(native, dict) and 'assigned' in native and not bound:
+            return {'applied': False, 'outcome_unknown': True, 'response': result,
+                    'reason': 'sleeping_bed_binding_unconfirmed', 'completion': 'unverified'}
+        existing = (isinstance(native, dict) and native.get('applied') is False
+                    and native.get('assigned') is True and native.get('in_progress') is True
+                    and bound)
+        if accepted is not True and not existing:
+            refusal = medical_recovery.bound_native_refusal(result, {'patient_pawn_id': pawn_id,
+                                                                     'bed_building_id': bed_id})
+            return {"applied": False, "reason": refusal['reason'] if refusal else "sleeping_bed_assignment_unconfirmed",
+                    "response": result, "blocked": refusal is not None, "outcome_unknown": accepted is None}
+        if bound and native.get('assigned') is True:
+            map_state.setdefault("assigned_real_beds", {})[str(pawn_id)] = bed_id
+        return {"applied": accepted is True, "pawn_id": pawn_id, "bed_id": bed_id, "response": result,
+                "in_progress": existing, "assignment_observed": native.get('assigned') if isinstance(native, dict) else None,
+                "completion": "unverified"}
     if choice == "prepare_emergency_medical_bed":
         bed_id = str(details.get("emergency_medical_bed") or "")
         if bed_id not in (snapshot["development"].get("emergency_medical_bed_options") or {}):
@@ -11810,6 +11838,54 @@ def recurring_entity_unresolved(snapshot: dict[str, Any]) -> bool:
                for row in (snapshot.get("combat") or {}).get("hostiles") or [])
 
 
+def pending_urgent_care_clinicians(snapshot: dict[str, Any], map_state: dict[str, Any]) -> set[int]:
+    """Keep a new urgent clinical intent available before optional cleanup claims its actor.
+
+    One otherwise-free helper per patient is enough; other workers keep working.
+    This is recomputed from a fresh snapshot and existing rejected-pair clocks,
+    never a permanent combat role or permission to interrupt current care.
+    """
+    if bridge.combat_planner.live_hostiles(snapshot):
+        return set()
+    people = {int(p['id']): p for p in snapshot.get('combat', {}).get('colonists') or []
+              if type(p.get('id')) is int}
+    options = post_combat_care_options(snapshot)
+    failures = map_state.get('care_assignment_failures') or {}
+    tick = int(snapshot.get('game', {}).get('tick') or 0)
+    options = {name: plan for name, plan in options.items()
+               if not (name in failures and retry_clock.recent(failures[name], tick, 2000)
+                       and failures[name].get('state') == medical_recovery.care_failure_state(snapshot, plan))}
+    options = medical_recovery.clinical_order_frontier(snapshot, options)
+    by_patient: dict[int, list[int]] = {}
+    for plan in options.values():
+        did, pid = plan.get('doctor_id'), plan.get('patient_id')
+        if (plan.get('kind') != 'tend' or type(did) is not int or type(pid) is not int or did == pid
+                or plan.get('reassign_from_patient_id') or plan.get('reassign_from_rescue_patient_id')
+                or plan.get('release_combat_job_id')):
+            continue
+        doctor, patient = people.get(did), people.get(pid)
+        if (not doctor or not patient or doctor.get('is_drafted') or doctor.get('is_dead')
+                or doctor.get('is_downed') or doctor.get('is_in_mental_state')
+                or type(doctor.get('queued_job_count')) is not int or doctor['queued_job_count'] != 0
+                or doctor.get('has_care_job') or doctor.get('carrying_pawn_id')
+                or doctor.get('carrying_player_pawn') or protected_care_job(snapshot, doctor)
+                or not (bridge.first_number(patient.get('bleeding_rate')) >= 1.5
+                        or severe_disease_patient(snapshot, pid))
+                or not all(type((p.get('position') or {}).get(axis)) is int
+                           for p in (doctor, patient) for axis in ('x', 'z'))):
+            continue
+        by_patient.setdefault(pid, []).append(did)
+    selected: set[int] = set()
+    for pid in sorted(by_patient, key=lambda p: (-bridge.first_number(people[p].get('bleeding_rate')), p)):
+        doctor = min((did for did in by_patient[pid] if did not in selected),
+                     key=lambda did: (squared_distance(people[did]['position'], people[pid]['position']), did),
+                     default=None)
+        if doctor is not None:
+            selected.add(doctor)
+    return selected
+
+
+
 @bounded_decision_cycle
 def run_downed_raider_cycle(
     client: bridge.RimApiClient,
@@ -11839,6 +11915,8 @@ def run_downed_raider_cycle(
     protected = active_care_pawn_ids(snapshot) | {
         str(pawn.get("id")) for pawn in snapshot["combat"]["colonists"]
         if protected_care_job(snapshot,pawn)}
+    # Reserve a fresh remaining urgent-care opportunity before optional cleanup.
+    protected.update(str(did) for did in pending_urgent_care_clinicians(snapshot, map_state))
     pending = downed_combat.reconcile(client, snapshot, map_state, protected)
     finishers = {int(target["id"]): downed_combat.available_fighters(
         snapshot, map_state, int(target["id"]), protected) for target in downed}
@@ -12226,6 +12304,14 @@ def cycle_retry_policy(runtime_state: str, consecutive_errors: int, interval: fl
     return delay, next_count
 
 
+def caregiver_threat_signature(snapshot: dict[str, Any]) -> tuple[Any, ...]:
+    """Only fresh, exact native care/attacker bindings can wake combat review."""
+    return tuple(sorted((int(row['fighter_id']), str(row['expected_current_job']),
+                         int(row['expected_care_patient_id']), int(row['target_id']))
+                        for row in bridge.combat_planner.native_tactical_options(
+                            snapshot, 'caregiver_retreat').values()))
+
+
 def combat_order_signature(snapshot: dict[str, Any]) -> tuple[Any, ...]:
     """Return only changes that justify replacing an active combat order.
 
@@ -12289,7 +12375,8 @@ def combat_order_signature(snapshot: dict[str, Any]) -> tuple[Any, ...]:
         )
         for row in hostiles if row.get("id") is not None
     ))
-    return ("staging" if staging else "active", fighter_state, hostile_state)
+    return ("staging" if staging else "active", fighter_state, hostile_state,
+            caregiver_threat_signature(snapshot))
 
 
 def combat_replan_due(signature: tuple[Any, ...], previous: tuple[Any, ...] | None,
@@ -12347,6 +12434,11 @@ def combat_record_rejected(record: dict | None) -> bool:
     if not primary:
         primary = tactics
     return bool(primary) and not any(i < len(responses) and combat_tactical_acceptance(responses[i]) for i in primary)
+
+
+def initial_defense_incomplete(runtime_state: str, record: dict | None) -> bool:
+    return bool(runtime_state == "starting" and record is not None and (
+        combat_record_rejected(record) or (record.get("result") or {}).get("deferred_review_pending")))
 
 
 def combat_failed_retry_due(signature, previous, elapsed: float) -> bool:
@@ -12435,6 +12527,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
     colonists = snapshot.get("combat", {}).get("colonists", [])
     capabilities = {int(row["id"]): row for row in snapshot.get("colonists", [])
                     if row.get("id") is not None}
+    carried_patients = bridge.combat_planner.carried_patient_ids(snapshot)
 
     def can_do_medicine(pawn: dict[str, Any]) -> bool:
         details = capabilities.get(int(pawn["id"])) or {}
@@ -12454,6 +12547,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
     retreating = bridge.combat_planner.protected_care_retreat_ids(snapshot)
     available_helpers = [pawn for pawn in colonists
                if not pawn.get("is_dead") and not pawn.get("is_downed") and not pawn.get("is_in_mental_state")
+               and not pawn.get("caregiver_recovery_protected")
                and not any((capabilities.get(int(pawn['id'])) or {}).get(k) for k in ('downed', 'dead', 'in_mental_state'))
                and not protected_care_job(snapshot,pawn)
                and not pawn.get("is_drafted")
@@ -12464,7 +12558,9 @@ def post_combat_care_options(snapshot: dict[str, Any],
     patients = sorted(
         [pawn for pawn in colonists if pawn.get("tendable_now")
          and not pawn.get("is_dead") and int(pawn["id"]) not in active_patients
-         and not protected_care_job(snapshot,pawn)],
+         and int(pawn['id']) not in carried_patients
+          and not protected_care_job(snapshot,pawn)
+          and bridge.combat_planner.new_treatment_window(snapshot,pawn)],
         key=lambda pawn: (medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1]
                           if medical_recovery.triage({**pawn, "health_conditions": (capabilities.get(int(pawn["id"])) or {}).get("health_conditions")})[1] is not None else float("inf"),
                           -bridge.first_number(pawn.get("bleeding_rate")),
@@ -12484,6 +12580,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
                      and pawn.get("current_job_target_id_b") is not None}
     for patient in colonists:
         if (not patient.get("is_downed") or patient.get("is_dead")
+                or int(patient['id']) in carried_patients
                 or int(patient["id"]) in active_rescues
                 or int(patient["id"]) in active_patients or not beds):
             continue
@@ -12599,7 +12696,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
                                          if any(h.get('def_name') == 'Hypothermia' for h in conditions) else "")
                                         + disease_care_summary(capabilities.get(patient_id) or {}) + " "
                                         + f"Patient {patient.get('name')}; "
-                                        + (f"bleedout ~{round(deadline)} ticks; " if deadline is not None else "no active bleedout; ")
+                                        + (f"bleedout ~{round(deadline)} ticks; " if deadline is not None else "bleedout estimate unavailable; " if bleeding > 0 else "no active bleedout; ")
                                         + f"Doctor {doctor.get('name')} medicine {doctor.get('medicine_skill', 0)}{distance}; "
                                         + (f"quality {float(doctor['medical_tend_quality']):.0%}, "
                                            if isinstance(doctor.get('medical_tend_quality'), (int,float)) else "quality unknown, ")
@@ -12623,6 +12720,7 @@ def post_combat_care_options(snapshot: dict[str, Any],
             and can_do_medicine(patient)
             and bridge.first_number(patient.get("moving"), 1) > 0.1
             and bridge.first_number(patient.get("manipulation"), 1) > 0.1
+            and bridge.combat_planner.safe_new_self_tend(snapshot,patient)
         )
         if can_self_tend:
             key = f"self_tend_{patient_id}"
@@ -12632,6 +12730,33 @@ def post_combat_care_options(snapshot: dict[str, Any],
                                         + f"Self-tend {patient.get('name')} medicine {patient.get('medicine_skill', 0)};"
                                         f"{infection_note} bleed {bleeding:.2f}, health {bridge.first_number(patient.get('health')):.2f}. "
                                          "Risk poor care versus waiting for another doctor. " + infection_risk)}
+            if medical_recovery.critical_caregiver_self_tend(snapshot, options[key]):
+                others = bridge.combat_planner.medically_capable_ids(snapshot) - {patient_id}
+                options[key]['summary'] += (
+                    f" Major bleeding in a currently mobile doctor; {len(others)} other observed mobile care-capable doctors. "
+                    "Compare a completed self-tend with treating another patient before losing this caregiver. "
+                    "A death deadline does not measure time until the doctor becomes incapable.")
+    # A severely bleeding caregiver can stop routine tending of an exact,
+    # natively stable patient before becoming the next downed doctor. Feeding,
+    # carrying, queued instructions and dangerous old-patient care stay protected.
+    for doctor in colonists:
+        binding = bridge.combat_planner.stable_patient_self_tend_binding(snapshot, doctor)
+        if binding is None:
+            continue
+        doctor_id = int(doctor["id"])
+        native = bridge.combat_planner.native_care_patient(snapshot, doctor)
+        options[f"self_tend_{doctor_id}"] = {
+            "patient_id": doctor_id, "doctor_id": doctor_id, "kind": "tend", "self_tend": True,
+            **binding, "estimated_bleedout_ticks": native.get("bleedout_ticks"),
+            "summary": (f"Self-tend critically bleeding doctor {doctor.get('name') or doctor_id}; "
+                        f"bleeding {native['bleeding_total']:.2f}. Current patient "
+                        f"{binding['reassign_from_patient_id']} has verified zero bleeding and no protected disease. "
+                        "The exact current patient, empty queue and clinical safety are rechecked natively before switching. "
+                        "This may prevent losing another doctor; self-treatment has reduced quality and speed. "
+                        "An accepted job is not stopped bleeding or recovery.")}
+    # Native offered selected defenders can choose their first patient before
+    # broad stand-down starts an unrelated autonomous clinical journey.
+    options.update(medical_recovery.combat_release_tend_options(snapshot))
     critical_illness_ids = {int(p["id"]) for p in patients if severe_disease_patient(snapshot, int(p["id"]))}
     critical_illness_tends = {name: row for name, row in options.items()
                              if row.get("kind") == "tend" and row.get("patient_id") in critical_illness_ids}
@@ -12703,10 +12828,12 @@ def rescue_job_in_progress(snapshot: dict[str, Any]) -> bool:
 def urgent_care_unassigned(snapshot: dict[str, Any]) -> bool:
     """Do not wait for one rescue while another colonist bleeds untreated."""
     colonists = snapshot.get("combat", {}).get("colonists", [])
+    carried_patients = bridge.combat_planner.carried_patient_ids(snapshot)
     tended = {int(row["current_job_target_id"]) for row in colonists
               if str(row.get("current_job") or "").lower() == "tendpatient"
               and row.get("current_job_target_id") is not None}
     return any(row.get("id") is not None and int(row["id"]) not in tended
+               and int(row['id']) not in carried_patients
                and row.get("tendable_now") and not row.get("is_dead")
                and (bridge.first_number(row.get("bleeding_rate")) > 0
                     or severe_disease_patient(snapshot, int(row["id"])))
@@ -12982,6 +13109,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     hostiles = bridge.combat_planner.live_hostiles(snapshot)
     if hostiles and not live_threat:
         return None
+    clinical_context_read = medical_recovery.refresh_competing_tend_context(client, snapshot)
     buildings = []
     if (any(pawn.get("is_downed") for pawn in snapshot.get("combat", {}).get("colonists", []))
             or any(bridge.active_recovery_diseases(pawn) for pawn in snapshot.get("colonists") or [])) and hasattr(client, "get"):
@@ -13005,6 +13133,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     options = {name: row for name, row in options.items()
                if row.get("kind") != "tend" or patient_care_is_urgent(snapshot, row.get("patient_id"))
                or not routine_care_can_yield_to_warmth(snapshot, row.get("doctor_id"))}
+    options = medical_recovery.clinical_order_frontier(snapshot, options)
     if focus_downed:
         downed_ids = {int(pawn["id"]) for pawn in snapshot.get("combat", {}).get("colonists", [])
                       if pawn.get("id") is not None and pawn.get("is_downed") and not pawn.get("is_dead")}
@@ -13105,6 +13234,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                           if colony_reasoning.attention_facts(snapshot).get("care_risks") else {},
         "task": "Emergency field care under live threat" if live_threat else "Choose treatment, rescue or another action after combat",
         "helper_frontier_exclusions": snapshot.get("development", {}).get("medical_helper_frontier_exclusions", {}),
+        "clinical_order_frontier": snapshot.get("development", {}).get("clinical_order_frontier", {}),
         "triage": ("A successful API order is not a completed treatment. Severe bleeding can kill "
                    "while a rescuer travels or while a doctor is reassigned. Verify bleeding falls before "
                    "moving the only doctor to a stable patient."),
@@ -13173,7 +13303,7 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                                if int(pawn["id"]) == selected["doctor_id"]), None)
                 patient = next((pawn for pawn in snapshot["combat"]["colonists"]
                                 if int(pawn["id"]) == selected["patient_id"]), None)
-                if doctor and doctor.get("is_drafted"):
+                if doctor and doctor.get("is_drafted") and selected.get("release_combat_job_id") is None:
                     client.post("/api/v1/pawn/edit/status", body={"pawn_id": selected["doctor_id"], "is_drafted": False})
                 patient_hold = None
                 if selected.get("kind") == "rescue":
@@ -13204,6 +13334,10 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
                         "patient_pawn_id": selected["patient_id"],
                         "doctor_pawn_id": selected["doctor_id"],
                         "self_tend": selected["self_tend"],
+                        **({"release_combat_job_id": selected["release_combat_job_id"]}
+                           if selected.get("release_combat_job_id") is not None else {}),
+                        **({"review_after_tend": True}
+                           if medical_recovery.competing_tend_review(snapshot, selected) else {}),
                         **({"reassign_from_patient_id": selected["reassign_from_patient_id"]}
                            if selected.get("reassign_from_patient_id") is not None else {}),
                         **({"reassign_from_rescue_patient_id": selected["reassign_from_rescue_patient_id"]}
@@ -13221,7 +13355,8 @@ def run_post_combat_care_cycle(client: bridge.RimApiClient, agent: Any,
     record = {"timestamp": bridge.utc_now(),
               "mode": "live-threat-care" if live_threat else "post-combat-care",
               "candidates": list(options), "decision": {"choice": choice, "raw": raw},
-              "plan": selected, "result": result}
+              "plan": selected, "result": result,
+              "clinical_context_read": clinical_context_read}
     bridge.append_log(log_path, record)
     return record
 
@@ -13580,6 +13715,24 @@ def clinical_reassessment_due(snapshot: dict[str, Any], prior_signature: tuple |
     return signature, bool(needs_care and signature != prior_signature)
 
 
+def run_initial_post_combat_care_cycle(client, agent, snapshot, log_path, map_state):
+    """Choose a new exact first-care intent before releasing all idle guns."""
+    combat = snapshot.get('combat') or {}
+    if (bridge.combat_planner.live_hostiles(snapshot)
+            or any(p.get('active_threat') for p in combat.get('hostile_buildings') or [])
+            or not any(p.get('is_drafted') and not p.get('is_dead') and not p.get('is_downed')
+                       for p in combat.get('colonists') or [])
+            or not any(p.get('is_downed') and not p.get('is_dead')
+                       and bridge.first_number(p.get('bleeding_rate')) >= 1.5
+                       for p in combat.get('colonists') or [])):
+        return None
+    medical_recovery.refresh_competing_tend_context(client, snapshot)
+    if not medical_recovery.combat_release_tend_options(snapshot):
+        return None
+    return run_post_combat_care_cycle(client, agent, snapshot, log_path,
+                                      focus_downed=True, map_state=map_state)
+
+
 def release_idle_combat_workers(client: bridge.RimApiClient, snapshot: dict[str, Any],
                                 protected_ids: set[int] | None = None) -> dict[str, Any] | None:
     """A finisher or patient cannot keep unrelated idle defenders drafted."""
@@ -13871,6 +14024,13 @@ def main() -> int:
                         # A fresh food/rescue job must be observed before a
                         # wound-only care pass can choose the same actor again.
                         snapshot = bridge.collect_snapshot(client)
+                initial_care = run_initial_post_combat_care_cycle(client, agent, snapshot, args.log, map_state)
+                if initial_care is not None:
+                    next_post_combat_care_cycle = time.monotonic() + (2.0 if initial_care["result"].get("applied") else 8.0)
+                    print(f"[{initial_care['timestamp']}] initial postcombat care: "
+                          f"{initial_care['decision']['choice']} | {stdout_result(initial_care['result'])}", flush=True)
+                    if initial_care["result"].get("applied"):
+                        snapshot = bridge.collect_snapshot(client)
                 release = release_idle_combat_workers(client, snapshot, peaceful_hunt_ids)
                 if release is not None:
                     bridge.append_log(args.log, {'timestamp': bridge.utc_now(), 'mode': 'postcombat-release',
@@ -13980,7 +14140,7 @@ def main() -> int:
                     signature = combat_order_signature(snapshot)
                     now = time.monotonic()
                     advance_state, advance_body = preemptive_advance_state(snapshot, last_combat_record, now - last_combat_step_time)
-                    urgent = advance_state == "replan" or any(
+                    urgent = bool(caregiver_threat_signature(snapshot)) or advance_state == "replan" or any(
                         bridge.first_number(row.get("distance_to_nearest_opponent"), 9999) < 15
                         for row in living_hostiles
                     )
@@ -14044,6 +14204,11 @@ def main() -> int:
                     now = time.monotonic()
                     fire_state = bridge.safe_get(client, "/api/v1/map/fire/situation", [],
                                                  map_id=int(snapshot["map"]["id"])) or {}
+                    burning_record=colony_fire_safety.run_cycle(client,agent,snapshot,fire_state,args.log)
+                    if burning_record is not None:
+                        print(f"[{burning_record['timestamp']}] burning pawn: {burning_record['decision']['choice']} | {stdout_result(burning_record['result'])}",flush=True)
+                        if burning_record['result'].get('applied'):
+                            snapshot=bridge.collect_snapshot(client)
                     active_home_fire = any(
                         fire.get("in_home") and int(fire.get("nearby_player_buildings") or 0) > 0
                         for fire in fire_state.get("fires") or [])
@@ -14112,6 +14277,14 @@ def main() -> int:
                         record = run_development_cycle(client, agent, state, args.state, args.log, expedition=away_site)
                         next_colony_cycle = now + (2.0 if active_home_fire else args.interval)
                         print(f"[{record['timestamp']}] colony: {record['decision']['choice']} | {stdout_result(record['result'])}", flush=True)
+                # A successful HTTP/draft acknowledgment can still have no
+                # selected native defense. Keep the existing initial readiness
+                # gate until that incomplete first dispatch is resolved. This
+                # adds no pause/speed order and never pauses an active run.
+                if initial_defense_incomplete(runtime_state, last_combat_record):
+                    runtime_detail = "Selected first defense remains incomplete; retaining startup readiness gate"
+                    publish_status(runtime_state, runtime_detail)
+                    continue
                 runtime_state = "running"
                 runtime_detail = "Last decision cycle completed"
                 consecutive_cycle_errors = 0

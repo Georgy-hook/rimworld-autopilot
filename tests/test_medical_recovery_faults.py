@@ -50,6 +50,22 @@ class RecoveryFaults(unittest.TestCase):
         self.assertTrue(director.urgent_care_actionable(s))
         self.assertIn('stable patient 2',plans['tend_1_3']['summary'])
 
+    def test_enemy_carried_patient_is_released_before_new_treatment(self):
+        s=self.snapshot()
+        s['combat']['hostiles']=[{'id':99,'current_job':'Kidnap','carrying_pawn_id':1,'carrying_player_pawn':True}]
+        self.assertNotIn('tend_1_3',director.post_combat_care_options(s))
+        self.assertFalse(director.urgent_care_unassigned(s))
+        s['combat']['hostiles'][0].pop('carrying_pawn_id')
+        self.assertIn('tend_1_3',director.post_combat_care_options(s))
+        self.assertTrue(director.urgent_care_unassigned(s))
+
+    def test_friendly_rescuer_keeps_care_protection(self):
+        s=self.snapshot();rescuer=s['combat']['colonists'][2]
+        rescuer.update(current_job='Rescue',current_job_target_id=1,carrying_pawn_id=1)
+        self.assertEqual(director.bridge.combat_planner.carried_patient_ids(s),{1})
+        self.assertFalse(any(p['patient_id']==1 for p in director.post_combat_care_options(s).values()))
+        self.assertTrue(director.protected_care_job(s,rescuer))
+
     def test_wounded_working_doctor_is_not_another_tend_target(self):
         s=self.snapshot()
         s['combat']['colonists'][1]['bleeding_rate']=2

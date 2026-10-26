@@ -61,8 +61,19 @@ namespace RIMAPI.Models
 
     public class CombatTacticResponseDto
     {
+        public bool Deferred { get; set; }
+        public bool ReviewComplete { get; set; } = true;
+        public bool PartialApplied { get; set; }
+        public string DeferredReason { get; set; }
+        public string DeferredPhase { get; set; }
+        public List<int> DeferredPawnIds { get; set; } = new List<int>();
+        public List<int> ChangedPawnIds { get; set; } = new List<int>();
         public bool Applied { get; set; }
         public List<int> PreservedPawnIds { get; set; } = new List<int>();
+        // Duration-only retention of an already selected role. This is
+        // distinct from an applied order or a completed tactical review.
+        public List<int> RefreshedControlPawnIds { get; set; } = new List<int>();
+        public List<int> UnrefreshedControlPawnIds { get; set; } = new List<int>();
         public List<CombatOrderReadbackDto> CurrentJobs { get; set; } = new List<CombatOrderReadbackDto>();
         public string Tactic { get; set; }
         public List<int> DraftedPawnIds { get; set; } = new List<int>();
@@ -75,6 +86,9 @@ namespace RIMAPI.Models
     }
     public class CombatOrderReadbackDto
     {
+        public int? JobId { get; set; }
+        public bool Owned { get; set; }
+        public List<int> QueuedJobIds { get; set; } = new List<int>();
         public int PawnId { get; set; }
         public string JobDefName { get; set; }
         public int? TargetThingId { get; set; }

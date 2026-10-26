@@ -21,6 +21,7 @@ def eligible(pawn, protected=()):
     return (pawn.get('id') is not None and not pawn.get('is_dead')
             and not pawn.get('is_downed') and not pawn.get('is_in_mental_state')
             and pawn.get('can_fight', True)
+            and not pawn.get('queued_job_count') and not pawn.get('queued_jobs')
             and bridge.first_number(pawn.get('health')) >= .75
             and bridge.first_number(pawn.get('moving'), 1) > 0
             and bridge.first_number(pawn.get('manipulation'), 1) > 0

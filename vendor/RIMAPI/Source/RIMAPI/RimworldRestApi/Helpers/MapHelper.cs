@@ -641,6 +641,10 @@ namespace RIMAPI.Helpers
                         Type = building.GetType().Name,
                         Medical = (building as Building_Bed)?.Medical ?? false,
                         ForPrisoners = (building as Building_Bed)?.ForPrisoners ?? false,
+                        BedOwnerIds = (building as Building_Bed)?.OwnersForReading.Select(p => p.thingIDNumber).ToList(),
+                        BedCompatiblePawnIds = building is Building_Bed sleepingBed
+                            ? map.mapPawns.FreeColonistsSpawned.Where(p => RestUtility.CanUseBedEver(p, sleepingBed.def))
+                                .Select(p => p.thingIDNumber).ToList() : null,
                         RequiresPower = power != null && power.Props.PowerConsumption > 0,
                         PowerOn = power?.PowerOn ?? false,
                         PowerNetId = power?.PowerNet?.GetHashCode(),

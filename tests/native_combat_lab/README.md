@@ -61,6 +61,28 @@ to both native cell reads and room temperature reports. Earlier revisions that
 held only cell reads at 20 C could report cold rooms to the care planner; retain
 that inconsistency when interpreting their postcombat care cutoffs.
 
+Numerical/world seeds alone do not fix traits, work disabilities or the resulting
+native random state. For comparisons, create each declared cohort once and save
+the exact initial disposable fixture before its first fight. The lab-only sampling
+component serializes its pawn references, scenario and declared starting RNG. Load
+that immutable lab save in a fresh opted-in process, then pass its retained
+`setup.json` with `--baseline-setup`. The runner checks native IDs, positions, genes,
+traits, disabled work, movement, aiming, health and needs before starting. A mismatch
+fails the run; it must not trigger a new cohort selection. An ordinary colony save
+is never an eligible baseline.
+
+The initial lab clock is held across save/load UI events until the production
+director completes its first dispatch. `/api/v1/combat-lab/begin` releases that hold
+once and applies the recorded starting RNG. The hold cannot be reactivated during
+the fight. Subsequent ordinary native draws, including staging steps, are left
+intact. UI draws and real-time model dispatch can still vary the later sequence;
+these are fixed initial conditions, not a guarantee of deterministic replays.
+Older revisions isolated the RNG only around staging steps; label those conditions
+separately. `/bind-initial-save` can bind exact IDs in an intact early lab save,
+without generating, moving, healing or feeding a pawn; the expected saved tick and
+original snapshot must be retained. All these routes, serialization and clock
+hooks are absent from a normal build.
+
 `hard_raids.json` covers ranged, mixed and melee groups outnumbering the defenders,
 eight Neanderthals attacking a trapped choke, and real `LordJob_ExitMapBest` carriers
 with and without an assault escort. A carried captive is initially downed through
@@ -94,3 +116,18 @@ tick600. Loading a model alone does not complete its first inspected decision
 cycle. Check that first selected defense and the actual native clock together;
 do not grant pawns a scripted combat plan in the fixture to bypass that boundary.
 An emergency retreat may temporarily lose a firing lane to use a safer rear cell.
+Friendly line checks use the native interception rule and body-size clearance.
+A healthy selected supporting gun can seek a short checked angle near a pinned
+ally, without receiving a melee charge. The game still resolves every shot and
+miss; retain actual friendly damage in the result rather than claiming immunity.
+
+### Pre-pickup API contract
+
+The supplementary `kidnap_approach` scenario starts a normal native Kidnap job
+aimed at an exact living downed player pawn before pickup. It is separate from
+the immutable raid qualification cases. Initialize the native path with one
+declared engine tick, pause, then inspect the intent and submit interception.
+Reusing the same seed for a diagnostic repeat requires checking the same cohort,
+equipment, traits and clinical state. Do not substitute an easier cohort.
+Accepted drafting, movement or a queued shot in this paused contract is not a
+fired projectile, a rescued captive or a successful defense.
