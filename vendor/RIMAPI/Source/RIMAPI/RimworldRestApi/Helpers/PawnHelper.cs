@@ -59,14 +59,22 @@ namespace RIMAPI.Helpers
             return pawn.jobs.TryTakeOrderedJob(job);
         }
 
-        public static bool AssignTendJob(Pawn doctor, Pawn patient)
+        public static bool AssignTendJob(Pawn doctor, Pawn patient, bool reviewAfterTend = false)
         {
             // Use the game's reachable medicine selection, including the patient's
             // care policy, instead of silently ordering treatment without medicine.
             Thing medicine = HealthAIUtility.FindBestMedicine(doctor, patient);
             Job job = JobMaker.MakeJob(JobDefOf.TendPatient, patient, medicine);
             if (medicine != null) job.count = 1;
-            return doctor.jobs.TryTakeOrderedJob(job);
+            job.endAfterTendedOnce = reviewAfterTend;
+            bool accepted = doctor.jobs.TryTakeOrderedJob(job);
+            // The service preserves an already running exact assignment. A
+            // finite review applies only to the newly accepted native job.
+            if (accepted && reviewAfterTend && doctor.CurJob != null
+                && doctor.CurJob.def == JobDefOf.TendPatient && doctor.CurJob.targetA.Thing == patient
+                && doctor.CurJob.endAfterTendedOnce)
+                MedicalTendReviewHelper.Schedule(doctor, doctor.CurJob);
+            return accepted;
         }
 
         public static bool AssignBedRest(Pawn patient, Building_Bed bed)
@@ -163,6 +171,7 @@ namespace RIMAPI.Helpers
                                 })
                                 .ToList() ?? new List<SkillDto>(),
                         CurrentJob = pawn.CurJob?.def?.defName ?? "",
+                        CurrentJobIsCare = CombatNativeHelper.HasCareJob(pawn),
                         InspirationDefName = pawn.mindState?.inspirationHandler?.CurStateDef?.defName,
                         Traits = GetTraits(pawn),
                         WorkPriorities = GetWorkPriorities(pawn),

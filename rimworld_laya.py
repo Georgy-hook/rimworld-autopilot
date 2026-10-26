@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from itertools import combinations
+from http.client import HTTPException
 import json
 import os
 import sys
@@ -104,7 +105,7 @@ class RimApiClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
             raise RimApiError(f"{endpoint}: HTTP {exc.code}: {detail}") from exc
-        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (URLError, TimeoutError, HTTPException, json.JSONDecodeError) as exc:
             raise RimApiError(f"{endpoint}: {exc}") from exc
         return unwrap(payload, endpoint)
 
@@ -209,6 +210,7 @@ def normalize_colonists(rows: Any) -> list[dict[str, Any]]:
                 "is_dead": bool(medical.get("is_dead")),
                 "downed": bool(medical.get("is_downed")),
                 "current_job": str(work.get("current_job") or work.get("job") or "unknown"),
+                "current_job_is_care": work.get('current_job_is_care'),
                 "inspiration": str(work.get("inspiration_def_name") or ""),
                 "position": pawn.get("position") or {},
                 "skills": skills,
@@ -409,6 +411,8 @@ def annotate_combat_medical_state(colonists: list[dict[str, Any]], combat: Any) 
             detail["downed"] = bool(pawn["is_downed"])
         if pawn.get("current_job") is not None:
             detail["current_job"] = str(pawn["current_job"])
+        if isinstance(pawn.get('has_care_job'),bool):
+            detail['has_care_job']=pawn['has_care_job']
 
 
 def select_work_map(maps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -882,6 +886,8 @@ def combat_model_context(agent: Any, snapshot: dict[str, Any], *,
            if tactical_facts["contact_fighters"] else {}),
         **({"carriers": [{"id": row["id"], "carrying": row["carrying_pawn_id"]}
                         for row in tactical_facts["carriers"][:2]]} if tactical_facts["carriers"] else {}),
+        **({"abduction_attempts": tactical_facts["abduction_attempts"][:2]}
+           if tactical_facts.get("abduction_attempts") else {}),
         "forces": state["forces"],
         "covering_guns": state["covering_guns"],
         "ally_weapons": state["ally_weapons"],
@@ -954,9 +960,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if weapon.get("is_ranged") and capabilities.weapon_compatible(pawn, weapon) and not combat_planner.errand_exposed(
                 snapshot, weapon.get("position"), pawn.get("position"))
         ]
-        actively_fighting = any(pawn.get("is_drafted") and str(pawn.get("current_job") or "").lower() in {
-            "attackstatic", "attackmelee", "goto", "wait_combat", "castverb",
-        } for pawn in living_colonists)
+        actively_fighting = bool(combat_planner.engaged_fighter_ids(snapshot))
         staging_distance = 70 if actively_fighting else 35
         staging = bool(fighters) and bool(living_colonists) and all(
             first_number(pawn.get("distance_to_nearest_opponent"), 9999) > staging_distance
@@ -1018,8 +1022,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 "Watch the approach with current orders; drafted fighters cannot eat or sleep."
                 if drafted else "Watch the approach while civilians keep their current safe jobs."
             )
-        if any(first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 2
-               for pawn in fighters):
+        if any(combat_planner.contact_opponents(snapshot,pawn) for pawn in fighters):
             criteria["engage_melee"] = (
                 "Enemy is in contact: only fighters actually touching the enemy enter melee; other armed colonists keep firing. "
                 "Gun-bashing sacrifices ranged fire and can be lethal against a stronger melee attacker; compare a short backstep."
@@ -1050,6 +1053,9 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                     "Immediately backstep the isolated gunner from a healthy melee attacker and keep firing; "
                     "distant allies cannot cover this contact yet."
                 )}
+        for exact_defence in ('contact_melee','lure_enemy'):
+            if combat_planner.native_tactical_options(snapshot,exact_defence):
+                criteria[exact_defence]=combat_planner.TACTICS[exact_defence]['description']
         if not staging and any(first_number(pawn.get("distance_to_nearest_opponent"), 0) > 20
                                for pawn, _ in safe_ranged_pairs):
             criteria["equip_ranged_weapon"] = "Give suitable unarmed colonists nearby ranged weapons; they must survive the trip to pick them up."
@@ -1072,10 +1078,29 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 criteria["prepare_undrafted"] = "Undraft exhausted or defenseless colonists so they can seek safety."
         if any(combat_planner.is_kidnapper(row) for row in hostile_rows):
             criteria.pop("prepare_undrafted", None)
+            if any(name in criteria for name in ('intercept_kidnapper', 'focus_fire', 'stationary_fire')):
+                for passive in ('hold_cover', 'firing_line', 'hold_and_observe', 'advance_to_range'):
+                    criteria.pop(passive, None)
+        if combat_planner.held_defensive_corridor(snapshot):
+            for movement in ('backstep_fire','kite','withdraw_and_regroup','coordinate_retreat','fallback_line',
+                             'wide_flank','pincer','advance_to_range','spread_out','preemptive_strike'):
+                criteria.pop(movement,None)
+            criteria['stationary_fire']='Keep the healthy guns firing through the verified narrow approach. Leaving it opens the base to melee; reassess immediately if the approach is breached or a defender is wounded.'
         if capabilities.combat_animals(snapshot):
             criteria["release_trained_animals"] = "Release trained healthy following animals with their master into combat. Compare allied power, enemy fire, melee danger and animal losses; this does not draft livestock."
         if capabilities.combat_animals(snapshot, released=True):
             criteria["recall_combat_animals"] = "Disable release with the master; animals resume following, though recall may not stop an attack instantly. Preserve wounded or outmatched animals."
+        if not combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
+            criteria.pop('prepare_undrafted', None)
+        if staging and combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
+            # Preparation offers two real plans. Generic defense orders used
+            # to draft the colony and repeatedly wait through the whole stage.
+            criteria = {key: value for key, value in criteria.items() if key in {
+                'preemptive_strike', 'equip_ranged_weapon', 'emergency_self_tend',
+                'civilian_retreat', 'caregiver_retreat', 'recall_combat_animals'}}
+            criteria['continue_safe_colony_work'] = (
+                'Raiders are still staging outside contact. Undraft idle defenders to eat, sleep, cook and work; '
+                'prepare only feasible defenses with available materials/workers, and recheck the live raid phase.')
         if combat_planner.guarded_hive_outside_contact(snapshot):
             # A generic focus-fire order repositions out-of-range shooters
             # toward its target. At a passive hive that is an attack order,
@@ -1091,7 +1116,7 @@ def make_questions(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             # Legacy positioning/tactics resolve Pawn targets. Native weapon
             # commands explicitly support Thing targets such as active turrets.
             criteria = {key: value for key, value in criteria.items() if key in {
-                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}}
+                "emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}}
             criteria["hold_and_observe"] = "Keep current orders; the active hostile structure still threatens its area."
             if combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True):
                 criteria["continue_safe_colony_work"] = "Release idle workers outside verified turret exposure; preserve care and leave the structure intact."
@@ -1197,9 +1222,10 @@ def choose_worker(colonists: list[dict[str, Any]], work: str) -> dict[str, Any] 
 def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) -> dict[str, Any]:
     if snapshot["map"]["enemies"] > 0 and not snapshot["combat"]["available"]:
         return {
-            "choice": "prepare_undrafted",
+            "choice": "hold_and_observe",
             "confidence": 0.0,
-            "reason": "Combat API is unavailable, so no target can be validated; undraft instead of exhausting colonists.",
+            "reason": "Combat API is unavailable during a known threat; preserve existing orders and hold for fresh telemetry.",
+            "combat_sensor_unavailable": True,
             "raw": None,
         }
     questions = make_questions(snapshot)
@@ -1218,7 +1244,7 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
         choice = "keep_current_plan"
     if choice not in SAFE_WORK_TYPES and choice not in COMBAT_CHOICES and choice != "keep_current_plan":
         raise ValueError(f"Unsupported combat choice {choice!r}")
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}:
         rows = combat_planner.native_tactical_options(snapshot, choice)
         aliases = {f"n{i}": row for i, row in enumerate(rows.values())}
         criteria = {key: str(row.get("label") or key) for key, row in aliases.items()}
@@ -1405,14 +1431,13 @@ def decide(agent: Any, snapshot: dict[str, Any], confidence_threshold: float) ->
                     f"nearest shooter {support_gap:.0f} cells away. "
                     "An unarmed fighter can be downed or killed before help arrives."
                 )
-                if (first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 20
-                        and (not supporting_guns or (support_gap <= 30
-                                 and any(first_number(gun.get("distance_to_nearest_opponent"), 9999)
-                                         <= first_number(gun.get("weapon_range")) + 12
-                                         for gun in supporting_guns)))):
+                if combat_planner.unsupported_animal_charge(snapshot, [pawn]):
+                    melee_options.pop('melee_assault', None)
+                if any(o.get('fighter_id') == pawn.get('id') for o in
+                        combat_planner.native_tactical_options(snapshot,'lure_enemy').values()):
                     melee_options["lure_enemy"] = (
-                        "Draw the nearest enemy into allied range with short trap-free moves, staying close enough to keep pursuit. "
-                        "If the enemy ignores the lure, the fighter may contribute no damage while allies are exposed."
+                        "Move the observed pursuer within the covering guns' corridor. This requires the actual pursuer, "
+                        "ready guns firing at that same target, a faster healthy lure and a checked escape path."
                     )
                 melee_options["withdraw_and_regroup"] = (
                     ("Retreat from the enemy and rejoin distant gunmen; this may save an isolated unarmed colonist, "
@@ -1602,6 +1627,13 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
         if (role in {"melee_assault", "lure_enemy", "withdraw_and_regroup"}
                 and first_number(pawn.get("moving"), 1) < 0.65):
             role = pawn_default_role
+        if role == 'lure_enemy' and not any(o.get('fighter_id') == pawn_id and o.get('target_id') == target_id
+                for o in combat_planner.native_tactical_options(snapshot,'lure_enemy').values()):
+            continue  # A stale role cannot expose a pawn after pursuit or same-target fire changed.
+        if role == 'melee_assault' and combat_planner.unsupported_animal_charge(snapshot, [pawn]):
+            # Revalidate a stale per-pawn role without issuing a replacement
+            # movement order or taking the caregiver into combat.
+            continue
         groups.setdefault(role, []).append(pawn)
     commands = []
     for role, pawns in groups.items():
@@ -1615,6 +1647,10 @@ def melee_support_commands(snapshot: dict[str, Any], decision: dict[str, Any],
 
 def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
     choice = decision["choice"]
+    if decision.get("combat_sensor_unavailable"):
+        return {"kind": "commands", "description": "Pause while hostile combat state cannot be read; preserve pawn orders",
+                "combat_sensor_unavailable": True,
+                "commands": [{"endpoint": "/api/v1/game/speed", "query": {"speed": 0}}]}
     if combat_planner.guarded_hive_outside_contact(snapshot) and choice in (
         set(combat_planner.TACTICS) | {
             "engage_ranged", "engage_melee", "draft_best_defender", "preemptive_strike",
@@ -1626,7 +1662,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
     resume_command = None
     if snapshot["map"]["enemies"] > 0 and snapshot["game"].get("is_paused"):
         resume_command = {"endpoint": "/api/v1/game/speed", "query": {"speed": 1}}
-    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat"}:
+    if choice in {"emp_control", "smoke_advance", "mortar_reload", "mortar_counterbattery", "attack_structure", "caregiver_retreat", "lure_enemy", "contact_melee"}:
         selected = decision.get("native_plan")
         if not isinstance(selected, dict) or selected not in combat_planner.native_tactical_options(snapshot, choice).values():
             return {"kind": "noop", "description": "Native weapon/target choice changed; request a new decision"}
@@ -1682,10 +1718,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                          if combat_planner.active_clinical_care(c))
         drafted = [c for c in snapshot["combat"]["colonists"]
                    if c.get("is_drafted") and c.get("id") not in protected]
-        commands = [
-            {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": c["id"], "is_drafted": False}}
-            for c in drafted
-        ]
+        commands = [{"endpoint": "/api/v1/combat/tactic", "body": {
+            "map_id": snapshot['map']['id'], "tactic": "stand_down", "fighter_ids": [c['id'] for c in drafted]}}]
         for master in {a.get("master_pawn_id") for a in snapshot["combat"].get("colony_animals") or snapshot.get("animals") or [] if a.get("animals_released")}:
             if master and master not in protected:
                 commands.insert(0, {"endpoint": "/api/v1/combat/animals/release", "body": {"map_id": snapshot["map"]["id"], "master_pawn_id": master, "release": False}})
@@ -1804,16 +1838,33 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         protected = combat_planner.protected_emergency_care_ids(snapshot)
         hostiles = combat_planner.live_hostiles(snapshot)
         commands = []
-        for pawn in snapshot['combat'].get('colonists') or []:
-            if (pawn.get('id') in protected or not combat_planner.ranged_capable(pawn)
-                    or not isinstance(pawn.get('shootable_opponent_ids'), list)): continue
-            visible = pawn.get('shootable_opponent_ids')
-            targets = [target for target in hostiles if not target.get('is_building')
-                       and (target.get('id') in visible if visible is not None else combat_planner.has_clear_shot(pawn, [target]))]
-            if not targets: continue
-            origin = pawn.get('position') or {}
-            target = min(targets, key=lambda row: (first_number((row.get('position') or {}).get('x')) - first_number(origin.get('x'))) ** 2
-                         + (first_number((row.get('position') or {}).get('z')) - first_number(origin.get('z'))) ** 2)
+        shooters=[p for p in snapshot['combat'].get('colonists') or []
+                  if p.get('id') not in protected and combat_planner.stationary_firing_candidate(p,snapshot)]
+        medics = combat_planner.medically_capable_ids(snapshot)
+        def visible_to(pawn, target):
+            visible=pawn.get('shootable_opponent_ids')
+            return target.get('id') in visible if visible is not None else combat_planner.has_clear_shot(pawn,[target])
+        def focus_priority(target):
+            origin=target.get('position') or {}
+            distances=[(first_number((p.get('position') or {}).get('x'))-first_number(origin.get('x')))**2
+                       +(first_number((p.get('position') or {}).get('z'))-first_number(origin.get('z')))**2
+                       for p in shooters]
+            return (combat_planner.is_abduction_threat(target,snapshot),
+                    (target.get('observed_attack_target_id') or
+                     (target.get('current_job_target_id') if target.get('current_job') in {'AttackMelee','AttackStatic','PredatorHunt'} else None)) in medics,
+                    sum(visible_to(p,target) for p in shooters)
+                    * max(0,first_number(target.get('incoming_damage_factor'),1))
+                    / (max(.35,first_number(target.get('health'),1))*max(.25,first_number(target.get('body_size'),1))),
+                    -min(distances,default=float('inf')),
+                    -first_number(target.get('health'),1),-int(target['id']))
+        # A volley needs one actually shared lane. Independent nearest-enemy
+        # choices dispersed damage and never established same-target cover.
+        ranked=sorted((t for t in hostiles if not t.get('is_building')),key=focus_priority,reverse=True)
+        for pawn in shooters:
+            # Request shared fire. Native control rechecks the complete volley
+            # against this pawn's actual contact deadline and handles contact.
+            target=next((t for t in ranked if visible_to(pawn,t)),None)
+            if target is None:continue
             commands.append({'endpoint': '/api/v1/combat/tactic', 'body': {'map_id': snapshot['map']['id'],
                 'tactic': 'stationary_fire', 'fighter_ids': [int(pawn['id'])], 'target_pawn_id': int(target['id'])}})
         if commands and resume_command: commands.append(resume_command)
@@ -1842,9 +1893,11 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
         melee_tactics = {"melee_assault", "melee_hold_line", "screen_melee", "melee_block", "door_defense", "infestation_choke", "rush_ranged"}
         if choice in ranged_tactics:
-            fighters = [pawn for pawn in fighters if combat_planner.ranged_capable(pawn)
-                        and first_number(pawn.get('manipulation'), 1) >= .65 and first_number(pawn.get('sight'), 1) >= .65
-                        and first_number(pawn.get('moving'), 1) >= .65]
+            fighters = ([pawn for pawn in fighters if combat_planner.intercept_capable(pawn, snapshot)]
+                        if choice == 'intercept_kidnapper' else
+                        [pawn for pawn in fighters if combat_planner.ranged_capable(pawn)
+                         and first_number(pawn.get('manipulation'), 1) >= .65 and first_number(pawn.get('sight'), 1) >= .65
+                         and first_number(pawn.get('moving'), 1) >= .65])
             if choice == "counter_snipe":
                 fighters = [pawn for pawn in fighters if first_number(pawn.get("weapon_range")) >= 30]
         elif choice in melee_tactics:
@@ -1857,6 +1910,8 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                         and combat_planner.errand_exposed(snapshot, pawn.get("position"))]
         elif choice == "withdraw_and_regroup":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65]
+        if choice in {'melee_assault', 'rush_ranged'} and combat_planner.unsupported_animal_charge(snapshot, fighters):
+            return {'kind': 'noop', 'description': 'Unsupported melee charge against a known stronger animal; reselect defense or withdrawal'}
         if choice == "backstep_fire":
             fighters = [pawn for pawn in fighters if first_number(pawn.get("moving"), 1) >= 0.65]
         if choice == "kite":
@@ -1984,8 +2039,12 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
         }
     if choice == "prepare_undrafted":
         protected = combat_planner.protected_emergency_care_ids(snapshot)
+        safe = combat_planner.safe_work_actor_ids(snapshot, allow_idle_drafted=True)
+        if combat_planner.live_hostiles(snapshot) and not safe:
+            return {'kind': 'noop', 'description': 'No fresh staging work window; preserve active defenders and care'}
         drafted = [c for c in snapshot["combat"]["colonists"] if c.get("is_drafted")
                    and c.get("id") not in protected
+                   and (not combat_planner.live_hostiles(snapshot) or c.get('id') in safe)
                    and not (c.get("current_job") == "Goto"
                             and combat_planner.errand_exposed(snapshot, c.get("position")))]
         if not drafted:
@@ -2119,8 +2178,7 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
             ) ** 2,
         )
         if choice == "engage_melee":
-            contact = [pawn for pawn in ranked_fighters
-                       if first_number(pawn.get("distance_to_nearest_opponent"), 9999) <= 2]
+            contact = [pawn for pawn in ranked_fighters if combat_planner.contact_opponents(snapshot,pawn)]
             support = [pawn for pawn in ranked_fighters
                        if pawn not in contact and pawn.get("has_ranged_weapon")]
             if not contact:
@@ -2132,23 +2190,19 @@ def plan_action(snapshot: dict[str, Any], decision: dict[str, Any]) -> dict[str,
                     other = hostile.get("position") or {}
                     return ((first_number(other.get("x")) - first_number(position.get("x"))) ** 2
                             + (first_number(other.get("z")) - first_number(position.get("z"))) ** 2)
-                nearby = [hostile for hostile in hostiles if hostile.get("position")
-                          and pawn.get("position") and distance_squared(hostile) <= 4]
+                nearby = combat_planner.contact_opponents(snapshot,pawn)
                 if nearby:
                     contact_targets[pawn["id"]] = min(nearby, key=distance_squared)
             if not contact_targets:
                 return {"kind": "noop", "description": "No verified hostile remains in melee contact"}
             target = next(iter(contact_targets.values()))
-            commands = reserve_commands + [
-                {"endpoint": "/api/v1/pawn/edit/status", "body": {"pawn_id": pawn["id"], "is_drafted": True}}
-                for pawn in contact if pawn["id"] in contact_targets and not pawn.get("is_drafted")
-            ] + [
-                {"endpoint": "/api/v1/pawn/job", "body": {
-                    "pawn_id": pawn["id"], "job_def": "AttackMelee", "target_thing_id": contact_targets[pawn["id"]]["id"],
-                }} for pawn in contact if pawn["id"] in contact_targets and not (
-                    pawn.get("current_job") == "AttackMelee"
-                    and pawn.get("current_job_target_id") == contact_targets[pawn["id"]]["id"])
-            ]
+            # Unarmed contact also needs native revalidation and a finite
+            # self-defense intent. A raw AttackMelee job keeps chasing after
+            # separation, including a recently freed, disarmed casualty.
+            commands = reserve_commands + [{"endpoint":"/api/v1/combat/tactic","body":{
+                "map_id":snapshot['map']['id'],"tactic":"contact_melee","fighter_ids":[pawn['id']],
+                "target_pawn_id":contact_targets[pawn['id']]['id']}}
+                for pawn in contact if pawn['id'] in contact_targets]
             if support:
                 commands.append({"endpoint": "/api/v1/combat/tactic", "body": {
                     "map_id": snapshot["map"]["id"], "tactic": "focus_fire",
@@ -2255,17 +2309,37 @@ def command_acceptance(command: dict[str, Any], response: Any) -> bool | None:
 def command_result(commands, responses):
     statuses = [command_acceptance(command, response) for command, response in zip(commands, responses)]
     return {"applied": any(value is True for value in statuses), "responses": responses,
+            "order_preserved": any(isinstance(r, dict) and bool(r.get("preserved_pawn_ids")) for r in responses),
             "command_acceptance": statuses, "outcome_unknown": any(value is None for value in statuses) or any(isinstance(r, dict) and r.get("outcome_unknown") for r in responses),
             "completion": "unverified"}
 
-def apply_action(client: RimApiClient, action: dict[str, Any]) -> Any:
+def apply_action(client: RimApiClient, action: dict[str, Any], *, continue_combat: bool = False) -> Any:
     if action["kind"] == "noop":
         return {"applied": False, "reason": action["description"]}
     if action["kind"] == "commands":
         responses = []
+        continuation_history = []
         for index, command in enumerate(action["commands"]):
             try:
                 responses.append(client.post(command["endpoint"], query=command.get("query"), body=command.get("body")))
+                if continue_combat and command["endpoint"] == "/api/v1/combat/tactic":
+                    from colony_combat_continuation import continue_deferred
+                    partial = {"responses": [responses[-1]]}
+                    try:
+                        continue_deferred(client, {"kind":"commands", "commands":[command]}, partial, combat_planner)
+                    except (RimApiError, ValueError) as exc:
+                        responses[-1] = partial["responses"][0]
+                        result = command_result(action["commands"], responses)
+                        result.update(error=str(exc), failed_command_index=index, outcome_unknown=True,
+                            native_deferred_continuations=continuation_history + partial.get("native_deferred_continuations", []))
+                        return result
+                    responses[-1] = partial["responses"][0]
+                    continuation_history.extend({**row,"command_index":index} for row in partial.get("native_deferred_continuations", []))
+                    if isinstance(responses[-1], dict) and responses[-1].get("deferred") is True:
+                        result = command_result(action["commands"], responses)
+                        result.update(deferred_review_pending=True, native_deferred_continuations=continuation_history,
+                            reason="Selected native tactical review remains incomplete; follow-up resume not dispatched")
+                        return result
             except RimApiError as error:
                 detail = str(error)
                 stale = (command["endpoint"] == "/api/v1/pawn/job"
@@ -2278,7 +2352,9 @@ def apply_action(client: RimApiClient, action: dict[str, Any]) -> Any:
                 result.update(failed_command_index=index, reason=detail, error=detail, failure_retry_seconds=5, stale_target=stale)
                 result["outcome_unknown"] |= not stale
                 return result
-        return command_result(action["commands"], responses)
+        result = command_result(action["commands"], responses)
+        if continuation_history: result["native_deferred_continuations"] = continuation_history
+        return result
     if action["kind"] == "work_priority":
         response = client.post("/api/v1/colonist/work-priority", body=action["body"])
         accepted = command_acceptance({"endpoint": "/api/v1/colonist/work-priority"}, response)
@@ -2525,13 +2601,16 @@ def _combat_retry_prepare(snapshot, memory, signature):
 
 
 def combat_tactical_acceptance(response):
-    """Native CombatTacticResponseDto has order IDs, and no Applied property."""
+    """A changed order or exact preserved native job; neither proves a hit."""
     if not isinstance(response, dict): return False
-    if 'applied' in response and response['applied'] is not True: return False
     if 'success' in response and response['success'] is not True: return False
-    for field in ('positioned_pawn_ids', 'attacking_pawn_ids'):
+    for field in ('positioned_pawn_ids', 'attacking_pawn_ids', 'preserved_pawn_ids'):
         if field in response and (not isinstance(response[field], list) or any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in response[field])):
             return False
+    preserved = set(response.get('preserved_pawn_ids') or [])
+    observed = set((response.get('positioned_pawn_ids') or []) + (response.get('attacking_pawn_ids') or []))
+    if not preserved.issubset(observed): return False
+    if 'applied' in response and response['applied'] is not True and not preserved: return False
     if 'psycast_queued' in response and not isinstance(response['psycast_queued'], bool): return False
     return response.get('psycast_queued') is True or any(
         isinstance(response.get(field), list) and bool(response[field])
@@ -2615,6 +2694,19 @@ def protect_response_commands(snapshot: dict[str, Any], action: dict[str, Any]) 
     return {**action,'commands':commands,'kind':'commands' if commands else 'noop'}
 
 
+def refresh_combat_control(client: RimApiClient, snapshot: dict[str, Any], *, apply: bool) -> dict[str, Any] | None:
+    """Fresh director observation renews only already selected native plans."""
+    controlled = [p['id'] for p in snapshot.get('combat', {}).get('colonists', [])
+                  if p.get('combat_plan') and p.get('id') is not None]
+    if not apply or not controlled:
+        return None
+    try:
+        return client.post('/api/v1/combat/tactic', body={
+            'map_id': snapshot['map']['id'], 'tactic': 'refresh_control', 'fighter_ids': controlled})
+    except RimApiError as exc:
+        return {'error': str(exc), 'renewed': False}
+
+
 def run_cycle(
     client: RimApiClient,
     agent: Any,
@@ -2628,6 +2720,7 @@ def run_cycle(
     protected_response_plans: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     snapshot = collect_snapshot(client)
+    control_lease = refresh_combat_control(client, snapshot, apply=apply)
     snapshot['combat']['protected_response_plans'] = protected_response_plans or []
     if protected_noncombat_pawn_ids and not combat_planner.live_hostiles(snapshot):
         # An observed neutral hunt can own drafted actors while unrelated
@@ -2645,7 +2738,7 @@ def run_cycle(
         action = _combat_retry_filter_action(snapshot, decision, action)
     result = {"applied": False, "reason": "preview mode"}
     if apply:
-        result = apply_action(client, action)
+        result = apply_action(client, action, continue_combat=True)
         if action.get('combat_unavailable'):
             result.update(combat_unavailable=True, blocked=True, reason=action['reason'])
         if combat_memory is not None and signature is not None:
@@ -2657,6 +2750,7 @@ def run_cycle(
         "decision": decision,
         "action": action,
         "result": result,
+        "control_lease": control_lease,
     }
     preferences = laya_preferences.load_preferences()
     if preferences.get("technical_logging"):

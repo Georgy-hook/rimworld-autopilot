@@ -140,7 +140,7 @@ class FoodCommitmentTests(unittest.TestCase):
         actions = ['harvest_local_plants', 'resilience_feed', 'hold_survival', 'expand_home_area']
         self.assertEqual(director.focus_active_fire_choices(actions, True, s), actions[:-1])
         s['colonists'][0]['work_priorities']['Firefighter']['disabled'] = False
-        self.assertNotIn('harvest_local_plants', director.focus_active_fire_choices(actions, True, s))
+        self.assertIn('harvest_local_plants', director.focus_active_fire_choices(actions, True, s))
 
     def test_event_harvest_uses_native_harvestability_and_verified_edible_product(self):
         s = fixture()

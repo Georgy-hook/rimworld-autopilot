@@ -136,10 +136,13 @@ namespace RIMAPI.Helpers
         {
             var policy=person.drugs?.CurrentPolicy;
             return new {policy_id=policy?.id,policy=policy?.label,traits=person.story?.traits.allTraits.Select(t=>t.def.defName).ToList(),
+                capacities=new {consciousness=person.health.capacities.GetLevel(PawnCapacityDefOf.Consciousness),moving=person.health.capacities.GetLevel(PawnCapacityDefOf.Moving),manipulation=person.health.capacities.GetLevel(PawnCapacityDefOf.Manipulation)},
                 conditions=person.health.hediffSet.hediffs.Where(h=>h.Visible && (h is Hediff_Addiction || h is Hediff_ChemicalDependency || h.def.defName.IndexOf("Tolerance",StringComparison.OrdinalIgnoreCase)>=0 || h.def.defName=="DrugOverdose" || h.def.defName.IndexOf("Luciferium",StringComparison.OrdinalIgnoreCase)>=0)).Select(h=>new{def_name=h.def.defName,severity=h.Severity,description=h.def.description}).ToList(),
                 entries=policy == null ? null : Enumerable.Range(0,policy.Count).Select(i=>new{drug=policy[i].drug.defName,allowed_addiction=policy[i].allowedForAddiction,allowed_joy=policy[i].allowedForJoy,
                     scheduled=policy[i].allowScheduled,days=policy[i].daysFrequency,mood_below=policy[i].onlyIfMoodBelow,joy_below=policy[i].onlyIfJoyBelow,inventory=policy[i].takeToInventory,
                     chemical=DrugStatsUtility.GetChemical(policy[i].drug)?.defName,addictiveness=DrugStatsUtility.GetDrugComp(policy[i].drug)?.addictiveness,
+                    capacity_risk=DrugCapacitySafety.Risk(person,policy[i].drug),capacity_effects=DrugCapacitySafety.Facts(policy[i].drug),
+                    hunger_rate_offset=DrugCapacitySafety.Stages(policy[i].drug).Select(s=>s.hungerRateFactorOffset).DefaultIfEmpty(0).Max(),
                     overdose=DrugStatsUtility.GetDrugComp(policy[i].drug)?.CanCauseOverdose,safe_interval=DrugStatsUtility.GetSafeDoseInterval(policy[i].drug,person.ageTracker.CurLifeStage.bodySizeFactor),
                     stock=map.listerThings.AllThings.Where(t=>t.def==policy[i].drug && !t.IsForbidden(person)).Sum(t=>t.stackCount),scheduled_allowed=person.drugs.AllowedToTakeScheduledEver(policy[i].drug)}).ToList()};
         }
@@ -147,7 +150,8 @@ namespace RIMAPI.Helpers
         {
             if (!person.IsColonistPlayerControlled || person.drugs == null || !person.DevelopmentalStage.Adult()) return;
             DrugPolicy current=person.drugs.CurrentPolicy;
-            foreach(DrugPolicy policy in Current.Game.drugPolicyDatabase.AllPolicies.Where(p=>p != current))
+            foreach(DrugPolicy policy in Current.Game.drugPolicyDatabase.AllPolicies.Where(p=>p != current
+                && !Enumerable.Range(0,p.Count).Select(i=>p[i]).Any(e=>(e.allowedForJoy || e.allowScheduled) && DrugCapacitySafety.Risk(person,e.drug))))
                 result.NativeOptions.Add(Option("drug_policy",person,null,policy.id.ToString(),0,$"{person.LabelShort}: {policy.label}",
                     Effects($"{policy.label}: "+string.Join(",",Enumerable.Range(0,policy.Count).Select(i=>policy[i]).Where(e=>e.allowScheduled || e.allowedForJoy || e.allowedForAddiction).Select(e=>$"{e.drug.defName}: addiction={e.allowedForAddiction} joy={e.allowedForJoy} schedule={(e.allowScheduled ? e.daysFrequency.ToString("0.0") : "off")}")),
                         "Visible dependency/addiction="+string.Join(",",person.health.hediffSet.hediffs.Where(h=>h.Visible && (h is Hediff_Addiction || h is Hediff_ChemicalDependency || h.def.defName.IndexOf("Luciferium",StringComparison.OrdinalIgnoreCase)>=0)).Select(h=>h.def.defName))+"; withdrawal/overdose/ideology",
@@ -169,7 +173,7 @@ namespace RIMAPI.Helpers
                     if (!entry.allowScheduled || entry.daysFrequency != days || entry.allowedForJoy) presets.Add(schedule);
                 }
                 float safe=DrugStatsUtility.GetSafeDoseInterval(drug,person.ageTracker.CurLifeStage.bodySizeFactor);
-                if (stock && drug.IsNonMedicalDrug && !dependent && person.CanTakeDrug(drug) && safe >= 0 && safe <= 50 && comp != null && comp.addictiveness < 1f)
+                if (stock && drug.IsNonMedicalDrug && !dependent && !DrugCapacitySafety.Risk(person,drug) && person.CanTakeDrug(drug) && safe >= 0 && safe <= 50 && comp != null && comp.addictiveness < 1f)
                 {
                     float days=Math.Max(1f,(float)Math.Ceiling(safe));
                     if (!entry.allowScheduled || entry.daysFrequency != days || entry.onlyIfMoodBelow != .35f || entry.allowedForJoy)

@@ -1,8 +1,77 @@
 """Purpose-specific storage and observed sites; native checks remain authoritative."""
+import math
+
+
+def food_condition_facts(snapshot, demand):
+    """Use an observed rot/deterioration horizon, not freshness alone.
+
+    HP/rate is a planning estimate, not an exact weather/fire loss deadline.
+    Processing/delivery remains separate and can change the estimate.
+    """
+    rows = (snapshot.get('development', {}).get('production') or {}).get('perishables')
+    if not isinstance(rows, list):
+        return {'available':False, 'at_risk_nutrition':0, 'critical_stack_ids':[]}
+    native = snapshot.get('development', {}).get('sustenance') or {}
+    eligible = native.get('human_food')
+    eligible_defs = ({p.get('def_name') for p in eligible if float(p.get('fresh_eligible_nutrition') or 0) > 0}
+                     if native.get('available') is True and isinstance(eligible, list)
+                     and snapshot.get('colonists') else None)
+    food = []
+    for p in rows:
+        if eligible_defs is not None and p.get('def_name') not in eligible_defs:
+            continue  # Generic corpse edibility is not this roster's food policy.
+        if p.get('human_edible') is not True or p.get('forbidden') or p.get('burning') or p.get('rot_stage') not in ('Fresh', None):
+            continue
+        nutrition = p.get('nutrition')
+        if not isinstance(nutrition,(int,float)) or not math.isfinite(nutrition) or nutrition <= 0:
+            continue
+        ticks = p.get('ticks_until_rot')
+        rot = max(0,ticks)/60000 if isinstance(ticks,(int,float)) and math.isfinite(ticks) else None
+        hp,rate = p.get('hit_points'),p.get('deterioration_per_day')
+        damage = max(0,hp)/rate if (p.get('protected_from_deterioration') is False
+            and isinstance(hp,(int,float)) and isinstance(rate,(int,float)) and math.isfinite(hp) and math.isfinite(rate) and rate>0) else None
+        deadlines = [x for x in (rot,damage) if x is not None]
+        food.append({'id':p.get('id'),'nutrition':nutrition,'deadline_days':min(deadlines) if deadlines else None,
+            'rot_days':rot,'deterioration_days_estimate':damage,'exposed':p.get('protected_from_deterioration') is False})
+    used,total,risk = 0.,0.,0.
+    for p in sorted(food,key=lambda p:p['deadline_days'] if p['deadline_days'] is not None else float('inf')):
+        total += p['nutrition']
+        limit = demand*p['deadline_days'] if demand>0 and p['deadline_days'] is not None else float('inf')
+        usable = min(p['nutrition'],max(0,limit-used));used += usable;risk += p['nutrition']-usable
+    critical = [p['id'] for p in food if p['exposed'] and p['deterioration_days_estimate'] is not None
+        and p['deterioration_days_estimate']<2]
+    return {'available':True,'observed_food_nutrition':round(total,3),
+        'use_before_deadline_nutrition_estimate':round(used,3),'at_risk_nutrition':round(risk,3),
+        'critical_stack_ids':critical,'stacks':food,'estimate_not_delivery_or_exact_loss_time':True}
+
+
+def material_targets(snapshot):
+    """Finite prerequisites for broken services and selected preservation."""
+    dev=snapshot.get('development') or {};targets={}
+    for b in (dev.get('production')or {}).get('buildings')or []:
+        if b.get('broken_down') is True:
+            name=b.get('repair_component_def') or 'ComponentIndustrial'
+            targets[name]=targets.get(name,0)+int(b.get('repair_component_count')or 1)
+    for name,count in (dev.get('preservation_requirements')or {}).items():
+        targets[name]=targets.get(name,0)+int(count)
+    return targets
+
+
+def meal_batch_target(snapshot):
+    """About two days of meals, capped by observed nonfrozen meal rot horizons."""
+    from colony_capabilities import food_planning_facts
+    demand=food_planning_facts(snapshot)['human_demand_per_day']
+    rows=(snapshot.get('development',{}).get('production') or {}).get('perishables') or []
+    meals=[p for p in rows if str(p.get('def_name') or '').startswith('Meal') and p.get('count',0)>0]
+    nutrition=[float(p['nutrition'])/p['count'] for p in meals if isinstance(p.get('nutrition'),(int,float)) and p['nutrition']>0]
+    per_meal=min(nutrition) if nutrition else .9  # Core fallback until an actual product exists.
+    days=min([2.]+[max(.5,float(p['ticks_until_rot'])/60000*.7) for p in meals
+        if isinstance(p.get('ticks_until_rot'),(int,float)) and math.isfinite(p['ticks_until_rot']) and p['ticks_until_rot']>0])
+    return max(2,min(80,math.ceil(demand*days/per_meal)))
 
 PROFILES = {
-    'dry_goods': ('dry warehouse', 9, 8, 'Nonfood valuables; Normal overflow priority; no corpses, fuel or chunks'),
-    'workshop_inputs': ('workshop input annex', 7, 6, 'Components/textiles beside production; Preferred input buffer; bulk metals stay in free ground zones'),
+    'dry_goods': ('dry warehouse', 9, 8, 'Reviewed dry supplies, books and valuables; Normal overflow; no bulk resources, fuel, shells, corpses or special biological/anomaly items'),
+    'workshop_inputs': ('workshop input annex', 7, 6, 'Small components/textiles/process inputs beside production; Preferred buffer; wood, metals and stone stay in free ground zones'),
     'kitchen_inputs': ('kitchen pantry', 6, 6, 'Raw food beside cooking; roof is not refrigeration; fresh only'),
     'meals': ('meal store', 6, 6, 'Meals beside dining/cooking; Preferred; spoilage still depends on actual temperature'),
     'medicine': ('medical supply store', 5, 5, 'Medicine beside care beds; separate from corpses and bulk material'),

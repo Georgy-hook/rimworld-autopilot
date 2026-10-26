@@ -34,7 +34,7 @@ behavioral assertions and transport readback before treating its result as evide
 
 Offline tests and a C# build do not require launching RimWorld or model weights.
 Live tests must be separately authorized and recorded as gameplay, technical
-replay or direct intervention. The current candidate targets `developing`
-through the PR on `feature/0.0.8`. Publication of 0.0.8, preparation of
+replay or direct intervention. Stable `v0.0.8` is published; the current
+`feature/0.0.9` candidate targets `developing`. Publication of 0.0.8, preparation of
 `feature/0.0.9` and one next colony were explicitly requested on 11 October.
 An audit alone does not authorize a release or a new campaign.

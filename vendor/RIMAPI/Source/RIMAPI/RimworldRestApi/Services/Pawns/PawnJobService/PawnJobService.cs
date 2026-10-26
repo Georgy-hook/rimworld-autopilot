@@ -127,6 +127,8 @@ namespace RIMAPI.Services
                         if (!pawn.CurJob.killIncappedTarget) pawn.CurJob.killIncappedTarget = true;
                         return ApiResult.Ok();
                     }
+                    if (pawn.jobs?.jobQueue == null || pawn.jobs.jobQueue.Count != 0)
+                        return ApiResult.Fail("finish_downed_later_queue_protected");
                 }
 
                 Thing equipTarget = null;
@@ -146,7 +148,8 @@ namespace RIMAPI.Services
                         || !EquipmentUtility.CanEquip(equipTarget, pawn, out string equipReason))
                         return ApiResult.Fail("equip_target_no_longer_compatible");
                     if (pawn.CurJobDef == JobDefOf.Equip && pawn.CurJob.targetA.Thing == equipTarget)
-                        return ApiResult.Fail("equip_already_in_progress");
+                        return new PawnJobInProgressResultDto{Success=true,Applied=false,InProgress=true,
+                            Reason="equip_already_in_progress",PawnId=pawn.thingIDNumber,TargetThingId=equipTarget.thingIDNumber};
                     if (!pawn.CanReserveAndReach(equipTarget, PathEndMode.Touch, Danger.Some))
                         return ApiResult.Fail("equip_target_unreachable_or_reserved");
                     equipWasForbidden = equipTarget.IsForbidden(pawn);
@@ -221,14 +224,17 @@ namespace RIMAPI.Services
                 ? targetPawn : null;
         }
 
-        public ApiResult AssignTendJob(MedicalTendRequestDto request)
+        private static ApiResult<MedicalTendResultDto> TendRefusal(int patient,int? doctor,string reason,string detail)
+            =>ApiResult<MedicalTendResultDto>.Ok(MedicalTendResultDto.Refused(patient,doctor,reason,detail));
+
+        public ApiResult<MedicalTendResultDto> AssignTendJob(MedicalTendRequestDto request)
         {
             try
             {
                 Pawn patient = PawnHelper.FindPawnById(request.PatientPawnId);
                 if (patient == null)
                 {
-                    return ApiResult.Fail($"Patient pawn not found: {request.PatientPawnId}");
+                    return TendRefusal(request.PatientPawnId,request.DoctorPawnId,"patient_missing",$"Patient pawn not found: {request.PatientPawnId}");
                 }
 
                 Pawn doctor;
@@ -237,13 +243,12 @@ namespace RIMAPI.Services
                     doctor = PawnHelper.FindPawnById(request.DoctorPawnId.Value);
                     if (doctor == null)
                     {
-                        return ApiResult.Fail($"Doctor pawn not found: {request.DoctorPawnId}");
+                        return TendRefusal(request.PatientPawnId,request.DoctorPawnId,"doctor_missing",$"Doctor pawn not found: {request.DoctorPawnId}");
                     }
                     if (doctor == patient)
                     {
                         if (!request.SelfTend || patient.Downed || patient.playerSettings == null)
-                            return ApiResult.Fail("Self-tend requires a mobile colonist and an explicit self_tend request");
-                        patient.playerSettings.selfTend = true;
+                            return ApiResult<MedicalTendResultDto>.Fail("Self-tend requires a mobile colonist and an explicit self_tend request");
                     }
                 }
                 else
@@ -256,27 +261,37 @@ namespace RIMAPI.Services
 
                     if (doctor == null)
                     {
-                        return ApiResult.Fail("No available doctor found on the map");
+                        return TendRefusal(request.PatientPawnId,request.DoctorPawnId,"no_available_doctor","No available doctor found on the map");
                     }
                 }
 
                 if (patient.Dead || !patient.Spawned || doctor.Dead || doctor.Downed
                     || !doctor.Spawned || doctor.Map != patient.Map)
-                    return ApiResult.Fail("Tending requires a living patient and a mobile doctor on the same map");
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"care_actor_or_patient_unavailable","Tending requires a living patient and a mobile doctor on the same map");
                 if (doctor.skills?.GetSkill(SkillDefOf.Medicine)?.TotallyDisabled ?? true)
-                    return ApiResult.Fail("Selected doctor is incapable of medicine");
-                if (doctor.InMentalState || doctor.Drafted || doctor.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"doctor_incapable","Selected doctor is incapable of medicine");
+                if(CaregiverRecoveryHelper.Protected(doctor))
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"caregiver_recovery_in_progress","Caregiver is in a finite completed-tend recovery window; current food/rest is preserved");
+                bool releaseCombat = request.ReleaseCombatJobId.HasValue;
+                if (releaseCombat && (request.SelfTend != (doctor == patient) || request.ReassignFromPatientId.HasValue || request.ReassignFromRescuePatientId.HasValue
+                    || !CombatMedicalTransitionHelper.Ready(doctor, patient, request.ReleaseCombatJobId.Value, out var releaseTravel)))
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"postcombat_binding_changed","Exact postcombat selected job, threat state or clinical route changed; no doctor released");
+                if (doctor.InMentalState || doctor.Drafted && !releaseCombat || doctor.WorkTypeIsDisabled(WorkTypeDefOf.Doctor)
                     || !doctor.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation))
-                    return ApiResult.Fail("Selected doctor is not currently controllable for treatment");
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"doctor_not_controllable","Selected doctor is not currently controllable for treatment");
                 bool reassign = request.ReassignFromPatientId.HasValue;
                 bool rescueYield = request.ReassignFromRescuePatientId.HasValue;
                 if (reassign && rescueYield)
-                    return ApiResult.Fail("Only one exact current care binding may be supplied");
+                    return ApiResult<MedicalTendResultDto>.Fail("Only one exact current care binding may be supplied");
                 // Repeating the exact assignment is readback, not a new job.
                 // Keep medicine pickup and tend progress, including self-tending.
                 if (!reassign && doctor.CurJobDef == JobDefOf.TendPatient
                     && doctor.CurJob.targetA.Thing == patient)
-                    return ApiResult.Ok();
+                    return ApiResult<MedicalTendResultDto>.Ok(new MedicalTendResultDto{Applied=false,InProgress=true,PatientPawnId=patient.thingIDNumber,DoctorPawnId=doctor.thingIDNumber,Reason="exact_tend_job_in_progress"});
+                // A new assignment must not erase a later queued instruction
+                // or interrupt carrying a patient, including a self-care yield.
+                if (doctor.jobs.jobQueue.Any() || doctor.carryTracker?.CarriedThing is Pawn)
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"doctor_queue_or_patient_carry","Selected doctor has a queued instruction or is carrying a patient");
                 if (reassign)
                 {
                     Pawn oldPatient = doctor.CurJob?.targetA.Thing as Pawn;
@@ -284,13 +299,9 @@ namespace RIMAPI.Services
                     if (doctor.CurJobDef != JobDefOf.TendPatient || oldPatient == null
                         || oldPatient.thingIDNumber != request.ReassignFromPatientId.Value || oldPatient == patient
                         || oldPatient.health.hediffSet.BleedRateTotal > 0f
-                        || oldPatient.health.hediffSet.hediffs.Any(h => h.def != HediffDefOf.BloodLoss
-                            && h.def != HediffDefOf.Hypothermia && h.def != HediffDefOf.Heatstroke
-                            && h.def.defName != "Frostbite" && h.TendableNow()
-                            && (h.IsCurrentlyLifeThreatening || h.TryGetComp<HediffComp_Immunizable>() != null
-                                || h.def.lethalSeverity > 0f))
+                        || CareTriageHelper.DiseaseCareProtected(oldPatient)
                         || rate <= 0f)
-                        return ApiResult.Fail("Emergency reassignment requires the exact stable current tend patient and a different patient with active bleeding");
+                        return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"tend_binding_changed","Emergency reassignment requires the exact stable current tend patient and a different patient with active bleeding");
                 }
                 else if (rescueYield)
                 {
@@ -301,24 +312,45 @@ namespace RIMAPI.Services
                         || request.ReassignFromRescuePatientId.Value != patient.thingIDNumber
                         || doctor.carryTracker?.CarriedThing is Pawn
                         || patient.health.hediffSet.BleedRateTotal < 1.5f)
-                        return ApiResult.Fail("Emergency tending requires the exact unstarted rescue of a critically bleeding patient");
+                        return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"rescue_binding_changed","Emergency tending requires the exact unstarted rescue of a critically bleeding patient");
                 }
                 else if (CombatNativeHelper.HasClinicalCareJob(doctor) || CombatNativeHelper.HasCareRetreat(doctor))
-                    return ApiResult.Fail("Selected doctor is already providing patient care");
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"doctor_providing_care","Selected doctor is already providing patient care");
+                if (doctor != patient && (CombatNativeHelper.HasClinicalCareJob(patient)
+                    || CombatNativeHelper.HasCareRetreat(patient) || CareTriageHelper.QueuedCare(patient)
+                    || patient.carryTracker?.CarriedThing is Pawn))
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"patient_providing_care","Patient is providing protected care; do not turn a working caregiver into another treatment target");
                 if (!doctor.CanReserveAndReach(patient, PathEndMode.Touch, Danger.Some))
-                    return ApiResult.Fail("Selected doctor cannot reserve and reach the patient");
+                    return ApiResult<MedicalTendResultDto>.Ok(MedicalTendResultDto.Refused(patient.thingIDNumber,doctor.thingIDNumber));
                 if (!(patient.health?.hediffSet?.hediffs?.Any(h => h.TendableNow()) ?? false))
-                    return ApiResult.Fail("Patient has no condition currently requiring tending");
-                bool success = PawnHelper.AssignTendJob(doctor, patient);
+                    return TendRefusal(request.PatientPawnId,doctor.thingIDNumber,"no_tendable_condition","Patient has no condition currently requiring tending");
+                bool wasSelfTend = patient.playerSettings?.selfTend ?? false;
+                bool success = false;
+                bool wasDrafted = doctor.Drafted;
+                try
+                {
+                    // This exact initial clinical intent was checked while the
+                    // selected doctor was still drafted. No native tick elapses
+                    // between release and the explicit ordinary tend assignment.
+                    if (releaseCombat) doctor.drafter.Drafted = false;
+                    if (doctor == patient) patient.playerSettings.selfTend = true;
+                    success = PawnHelper.AssignTendJob(doctor, patient, request.ReviewAfterTend);
+                }
+                finally
+                {
+                    if (doctor == patient && !success) patient.playerSettings.selfTend = wasSelfTend;
+                    if (releaseCombat && !success && wasDrafted && !CombatNativeHelper.HasClinicalCareJob(doctor)
+                        && !(doctor.carryTracker?.CarriedThing is Pawn)) doctor.drafter.Drafted = true;
+                }
                 if (!success)
                 {
-                    return ApiResult.Fail("Doctor could not accept tend job");
+                    return ApiResult<MedicalTendResultDto>.Fail("Doctor could not accept tend job");
                 }
-                return ApiResult.Ok();
+                return ApiResult<MedicalTendResultDto>.Ok(new MedicalTendResultDto{Applied=true,PatientPawnId=patient.thingIDNumber,DoctorPawnId=doctor.thingIDNumber,Reason="native_tend_job_accepted"});
             }
             catch (Exception ex)
             {
-                return ApiResult.Fail(ex.Message);
+                return ApiResult<MedicalTendResultDto>.Fail(ex.Message);
             }
         }
 
@@ -363,7 +395,11 @@ namespace RIMAPI.Services
             }
         }
 
-        public ApiResult AssignSleepingBed(MedicalBedRestRequestDto request)
+        private static ApiResult<SleepingBedResultDto> SleepingBedRefusal(MedicalBedRestRequestDto request,string reason)
+            =>ApiResult<SleepingBedResultDto>.Ok(new SleepingBedResultDto{Applied=false,Blocked=true,
+                Reason=reason,PatientPawnId=request.PatientPawnId,BedBuildingId=request.BedBuildingId});
+
+        public ApiResult<SleepingBedResultDto> AssignSleepingBed(MedicalBedRestRequestDto request)
         {
             try
             {
@@ -373,28 +409,37 @@ namespace RIMAPI.Services
                 if (pawn == null || bed == null || !pawn.Spawned || !bed.Spawned || pawn.Map != bed.Map
                     || pawn.Faction != Faction.OfPlayer || bed.Faction != Faction.OfPlayer
                     || bed.Medical || bed.ForPrisoners || pawn.Dead || pawn.Downed || pawn.Drafted || pawn.InMentalState)
-                    return ApiResult.Fail("ordinary_sleeping_bed_or_actor_unavailable");
+                    return SleepingBedRefusal(request,"ordinary_sleeping_bed_or_actor_unavailable");
                 if (CombatNativeHelper.HasClinicalCareJob(pawn) || CombatNativeHelper.HasCareRetreat(pawn)
                     || pawn.CurJobDef == JobDefOf.Ingest)
-                    return ApiResult.Fail("sleep_assignment_would_interrupt_care_or_food");
+                    return SleepingBedRefusal(request,"sleep_assignment_would_interrupt_care_or_food");
+                if (pawn.jobs.jobQueue.Any() || pawn.carryTracker?.CarriedThing is Pawn)
+                    return SleepingBedRefusal(request,"sleep_assignment_would_interrupt_queue_or_carry");
+                if (CaregiverRecoveryHelper.Protected(pawn))
+                    return SleepingBedRefusal(request,"caregiver_recovery_in_progress");
                 if (bed.OwnersForReading.Any(p => p != pawn)
                     || !RestUtility.CanUseBedEver(pawn, bed.def))
-                    return ApiResult.Fail("sleeping_bed_owned_or_incompatible");
+                    return SleepingBedRefusal(request,"sleeping_bed_owned_or_incompatible");
                 if (pawn.CurJobDef == JobDefOf.LayDown && pawn.CurJob?.targetA.Thing == bed)
                 {
-                    pawn.ownership.ClaimBedIfNonMedical(bed);
-                    return ApiResult.Ok();
+                    bool assigned=pawn.ownership.OwnedBed==bed;
+                    if(!assigned)pawn.ownership.ClaimBedIfNonMedical(bed);
+                    return ApiResult<SleepingBedResultDto>.Ok(new SleepingBedResultDto{
+                        Applied=!assigned && pawn.ownership.OwnedBed==bed,Assigned=pawn.ownership.OwnedBed==bed,
+                        InProgress=true,Reason="exact_sleep_job_in_progress",PatientPawnId=pawn.thingIDNumber,BedBuildingId=bed.thingIDNumber});
                 }
                 if (!pawn.CanReserveAndReach(bed, PathEndMode.OnCell, Danger.Some)
                     || !ResilienceAutomationHelper.RoutineRouteSafe(pawn, bed))
-                    return ApiResult.Fail("sleeping_bed_unreachable_or_unsafe");
+                    return SleepingBedRefusal(request,"sleeping_bed_unreachable_or_unsafe");
                 Job job = JobMaker.MakeJob(JobDefOf.LayDown, bed);
                 job.restUntilHealed = false;
-                if (!pawn.jobs.TryTakeOrderedJob(job)) return ApiResult.Fail("sleep_job_not_accepted");
+                if (!pawn.jobs.TryTakeOrderedJob(job)) return ApiResult<SleepingBedResultDto>.Fail("sleep_job_not_accepted");
                 pawn.ownership.ClaimBedIfNonMedical(bed);
-                return ApiResult.Ok();
+                return ApiResult<SleepingBedResultDto>.Ok(new SleepingBedResultDto{Applied=true,
+                    Assigned=pawn.ownership.OwnedBed==bed,Reason="native_sleep_job_accepted",
+                    PatientPawnId=pawn.thingIDNumber,BedBuildingId=bed.thingIDNumber});
             }
-            catch (Exception ex) { return ApiResult.Fail(ex.ToString()); }
+            catch (Exception ex) { return ApiResult<SleepingBedResultDto>.Fail(ex.ToString()); }
         }
 
         public ApiResult<MedicalFeedResultDto> AssignFeedJob(MedicalFeedRequestDto request)

@@ -11,10 +11,12 @@ DESCRIPTIONS = {"production_utilities": "Choose a building's power switch or aut
 DESCRIPTIONS["production_recipe_batch"] = "Choose one loaded non-food recipe/material at an available completed worktable: medicines, components, equipment, drugs, subcores, mech gestation or loaded recycling. Enabled skilled worker, prerequisites and reachable ingredients checked; one finite vanilla bill."
 DESCRIPTIONS["production_material_logistics"] = "Choose a real material logistics workflow: allow one forbidden safe-site resource stack, permit a missing material in existing storage, create an actual roofed indoor stockpile near a completed table, or start a vanilla hauling job. Compare exposure, floor space and competing labor; delivery remains ordinary work."
 DESCRIPTIONS['production_plan'] = 'Choose a loaded weapon/component manufacturing goal or keep existing goods. Compare stock and weapons with research, builder, table, power, recipe skill, materials and survival duties. This records a finite goal; it creates no building, bill or product.'
+DESCRIPTIONS['production_maintenance'] = 'Replace a failed building component with the native repair job. Compare missing parts, actual worker/route readiness, care, food and the service restored. Full HP or refuelling is not a component repair; observe completion and real power output.'
 LABELS = {"production_utilities": "распределение топлива и энергии", "production_feed_batch": "ограниченный заказ корма"}
 LABELS["production_recipe_batch"] = "производство по доступным рецептам"
 LABELS["production_material_logistics"] = "material storage and delivery"
 LABELS['production_plan'] = 'plan weapon or component manufacturing'
+LABELS['production_maintenance'] = 'replace failed building component'
 ACTIONS = set(DESCRIPTIONS)
 DOMAINS = {a: "work_orders" for a in ACTIONS}
 
@@ -276,7 +278,7 @@ def logistics_options(context):
     active = {row.get("target_id") for row in native.get("active_orders") or []
               if isinstance(row, dict) and row.get("kind") == "haul"}
     return {p["key"]: p for p in native.get("options") or [] if isinstance(p, dict)
-            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul", "profile", "cooling"}
+            and isinstance(p.get("key"), str) and p.get("kind") in {"allow", "shelf", "stockpile", "zone", "haul", "profile", "cooling", "shelf_restrict"}
             and not (p.get("kind") == "haul" and p.get("target_id") in active)}
 
 def logistics_choose(agent, context, state=None):
@@ -286,7 +288,7 @@ def logistics_choose(agent, context, state=None):
         return {"benefit": str(plan.get("label")), "risk": str(plan.get("risk")), "cost": str(plan.get("cost")), "inaction": "Forbidden/exposed/unstored stock and delivery delays continue", "uncertainty": "Ordinary policy/job only; no delivered materials yet"}
     groups = {}
     for key, plan in plans.items(): groups.setdefault(plan["kind"], []).append((key, plan))
-    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose logistics or a dedicated shelf profile; keep kitchen, medicine and workshop filters distinct. Buffers outrank overflow; policy is not hauling.")
+    kind, raw = _stage(agent, state, [(kind, kind, effect(items[0][1])) for kind, items in groups.items()], "production_logistics_purpose", "Choose logistics, a dedicated shelf profile or a safe restriction of an existing filter. Bulk wood/metals/stone stay on ground; animal feed is separate from human food, hazardous/special items need separate handling. Keep kitchen, medicine and workshop purposes distinct. Policy is not hauling.")
     stages.append(raw)
     if kind is None: return {"production_policy":"defer", "shown_production_options": list(plans)}, {"stages":stages}
     subjects = {}
@@ -307,6 +309,7 @@ def options(context):
         if b.get("can_set_auto_refuel") and isinstance(b.get("auto_refuel"), bool):
             policies.append("disable_refuel" if b["auto_refuel"] else "enable_refuel")
         for policy in policies:
+            if b.get('broken_down') is True and policy in {'switch_on','enable_refuel'}: continue
             if policy == "switch_on":
                 consumer = isinstance(b.get("power_output"), (int, float)) and b["power_output"] < 0
                 if consumer and (b.get("connected") is False or b.get("net_has_active_source") is False and not float(b.get("net_stored_energy") or 0)): continue
@@ -333,6 +336,11 @@ def prepare(snapshot, map_state):
     context["recipe_options"] = _ready_plans(recipe_options({k: v for k, v in context.items() if k != "recipe_options"}), map_state, "production_recipe_batch", tick)
     context["logistics_options"] = _ready_plans(logistics_options({k: v for k, v in context.items() if k != "logistics_options"}), map_state, "production_material_logistics", tick)
     available = ["production_utilities"] if context["options"] else []
+    repairs = map_state.setdefault('production_repair_history', {})
+    context['maintenance_options'] = {p['key']:p for p in context.get('repair_options') or []
+        if isinstance(p.get('key'),str) and not retry_recent(repairs.get(p['key']),tick,30000)}
+    if context['maintenance_options']:
+        available.append('production_maintenance')
     if context["feed_options"]:
         available.append("production_feed_batch")
     if recipe_options(context):
@@ -360,6 +368,19 @@ def utility_facts(snapshot):
 
 def choose(agent, state, action, snapshot):
     context = snapshot["development"]["production"]
+    if action == 'production_maintenance':
+        plans = context.get('maintenance_options') or {}
+        choices = {k:f"{p.get('worker')} repairs {p.get('label')}" for k,p in plans.items()}
+        effects = {k:{'benefit':'Restore failed component, actual service depends on power/fuel',
+            'cost':f"{p.get('component_count')} {p.get('component_def')} and construction worker",
+            'risk':'Displaces this available worker; exact native parts/routes/care rechecked',
+            'inaction':'Broken utility continues providing no service','uncertainty':'Repair order is not completed replacement or restored output'} for k,p in plans.items()}
+        choices['defer']='Keep current labor/parts; broken service persists'
+        effects['defer']={'benefit':'Preserve workers/parts','cost':'No repair','risk':'Service remains broken',
+            'inaction':'Current power/cooking/cooling remain','uncertainty':'No restored output'}
+        key,raw=_stage(agent,state,[(k,choices[k],effects[k]) for k in plans],
+            action,DESCRIPTIONS[action])
+        return {'repair_plan':key or 'defer','shown_repair_options':list(plans)},raw
     if action == 'production_plan':
         return manufacturing.choose(agent, snapshot, state)
     if action == "production_recipe_batch":
@@ -414,6 +435,26 @@ def execute(client, snapshot, map_state, action, selected):
         return {"applied": False, "reason": "unsupported_action"}
     if action == 'production_plan':
         return manufacturing.execute(client, snapshot, map_state, selected)
+    if action == 'production_maintenance':
+        key=selected.get('repair_plan');context=snapshot.get('development',{}).get('production',{})
+        history=map_state.setdefault('production_repair_history',{});tick=int(snapshot.get('game',{}).get('tick')or 0)
+        if key=='defer':
+            for k in selected.get('shown_repair_options')or []:
+                history[k]=failure_record(tick,seconds=120)
+            return {'applied':False,'reason':'laya_deferred_component_repair'}
+        plan=(context.get('maintenance_options')or {}).get(key)
+        if not plan:return {'applied':False,'reason':'unverified_repair_plan'}
+        current=_read(client,snapshot,'context')
+        live=next((p for p in current.get('repair_options')or [] if p.get('key')==key),None)
+        if not live or any(plan.get(k)!=live.get(k)for k in ('worker_id','building_id','component_def','component_count')):
+            history[key]=failure_record(tick,seconds=30)
+            return {'applied':False,'reason':'repair_worker_material_route_no_longer_feasible'}
+        response=client.post('/api/v1/production/policy',body={'map_id':snapshot['map']['id'],
+            'building_id':live['building_id'],'worker_id':live['worker_id'],'policy':'repair_breakdown'})
+        applied=isinstance(response,dict) and response.get('applied') is True
+        history[key]=failure_record(tick,seconds=30 if not applied else 120)
+        return {'applied':applied,'reason':response.get('reason') if isinstance(response,dict)else 'invalid_repair_response',
+            'response':response,'completion':'unverified'}
     key = selected.get("production_policy")
     if key == "defer":
         if action == "production_utilities":
@@ -503,6 +544,10 @@ def execute(client, snapshot, map_state, action, selected):
     return {"applied": True, "reason": response.get("reason"), "response": response}
 
 def assess(action, snapshot):
+    if action == 'production_maintenance':
+        return {'benefit':DESCRIPTIONS[action],'cost':'One native repair component and available construction worker',
+            'risk':'Care/food commitments and exact reservations must remain valid','inaction':'Broken service persists',
+            'uncertainty':'A job is not repaired component, electrical output or refrigeration'}
     if action == 'production_plan':
         return {'benefit': 'Expose a selected finite weapon/component manufacturing path.',
                 'cost': 'Research, construction, power, ingredients and skilled labor remain prerequisites.',
@@ -522,5 +567,6 @@ def summary(snapshot):
     context = (snapshot.get("development") or {}).get("production") or {}
     blocked = (context.get("logistics_context") or {}).get("blocked") or []
     return {"production_storage_no_hauler": sum(p.get("reason") == "storage_capacity_exists_no_eligible_hauler" for p in blocked),
+            'broken_utilities':sum(b.get('broken_down') is True for b in context.get('buildings')or []),
             "production_storage_route_blocked": sum(p.get("reason") == "storage_capacity_exists_route_reservation_or_priority_blocked" for p in blocked),
             "production_endpoint_failures": sum(status.get("available") is False for status in (context.get("endpoint_status") or {}).values())}

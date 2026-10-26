@@ -29,6 +29,7 @@ public class Pawn { public bool Dead,Downed,Drafted,InMentalState,IsPrisonerOfCo
 public static class PawnCapacityDefOf { public static object Consciousness=new object(),Moving=new object(),Manipulation=new object(); }
 public static class CareTriageHelper { public static bool QueuedCare(Pawn p)=>p.queued; public static bool DiseaseCareProtected(Pawn p)=>p.disease; }
 public static class CombatNativeHelper { public static bool HasCareJob(Pawn p)=>p.care; }
+public static class CaregiverRecoveryHelper { public static bool Protected(Pawn p)=>false; }
 public static class DecisionBoundaryFixture {
 PATIENT
 WORKER

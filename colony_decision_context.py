@@ -139,11 +139,13 @@ def material_need(snapshot, product):
     goal = dev.get('manufacturing_goal') or {}
     # Only a selected finite recipe, not every possible recipe in the catalog.
     recipe_required = sum(number(r.get('count')) or 0 for r in goal.get('fixed_ingredients') or [] if r.get('def_name') == product)
+    from colony_storage import material_targets
+    service_required = material_targets(snapshot).get(product,0)
     amount = stock.get(product, 0) if stock is not None else None
     known = isinstance(projects, list) and all(isinstance(p.get('materials_needed'), list) for p in projects)
-    required = remaining + recipe_required if known else None
+    required = remaining + recipe_required + service_required if known else None
     return dict(stock=amount, remaining_build_need=remaining if known else None,
-        selected_recipe_need=recipe_required, deficit=max(0,required-amount) if required is not None and number(amount) is not None else None,
+        selected_recipe_need=recipe_required, service_need=service_required, deficit=max(0,required-amount) if required is not None and number(amount) is not None else None,
         consumers=sorted(set(str(c) for c in consumers)), selected_product=goal.get('product_def'))
 
 

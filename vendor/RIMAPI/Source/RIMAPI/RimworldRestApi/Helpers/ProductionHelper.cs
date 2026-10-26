@@ -39,12 +39,13 @@ namespace RIMAPI.Helpers {
    var reachable=new Dictionary<Pawn,Thing[]>();
    var fuelStocks=map.listerThings.AllThings.Where(t=>t.def.category==ThingCategory.Item && EligibleStock(t)).GroupBy(t=>t.def).ToDictionary(g=>g.Key,g=>g.Sum(t=>t.stackCount));
    var buildings = map.listerBuildings.allBuildingsColonist.Select(b => {
-    var fuel = b.TryGetComp<CompRefuelable>(); var power = b.TryGetComp<CompPowerTrader>(); var flick = b.TryGetComp<CompFlickable>();
+    var fuel = b.TryGetComp<CompRefuelable>(); var power = b.TryGetComp<CompPowerTrader>(); var flick = b.TryGetComp<CompFlickable>(); var breakdown = b.TryGetComp<CompBreakdownable>();
     return new { id=b.thingIDNumber, def_name=b.def.defName, label=b.LabelShortCap,
      temperature=b.AmbientTemperature, power_output=power?.PowerOutput, powered=power?.PowerOn,
      connected=power?.PowerNet != null, net_energy_gain_per_tick=power?.PowerNet?.CurrentEnergyGainRate(), net_stored_energy=power?.PowerNet?.CurrentStoredEnergy(), net_has_active_source=power?.PowerNet?.HasActivePowerSource, switch_on=flick?.SwitchIsOn, flick_pending=flick?.WantsFlick() ?? false,
      eligible_fuel_count=fuel==null?0:fuel.Props.fuelFilter.AllowedThingDefs.Sum(d=>fuelStocks.TryGetValue(d,out int count)?count:0),
-     service_block_reason=power!=null && power.PowerOutput<0 && power.PowerNet==null?"no_connected_power_network":power!=null && power.PowerOutput<0 && !(power.PowerNet?.HasActivePowerSource ?? false) && (power.PowerNet?.CurrentStoredEnergy() ?? 0)<=0?"no_power_source_or_storage":fuel!=null && !fuel.HasFuel?"fuel_empty":"none",
+     broken_down=breakdown?.BrokenDown ?? false, repair_component_def="ComponentIndustrial", repair_component_count=breakdown?.BrokenDown==true?1:0,
+     service_block_reason=breakdown?.BrokenDown==true?"broken_down":power!=null && power.PowerOutput<0 && power.PowerNet==null?"no_connected_power_network":power!=null && power.PowerOutput<0 && !(power.PowerNet?.HasActivePowerSource ?? false) && (power.PowerNet?.CurrentStoredEnergy() ?? 0)<=0?"no_power_source_or_storage":fuel!=null && !fuel.HasFuel?"fuel_empty":"none",
      fuel=fuel?.Fuel, capacity=fuel?.Props.fuelCapacity, fuel_per_day=fuel?.Props.fuelConsumptionRate,
      consume_only_when_used=fuel?.Props.consumeFuelOnlyWhenUsed, auto_refuel=fuel?.allowAutoRefuel,
      can_set_auto_refuel=fuel?.Props.showAllowAutoRefuelToggle ?? false,
@@ -65,19 +66,54 @@ namespace RIMAPI.Helpers {
      product=recipe.products.Select(p=>new {def_name=p.thingDef.defName,count=p.count}).ToArray()}).ToArray();
    var perishables=map.listerThings.AllThings.Where(t=>t.def.category==ThingCategory.Item && t.TryGetComp<CompRottable>()!=null)
     .Select(t=>new {id=t.thingIDNumber,def_name=t.def.defName,count=t.stackCount,temperature=t.AmbientTemperature,
+     nutrition=t.def.ingestible==null?0f:t.GetStatValue(StatDefOf.Nutrition)*t.stackCount,
+     human_edible=t.def.ingestible!=null && !t.def.IsDrug && map.mapPawns.FreeColonistsSpawned.Any(p=>p.RaceProps.CanEverEat(t.def)),
+     rot_stage=t.TryGetComp<CompRottable>().Stage.ToString(), hit_points=t.HitPoints,max_hit_points=t.MaxHitPoints,
+     deterioration_per_day=t.GetStatValue(StatDefOf.DeteriorationRate), roofed=t.Position.Roofed(map),
+     protected_from_deterioration=t.Position.Roofed(map) || (map.haulDestinationManager.SlotGroupAt(t.Position)?.parent is Building_Storage shelf && shelf.def.building?.preventDeteriorationOnTop==true),
+     forbidden=t.IsForbidden(Faction.OfPlayer), burning=t.IsBurning(),
      ticks_until_rot=t.TryGetComp<CompRottable>().TicksUntilRotAtCurrentTemp}).ToArray();
    var kibble=DefDatabase<ThingDef>.GetNamedSilentFail("Kibble");
    var animals=map.mapPawns.SpawnedPawnsInFaction(Faction.OfPlayer).Where(p=>p.RaceProps.Animal)
     .Select(p=>new {id=p.thingIDNumber,species=p.def.defName,diet=p.RaceProps.foodType.ToString(),can_eat_kibble=kibble!=null && p.RaceProps.CanEverEat(kibble),
      food_level=p.needs?.food?.CurLevelPercentage, can_graze=p.RaceProps.Eats(FoodTypeFlags.Plant), downed=p.Downed}).ToArray();
-   return ApiResult<object>.Ok(new {buildings, stocks, feed_tables=feedTables, perishables, animals});
+   var broken = map.listerBuildings.allBuildingsColonist.Where(b=>b.TryGetComp<CompBreakdownable>()?.BrokenDown==true).ToArray();
+   var repairing = map.mapPawns.FreeColonistsSpawned.Where(p=>p.CurJobDef?.defName=="FixBrokenDownBuilding" && p.CurJob.targetA.HasThing)
+    .Select(p=>p.CurJob.targetA.Thing.thingIDNumber).ToArray();
+   var repairOptions = broken.Where(b=>!repairing.Contains(b.thingIDNumber)).SelectMany(b=>map.mapPawns.FreeColonistsSpawned
+    .Where(p=>RepairJob(p,b)!=null).Select(p=>new {key=p.thingIDNumber+":"+b.thingIDNumber,worker_id=p.thingIDNumber,building_id=b.thingIDNumber,
+     worker=p.LabelShort,label=b.LabelShortCap,component_def="ComponentIndustrial",component_count=1})).ToArray();
+   var repairBlockers = broken.Select(b=>new {building_id=b.thingIDNumber,component_def="ComponentIndustrial",component_count=1,
+    stock=fuelStocks.TryGetValue(ThingDefOf.ComponentIndustrial,out int count)?count:0,
+    in_progress=repairing.Contains(b.thingIDNumber),ready_worker_ids=repairOptions.Where(r=>r.building_id==b.thingIDNumber).Select(r=>r.worker_id).ToArray(),
+    note="Native workgiver validates capacities, enabled Construction, reachable component, reservations and protected care; full HP is not a component repair."}).ToArray();
+   return ApiResult<object>.Ok(new {buildings, stocks, feed_tables=feedTables, perishables, animals,repair_options=repairOptions,repair_blockers=repairBlockers});
+  }
+  private static Verse.AI.Job RepairJob(Pawn worker, Building building) {
+   var giver=DefDatabase<WorkGiverDef>.GetNamedSilentFail("FixBrokenDownBuilding");
+   if(giver==null || worker.Dead || worker.Downed || worker.Drafted || worker.InMentalState || worker.workSettings==null
+    || worker.WorkTypeIsDisabled(giver.workType) || worker.workSettings.GetPriority(giver.workType)<=0
+    || CombatNativeHelper.HasCareJob(worker) || CareTriageHelper.QueuedCare(worker) || worker.carryTracker?.CarriedThing!=null
+    || worker.CurJobDef==JobDefOf.Ingest || worker.CurJobDef?.defName=="FixBrokenDownBuilding"
+    || building.TryGetComp<CompBreakdownable>()?.BrokenDown!=true || !ResilienceAutomationHelper.RoutineRouteSafe(worker,building)) return null;
+   var scanner=giver.Worker as WorkGiver_Scanner;
+   if(scanner==null || scanner.MissingRequiredCapacity(worker)!=null || scanner.ShouldSkip(worker,false)
+    || !worker.CanReserveAndReach(building,PathEndMode.Touch,Danger.Some) || !scanner.HasJobOnThing(worker,building,false)) return null;
+   var job=scanner.JobOnThing(worker,building,false);
+   if(job==null || !job.targetB.HasThing || !ResilienceAutomationHelper.RoutineRouteSafe(worker,job.targetB.Thing))return null;
+   return job;
   }
   public static ApiResult<CapabilityOrderResultDto> Policy(ProductionPolicyDto r) {
    var b=MapHelper.GetThingOnMapById(r.MapId,r.BuildingId) as Building;
    if(b==null || b.Faction!=Faction.OfPlayer || !b.Spawned) return ApiResult<CapabilityOrderResultDto>.Fail("Player building missing");
    var result=new CapabilityOrderResultDto {TargetId=r.BuildingId,Reason="unsupported_policy"};
    var fuel=b.TryGetComp<CompRefuelable>(); var flick=b.TryGetComp<CompFlickable>();
-   if(r.Policy=="enable_refuel" || r.Policy=="disable_refuel") {
+   if(r.Policy=="repair_breakdown") {
+    var worker=MapHelper.GetThingOnMapById(r.MapId,r.WorkerId) as Pawn;
+    var job=worker==null?null:RepairJob(worker,b);
+    result.Applied=job!=null && worker.jobs.TryTakeOrderedJob(job);
+    result.Reason=result.Applied?"native_component_repair_job_observed; repair_and_output_unverified":"component_repair_worker_material_route_or_reservation_unavailable";
+   } else if(r.Policy=="enable_refuel" || r.Policy=="disable_refuel") {
     if(fuel==null || !fuel.Props.showAllowAutoRefuelToggle) return ApiResult<CapabilityOrderResultDto>.Ok(result);
     bool wanted=r.Policy=="enable_refuel"; result.Applied=fuel.allowAutoRefuel!=wanted;
     fuel.allowAutoRefuel=wanted; result.Reason=result.Applied ? "refuel_policy_changed" : "already_configured";

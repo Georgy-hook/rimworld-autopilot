@@ -28,7 +28,7 @@ namespace RIMAPI.Services
                     .ToList();
                 var hostiles = map.mapPawns.AllPawnsSpawned
                     .Where(p => p != null && !p.Dead && CombatNativeHelper.IsPlayerThreat(p)
-                        && IsActionableHostile(p, colonists, map))
+                        && CombatNativeHelper.ActionableHostile(p, colonists, map))
                     .ToList();
                 var prisoners = map.mapPawns.PrisonersOfColony
                     .Where(p => p != null && !p.Dead)
@@ -89,24 +89,6 @@ namespace RIMAPI.Services
             }
         }
 
-        private static bool IsActionableHostile(Pawn pawn, List<Pawn> colonists, Map map)
-        {
-            string job = pawn.CurJobDef?.defName?.ToLowerInvariant() ?? "";
-            bool attacking = job.Contains("attack") || job.Contains("breach") || job.Contains("sap")
-                || job.Contains("kidnap") || job.Contains("steal") || job == "goto";
-            if (attacking || CombatNativeHelper.Kidnapper(pawn))
-                return true;
-
-            string lordJob = pawn.GetLord()?.LordJob?.GetType().Name ?? "";
-            bool passiveHive = lordJob.Contains("DefendAndExpandHive");
-            if (passiveHive && (!colonists.Any()
-                || colonists.Min(c => c.Position.DistanceToSquared(pawn.Position)) > 45 * 45))
-                return false;
-            if (pawn.Position.Fogged(map))
-                return false;
-            return colonists.Any(c => c.CanReach(pawn, PathEndMode.Touch, Danger.Deadly));
-        }
-
         private static CombatPawnDto ToCombatPawn(Pawn pawn, bool hostile, List<Pawn> opponents)
         {
             var primary = pawn.equipment?.Primary;
@@ -114,10 +96,14 @@ namespace RIMAPI.Services
             var melee = pawn.skills?.GetSkill(SkillDefOf.Melee);
             var faction = pawn.Faction;
             var entropy = pawn.psychicEntropy;
-            var distance = 0f;
-            if (opponents != null && opponents.Count > 0)
+            // A nearby downed raider is a care/capture target, not live
+            // melee contact. No active opponent is known separation, not zero.
+            var activeOpponents=(opponents ?? new List<Pawn>()).Where(other=>other.Spawned
+                && !other.Dead && !other.Downed && other.Map==pawn.Map).ToArray();
+            var distance = float.MaxValue;
+            if (activeOpponents.Length > 0)
             {
-                distance = opponents.Min(other => (float)Math.Sqrt(
+                distance = activeOpponents.Min(other => (float)Math.Sqrt(
                     pawn.Position.DistanceToSquared(other.Position)));
             }
 
@@ -154,6 +140,12 @@ namespace RIMAPI.Services
                 WeaponLabel = primary?.LabelShortCap,
                 HasRangedWeapon = primary?.def?.IsRangedWeapon ?? false,
                 CurrentJob = pawn.CurJobDef?.defName,
+                IsWarmingUp = pawn.stances?.curStance is Stance_Warmup,
+                WarmupTicksLeft = (pawn.stances?.curStance as Stance_Warmup)?.ticksLeft ?? 0,
+                IsMoving = pawn.pather?.Moving == true,
+                CombatPlan = CombatControlHelper.CurrentPlan(pawn),
+                QueuedAttackTargetIds = pawn.jobs?.jobQueue.Where(q=>q.job.def==JobDefOf.AttackStatic && q.job.targetA.Thing!=null)
+                    .Select(q=>q.job.targetA.Thing.thingIDNumber).ToList() ?? new List<int>(),
                 CurrentJobKillIncappedTarget = pawn.CurJob?.killIncappedTarget,
                 CurrentJobTargetId = pawn.CurJob?.targetA.Thing?.thingIDNumber,
                 CurrentJobTargetIdB = pawn.CurJob?.targetB.Thing?.thingIDNumber,
@@ -161,6 +153,10 @@ namespace RIMAPI.Services
                 CurrentJobTargetPosition = pawn.CurJob?.targetA.Thing is Thing jobTarget && jobTarget.Spawned
                     ? new PositionDto { X = jobTarget.Position.x, Y = jobTarget.Position.y, Z = jobTarget.Position.z } : null,
                 CareAtBedside = CombatNativeHelper.CareAtBedside(pawn),
+                HasCareJob = CombatNativeHelper.HasCareJob(pawn),
+                CaregiverRecoveryActive = CaregiverRecoveryHelper.Protected(pawn),
+                CaregiverRecoveryProtected = CaregiverRecoveryHelper.Protected(pawn),
+                QueuedJobCount = pawn.jobs.jobQueue.Count(),
                 CareTargetId = CombatNativeHelper.CareTarget(pawn)?.thingIDNumber,
                 CareTargetPosition = CombatNativeHelper.CareTarget(pawn) is Thing careTarget && careTarget.Spawned
                     ? new PositionDto { X = careTarget.Position.x, Y = careTarget.Position.y, Z = careTarget.Position.z } : null,
@@ -187,13 +183,24 @@ namespace RIMAPI.Services
                 ShootableOpponentIds = primary?.def?.IsRangedWeapon == true
                     ? (opponents ?? new List<Pawn>())
                         .Where(other => !other.Dead && !other.Downed
-                            && primary.TryGetComp<CompEquippable>()?.PrimaryVerb?.CanHitTargetFrom(pawn.Position, other) == true)
+                            && (hostile
+                                ? primary.TryGetComp<CompEquippable>()?.PrimaryVerb?.CanHitTargetFrom(pawn.Position,other)==true
+                                : CombatInterceptHelper.CanShootNow(pawn,other)))
                         .Select(other => other.thingIDNumber).ToList()
                     : new List<int>(),
                 ArmorSharp = pawn.GetStatValue(StatDefOf.ArmorRating_Sharp),
+                IncomingDamageFactor = pawn.GetStatValue(StatDefOf.IncomingDamageFactor),
+                BodySize = pawn.BodySize,
+                MedicalWorkEnabled = pawn.RaceProps.Humanlike && !pawn.WorkTypeIsDisabled(WorkTypeDefOf.Doctor),
+                ObservedAttackTargetId = CombatControlHelper.ObservedVictim(pawn)?.thingIDNumber,
+                IncomingRangedExposure = !hostile ? CombatControlHelper.IncomingRangedExposure(pawn,pawn.Position) : 0f,
+                DefendedApproachTargetIds = !hostile && primary?.def.IsRangedWeapon==true
+                    ? (opponents ?? new List<Pawn>()).Where(other=>!other.Dead && !other.Downed
+                        && CombatInterceptHelper.DefendedApproach(pawn,other)).Select(other=>other.thingIDNumber).ToList()
+                    : new List<int>(),
                 CarryingPlayerPawn = pawn.carryTracker?.CarriedThing is Pawn victim && victim.Faction==Faction.OfPlayer,
                 CarriedPawnFaction = (pawn.carryTracker?.CarriedThing as Pawn)?.Faction?.def?.defName,
-                KidnappingIntent = CombatNativeHelper.Kidnapper(pawn),
+                KidnappingIntent = CombatNativeHelper.AbductionThreat(pawn),
                 CarryingPawnId = pawn.carryTracker?.CarriedThing is Pawn carried ? (int?)carried.thingIDNumber : null,
                 Psyfocus = entropy?.CurrentPsyfocus ?? 0f,
                 TargetPsyfocus = entropy?.TargetPsyfocus ?? 0f,

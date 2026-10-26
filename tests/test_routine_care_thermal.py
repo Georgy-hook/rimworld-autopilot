@@ -34,6 +34,7 @@ class RoutineCareThermalReplay(unittest.TestCase):
     def test_eight_cycles_native_job_and_project_progress_persist(self):
         s=state();posts=[];memory={"anchor":{"x":128,"z":150}}
         def get(endpoint,**kw):
+            if endpoint == '/api/v1/resilience/context':return {'available':False, 'reason':'declared no fresh clinical comparison'}
             if endpoint.endswith('/weather'):return copy.deepcopy(s['development']['weather'])
             if endpoint.endswith('/rooms'):return {'rooms':copy.deepcopy(s['development']['rooms'])}
             if endpoint.endswith('/projects'):return {'projects':copy.deepcopy(s['development']['construction_projects'])}

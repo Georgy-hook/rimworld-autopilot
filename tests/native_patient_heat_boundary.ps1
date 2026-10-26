@@ -54,6 +54,8 @@ namespace Verse {
  public class CompRefuelable { public float Fuel=0; public FuelProps Props=new FuelProps(); }
 }
 namespace RIMAPI.Helpers {
+ // This boundary covers nonburning thermal patients; attached-fire identity is checked in the separate native job contract.
+ public static class BurningPawnSafetyHelper { public static bool ProtectsPatient(Job j)=>false; }
  public static class PawnHelper { public static bool CanDevelopImmunity(Hediff h)=>h.immune; }
  public static class CareTriageHelper {
  MAL

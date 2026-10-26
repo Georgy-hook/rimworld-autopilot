@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Any
 
 
-MODULE_NAMES = ("production", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations", "mental_safety", "mining")
+MODULE_NAMES = ("production", "stewardship", "society", "progression", "specialists", "sustenance", "resilience", "affordances", "wildlife", "inspirations", "mental_safety", "mining")
 
 
 @lru_cache(maxsize=1)
@@ -63,6 +63,10 @@ def goal_requirements(snapshot: dict[str, Any]) -> dict[str, Any]:
     royal = colony_architect.royal_goal_needs(snapshot.get("development") or {})
     manufacturing = (snapshot.get('development') or {}).get('manufacturing_goal')
     return {**({"journey": journey} if journey else {}),
+            **({'preservation': {k:(snapshot['development']['preservation_goal']).get(k)
+                for k in ('requirements','research','need_actual_power')}} if (snapshot.get('development') or {}).get('preservation_goal') else {}),
+            **({'broken_services': [b for b in (snapshot.get('development',{}).get('production') or {}).get('repair_blockers') or []]}
+                if (snapshot.get('development',{}).get('production') or {}).get('repair_blockers') else {}),
             **({'manufacturing': {k: manufacturing.get(k) for k in ('product_def', 'recipe',
                 'missing_research', 'skill_requirements', 'table_defs', 'stock_target_met')}} if manufacturing else {}),
             **({"royal": royal} if royal.get("rooms") else {}),

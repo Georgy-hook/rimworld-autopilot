@@ -111,6 +111,7 @@ namespace RIMAPI.Models
 
     public class LiveTradeCategoryDto
     {
+        public int? CashOnlyMaximumUnits { get; set; }
         public int? ThingId { get; set; }
         public float? PlannedSaleValue { get; set; }
         public string Description { get; set; }

@@ -659,6 +659,8 @@ class DirectorTests(unittest.TestCase):
         beds = [{"id": 10, "def": "SleepingSpot", "position": {"x": 10, "z": 10}},
                 {"id": 20, "def": "Bed", "label": "good wooden bed", "position": {"x": 12, "z": 10}},
                 {"id": 21, "def": "Bed", "label": "normal wooden bed", "position": {"x": 14, "z": 10}}]
+        for bed in beds[1:]:
+            bed.update(bed_owner_ids=[], bed_compatible_pawn_ids=[1, 2])
         snapshot = {"game": {"tick": 1000}, "map": {"id": 0, "resources": {"food": 30}},
                     "colonists": [{"id": 1, "name": "Sleeper", "health": 1,
                                    "current_job": "LayDown"},
@@ -705,6 +707,8 @@ class DirectorTests(unittest.TestCase):
                         "forbidden": [], "plants": []}}
         state = {"anchor": {"x": 11, "z": 11}, "issued": {},
                  "assigned_real_beds": {"1": 20}}
+        for bed in snapshot['development']['buildings']:
+            bed.update(bed_owner_ids=[], bed_compatible_pawn_ids=[1])
         actions, _ = director.candidate_actions(None, snapshot, state)
         self.assertIn("assign_real_bed", actions)
         self.assertEqual(snapshot["development"]["bed_assignment_options"].keys(), {"1|21"})
@@ -828,17 +832,22 @@ class DirectorTests(unittest.TestCase):
     def test_combat_tactics_use_existing_defenses_and_focus_kidnapper(self):
         snapshot = {"combat": {
             "colonists": [{"id": 1, "health": 1, "has_ranged_weapon": True, "is_dead": False,
+                            "moving": 1, "manipulation": 1, "sight": 1,
                             "is_downed": False, "distance_to_nearest_opponent": 12}],
             "hostiles": [{"id": 9, "health": 1, "is_dead": False, "is_downed": False,
                            "current_job": "Kidnap", "carrying_pawn_id": 3, "carrying_player_pawn": True}],
             "defenses": [{"kind": "trap"}, {"kind": "door"}], "available_weapons": [],
         }}
         options = colony_combat.available_tactics(snapshot)
-        self.assertIn("focus_fire", options)
         self.assertIn("intercept_kidnapper", options)
         self.assertIn("Pursue the carrier", options["intercept_kidnapper"])
+        self.assertNotIn("hold_cover", options)
+        self.assertNotIn("focus_fire", options)
         self.assertNotIn("killbox_hold", options)
-        self.assertIn("fallback_line", options)
+        snapshot["combat"]["hostiles"][0].update(current_job="AttackMelee",carrying_pawn_id=None,carrying_player_pawn=False)
+        ordinary = colony_combat.available_tactics(snapshot)
+        self.assertIn("focus_fire", ordinary)
+        self.assertIn("fallback_line", ordinary)
 
     def test_unknown_mod_event_gets_safe_generic_handler(self):
         event = {"def_name": "MyMod_RealityFold", "label": "Reality fold", "category": "MyModSpecial"}
@@ -2488,12 +2497,11 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn("build_butcher_spot", actions)
         self.assertNotIn("configure_food_bills", actions)
 
-        # A station on the far side of the map cannot process this pile in time.
+        # Distance alone does not justify another station; use the existing capacity.
         snapshot["development"]["buildings"][0]["position"] = {"x": 90, "z": 39}
         snapshot["development"]["construction_projects"] = []
         actions, details = director.candidate_actions(client, snapshot, state)
-        self.assertIn("build_butcher_spot", actions)
-        self.assertEqual(details["butcher_cluster_center"], {"x": 25, "y": 0, "z": 17})
+        self.assertNotIn("build_butcher_spot", actions)
 
     def test_butcher_spot_targets_dense_carcass_pile_not_remote_single_kill(self):
         snapshot = {"development": {"corpses": [
@@ -2718,7 +2726,8 @@ class DirectorTests(unittest.TestCase):
         self.assertNotIn((doors[0]["rel_x"], doors[0]["rel_z"] + 1), walls)
 
     def test_first_food_stockpile_never_occupies_bedroom_or_rice_field(self):
-        terrain = {"width": 50, "height": 50, "palette": ["Soil"], "grid": [2500, 0]}
+        terrain = {"width": 50, "height": 50, "palette": ["Soil"], "grid": [2500, 0],
+            'dry_foundation_grid':[2500,1],'mountain_roof_grid':[2500,0],'stockpile_available_grid':[2500,1]}
         anchor = {"x": 20, "z": 20}
         crops = [{"def_name": "Plant_Rice", "position": {"x": x, "z": z}}
                  for x in range(13, 19) for z in range(20, 27)]
@@ -4052,7 +4061,7 @@ class DirectorTests(unittest.TestCase):
                                    "touches_map_edge": False}],
                         "item_counts": {"WoodLog": 140}, "things": [], "plants": [],
                         "work_tables": [], "forbidden": [], "current_research": {"name": "none"}}}
-        state = {"anchor": {"x": 10, "z": 10}, "issued": {}}
+        state = {"anchor": {"x": 10, "z": 10}, "issued": {}, 'income_strategy':'livestock'}
         choices, _ = director.candidate_actions(None, snapshot, state)
         self.assertNotIn("start_taming", choices)
         self.assertIn("build_animal_pen", choices)
@@ -5059,6 +5068,15 @@ class DirectorTests(unittest.TestCase):
             def __init__(self):
                 self.posts = []
 
+            def get(self, endpoint, **kwargs):
+                if endpoint == '/api/v1/game/settings':
+                    return {}
+                if endpoint in ('/api/v1/map/buildings', '/api/v1/map/rooms', '/api/v1/map/things', '/api/v1/colonists/detailed'):
+                    return []
+                if endpoint != '/api/v1/resilience/context':
+                    raise AssertionError(endpoint)
+                return {'available': False, 'reason': 'declared no clinical context'}
+
             def post(self, endpoint, body=None, query=None):
                 self.posts.append((endpoint, body, query))
 
@@ -5083,6 +5101,15 @@ class DirectorTests(unittest.TestCase):
 
     def test_returning_to_colony_decisions_does_not_force_another_care_prompt(self):
         class Client:
+            def get(self, endpoint, **kwargs):
+                if endpoint == '/api/v1/game/settings':
+                    return {}
+                if endpoint in ('/api/v1/map/buildings', '/api/v1/map/rooms', '/api/v1/map/things', '/api/v1/colonists/detailed'):
+                    return []
+                if endpoint != '/api/v1/resilience/context':
+                    raise AssertionError(endpoint)
+                return {'available': False, 'reason': 'declared no clinical context'}
+
             def post(self, endpoint, body=None, query=None):
                 if endpoint != "/api/v1/ui/announce":
                     raise AssertionError("No treatment or pause command is needed")

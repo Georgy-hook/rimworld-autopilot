@@ -8,6 +8,15 @@ using RIMAPI.Core;
 using RIMAPI.Models;
 namespace RIMAPI.Helpers {
  public static class MiningAutomationHelper {
+  private static object lastProfile;
+  // Sort cheap distances before testing costly native reservations and full paths.
+  // LINQ's stable ordering preserves the previous nearest-feasible choice and ties.
+  public static T ClosestFeasible<T>(IEnumerable<T> candidates,Func<T,float> distance,Func<T,bool> feasible) {
+   // Mono's OrderedEnumerable.FirstOrDefault(predicate) can test every predicate
+   // before choosing a minimum. Explicit iteration must stop costly native work.
+   foreach(var candidate in candidates.OrderBy(distance))if(feasible(candidate))return candidate;
+   return default(T);
+  }
   public static List<int> ConnectedBatch(Dictionary<int,int[]> adjacency,int start,int limit) {
    var result=new List<int>();var seen=new HashSet<int>();var queue=new Queue<int>();queue.Enqueue(start);seen.Add(start);
    while(queue.Count>0 && result.Count<limit) {int id=queue.Dequeue();result.Add(id);
@@ -23,8 +32,9 @@ namespace RIMAPI.Helpers {
    return hp.Sum(value=>(int)Math.Ceiling((double)value/(naturalRock?80:40))*hitTicks);
   }
   static bool MinerReady(Pawn p) => OrdinaryWorkSafety.Worker(p,WorkTypeDefOf.Mining)
-   && p.needs?.food!=null && p.needs.food.CurCategory<HungerCategory.UrgentlyHungry;
+   && p.needs?.food!=null && p.needs.food.CurCategory<HungerCategory.UrgentlyHungry && OrdinaryWorkSafety.OriginSafe(p);
   static List<MiningPlanDto> Plans(Map m) {
+   var total=System.Diagnostics.Stopwatch.StartNew();long routeTicks=0,roofTicks=0;int pathChecks=0,roofChecks=0;
    var result=new List<MiningPlanDto>();
    var mine=m.listerThings.AllThings.OfType<Mineable>().Where(t=>!t.Position.Fogged(m) && !t.IsForbidden(Faction.OfPlayer)
     && t.def.building?.mineableThing!=null && m.designationManager.DesignationAt(t.Position,DesignationDefOf.Mine)==null).ToArray();
@@ -35,14 +45,25 @@ namespace RIMAPI.Helpers {
     while(unseen.Count>0) {
      var vein=ConnectedBatch(adjacency,unseen.Min(),int.MaxValue);unseen.ExceptWith(vein);
      foreach(var worker in m.mapPawns.FreeColonistsSpawned.Where(MinerReady)) {
-      var first=vein.Select(id=>byId[id]).Where(t=>worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
-       && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch))
-       .OrderBy(t=>t.Position.DistanceToSquared(worker.Position)).FirstOrDefault();
+      // Touching an impassable rock requires an adjacent walkable cell now.
+      // Keep interior blocks in vein/batch geometry, but do not pathfind to each of them.
+      var first=ClosestFeasible(vein.Select(id=>byId[id]).Where(t=>GenAdj.CellsAdjacent8Way(t).Any(c=>c.InBounds(m) && c.Walkable(m))),
+       t=>t.Position.DistanceToSquared(worker.Position),
+       t=>{long at=System.Diagnostics.Stopwatch.GetTimestamp();pathChecks++;
+        try{return worker.CanReserveAndReach(t,PathEndMode.Touch,Danger.Some)
+         && OrdinaryWorkSafety.Route(worker,worker.Position,t.Position,PathEndMode.Touch);}
+        finally{routeTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-at;}});
       if(first==null)continue;
       var batch=ConnectedBatch(adjacency,first.thingIDNumber,12).Select(id=>byId[id]).ToArray();
       // Test the whole batch as absent, not each block as if its neighbors remained.
-      while(batch.Length>0 && batch.Any(t=>ResilienceAutomationHelper.RemovalWouldEndangerRoof(t,null,new HashSet<IntVec3>(batch.Select(b=>b.Position)))))
+      long roofAt=System.Diagnostics.Stopwatch.GetTimestamp();
+      while(batch.Length>0) {
+       // All blocks share this exact exclusion set; invalidate support facts on shrink.
+       var removed=new HashSet<IntVec3>(batch.Select(b=>b.Position));var support=new Dictionary<IntVec3,bool>();
+       if(!batch.Any(t=>{roofChecks++;return ResilienceAutomationHelper.RemovalWouldEndangerRoof(t,support,removed);}))break;
        batch=batch.Take(batch.Length-1).ToArray();
+      }
+      roofTicks+=System.Diagnostics.Stopwatch.GetTimestamp()-roofAt;
       if(batch.Length==0)continue;
       int amount=group.Key.building.EffectiveMineableYield*batch.Length;
       result.Add(new MiningPlanDto{Key=$"{worker.thingIDNumber}:"+string.Join(",",batch.Select(t=>t.thingIDNumber)),WorkerId=worker.thingIDNumber,Worker=worker.LabelShortCap,
@@ -67,19 +88,21 @@ namespace RIMAPI.Helpers {
       ProductDef=item.def.defName,ThingIds=new List<int>{item.thingIDNumber},Cells=new List<PositionDto>{new PositionDto{X=item.Position.x,Z=item.Position.z},new PositionDto{X=job.targetB.Cell.x,Z=job.targetB.Cell.z}},
       BaseYield=job.count,NominalMarketValue=item.GetStatValue(StatDefOf.MarketValue)*job.count,TravelDistance=worker.Position.DistanceTo(item.Position)});
     }
+   lastProfile=new {total_ms=total.Elapsed.TotalMilliseconds,path_ms=routeTicks*1000d/System.Diagnostics.Stopwatch.Frequency,
+    roof_ms=roofTicks*1000d/System.Diagnostics.Stopwatch.Frequency,path_checks=pathChecks,roof_checks=roofChecks};
    return result;
   }
   public static ApiResult<object> Context(int mapId) {
    var m=MapHelper.GetMapByID(mapId);if(m==null)return ApiResult<object>.Fail("map_missing");
    var plans=Plans(m);
    var workers=m.mapPawns.FreeColonistsSpawned.Select(p=>new{pawn_id=p.thingIDNumber,current_job=p.CurJobDef?.defName,
-    blocker=OrdinaryWorkSafety.WorkerBlocker(p,WorkTypeDefOf.Mining) ?? (p.needs?.food==null || p.needs.food.CurCategory>=HungerCategory.UrgentlyHungry ? "urgently_hungry_or_food_unknown" : null),
+    blocker=OrdinaryWorkSafety.WorkerBlocker(p,WorkTypeDefOf.Mining) ?? (p.needs?.food==null || p.needs.food.CurCategory>=HungerCategory.UrgentlyHungry ? "urgently_hungry_or_food_unknown" : !OrdinaryWorkSafety.OriginSafe(p) ? "current_cell_environment_unsafe" : null),
     comfortable_min=p.GetStatValue(StatDefOf.ComfyTemperatureMin),temperature=p.Position.GetTemperature(m)}).ToArray();
    var ores=m.listerThings.AllThings.OfType<Mineable>().Where(t=>!t.Position.Fogged(m) && t.def.building?.mineableThing!=null)
     .GroupBy(t=>t.def).Select(g=>new{ore_def=g.Key.defName,product_def=g.Key.building.mineableThing.defName,visible_cells=g.Count(),
      designated_cells=g.Count(t=>m.designationManager.DesignationAt(t.Position,DesignationDefOf.Mine)!=null),
      ready_plans=plans.Count(p=>p.Kind=="extract" && p.OreDef==g.Key.defName)}).ToArray();
-   return ApiResult<object>.Ok(new{available=true,options=plans,diagnostics=new{workers,ores,
+   return ApiResult<object>.Ok(new{available=true,options=plans,performance=lastProfile,diagnostics=new{workers,ores,
     no_options_meaning="No fresh ordinary worker/reservation/route/whole-batch roof plan. This is not a model decision to reject a mineral; undelivered output is not stock."},
     product_stocks=m.listerThings.AllThings.Where(t=>t.Spawned && !t.Position.Fogged(m) && t.def.category==ThingCategory.Item).GroupBy(t=>t.def).Select(g=>new{product_def=g.Key.defName,count=g.Sum(t=>t.stackCount)}).ToArray(),completion="visible ore and prospective ordinary work; not mined goods or income"});
   }

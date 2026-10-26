@@ -45,6 +45,8 @@ def collect(client: Any, snapshot: dict) -> dict:
         return {"available": False, "reason": str(exc)}
 
 def _delay(action):
+    if action in {'society_drug_policy', 'society_drug_entry'}:
+        return 30000
     if action in {'society_baby_feed', 'society_baby_safe', 'society_hemogen_feed'}:
         return 600
     if action in {'society_teach', 'society_baby_play', 'society_growth_prepare', 'society_growth'}:
@@ -150,12 +152,19 @@ def drug_policy_relevant(person):
         return True
     beliefs = {str(b).split(':', 1)[0] for b in person.get('beliefs') or []}
     entries = drugs.get('entries') or []
+    if any(e.get('capacity_risk') and (e.get('allowed_joy') or e.get('scheduled')) for e in entries):
+        return True
     recreational = any(e.get('allowed_joy') or e.get('scheduled') for e in entries)
     if beliefs & {'DrugUse_Prohibited', 'DrugUse_Abhorrent', 'DrugUse_MedicalOnly'} and recreational:
         return True
     if 'DrugUse_Essential' in beliefs and not recreational:
         return True
     return False
+
+
+def capacity_drug_permissions(person):
+    return any(e.get('capacity_risk') and (e.get('allowed_joy') or e.get('scheduled'))
+               for e in (person.get('drugs') or {}).get('entries') or [])
 
 
 def elective_drug_policy(snapshot):
@@ -177,11 +186,32 @@ def _drug_guard(action, person, context):
                       for p in context.get('drug_policies') or [])
     offers = sorted(str(o.get('value')) for o in context.get('native_options') or []
                     if 'society_' + str(o.get('kind')) == action and o.get('pawn_id') == person.get('pawn_id'))
-    return repr((drugs.get('policy_id'), entries, conditions, dependencies, beliefs, policies, offers))
+    risks = tuple((e.get('drug'), e.get('capacity_risk')) for e in drugs.get('entries') or [])
+    return repr((drugs.get('policy_id'), entries, risks, conditions, dependencies, beliefs, policies, offers))
 
 
 def _recent(record, tick, delay):
     return retry_recent(record, tick, delay)
+
+
+def remember_selection_unavailable(snapshot, map_state, action, diagnostic):
+    """An unavailable drug-policy page never reaches execute/defer memory.
+
+    Remember its exact consequence facts, rather than retrying the identical
+    impossible comparison or suppressing a different patient's urgent care.
+    """
+    if action not in {'society_drug_policy', 'society_drug_entry'}:
+        return False
+    context = snapshot.get('development', {}).get('society', {})
+    rows = (context.get('options') or {}).get(action) or {}
+    blocked = map_state.setdefault('society_unavailable', {})
+    for row in rows.values():
+        blocked[_subject(action, row)] = {
+            'map_id': snapshot['map']['id'], 'tick': int(snapshot.get('game', {}).get('tick') or 0),
+            'state': _drug_guard(action, row.get('person') or {}, context),
+            'reason': diagnostic.get('reason'), 'state_budget': diagnostic.get('state_budget'),
+            'minimum_state_tokens': diagnostic.get('minimum_state_tokens')}
+    return bool(rows)
 
 
 def prepare(snapshot: dict, map_state: dict) -> list[str]:
@@ -221,6 +251,13 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
         semantic = {}
         memory['drug_deferred'] = semantic
     live_people = {str(p.get('pawn_id')) for p in context.get('people') or []}
+    unavailable = map_state.get('society_unavailable') or {}
+    if not isinstance(unavailable,dict): unavailable={}
+    map_state['society_unavailable']=unavailable
+    for subject, record in list(unavailable.items()):
+        if (not isinstance(subject,str) or not isinstance(record, dict) or record.get('map_id') != snapshot.get('map', {}).get('id')
+                or type(record.get('tick')) is not int or not 0<=record['tick']<=tick or subject.split(':')[-1] not in live_people):
+            unavailable.pop(subject, None)
     for subject, record in list(semantic.items()):
         if (not isinstance(subject, str) or not subject.startswith(('society_drug_policy:', 'society_drug_entry:'))
                 or not isinstance(record, dict) or type(record.get('map_id')) is not int
@@ -242,8 +279,20 @@ def prepare(snapshot: dict, map_state: dict) -> list[str]:
             subject = _subject(action, row)
             deferred = (memory.get('deferred') or {}).get(subject, {})
             if action in {'society_drug_policy', 'society_drug_entry'}:
+                committed = (memory.get('issued') or {}).get(subject, {})
+                # A policy assignment itself changes the policy/offer IDs. Do
+                # not interpret that as a new medical reason to switch back.
+                if committed.get('clinical') is not None and committed['clinical'] != _clinical(row):
+                    (memory.get('issued') or {}).pop(subject, None)
+                old_unavailable = unavailable.get(subject)
+                if old_unavailable and old_unavailable.get('state') == _drug_guard(action, row.get('person') or {}, context):
+                    del rows[key]
+                    continue
+                if old_unavailable:
+                    unavailable.pop(subject, None)
                 old = semantic.get(subject)
-                if old and old['state'] == _drug_guard(action, row.get('person') or {}, context):
+                if (old and old['state'] == _drug_guard(action, row.get('person') or {}, context)
+                        and (not capacity_drug_permissions(row.get('person') or {}) or retry_recent(old,tick,30000))):
                     del rows[key]
                     continue
                 if old:
@@ -274,7 +323,14 @@ def _payload(row: dict) -> dict:
 
 def _effects(row: dict, action: str, context: dict) -> dict:
     if row.get('native'):
-        return {k: str((row.get('effects') or {}).get(k) or 'Unknown') for k in ('benefit', 'risk', 'cost', 'inaction', 'uncertainty')}
+        result = {k: str((row.get('effects') or {}).get(k) or 'Unknown') for k in ('benefit', 'risk', 'cost', 'inaction', 'uncertainty')}
+        if action in {'society_drug_policy','society_drug_entry'}:
+            drugs = ((row.get('person') or {}).get('drugs') or {})
+            risk = [e.get('drug') for e in drugs.get('entries') or [] if e.get('capacity_risk')]
+            if risk:
+                result['risk'] = f"Sedation/appetite risk {risk}; current capacities {drugs.get('capacities')}; " + result['risk']
+            result['cost'] = 'Only a personal policy edit; no current job is interrupted. Existing drug effects persist; future dose stock/inventory depends on the selected permissions.'
+        return result
     p = row.get('person') or {}
     conditions = sorted((h for h in p.get('conditions') or [] if h.get('visible', True)), key=lambda h: (bool(h.get('life_threatening')), h.get('immunity') is not None and h['immunity'] < 1), reverse=True)
     h = conditions[0] if conditions else {}
@@ -342,6 +398,18 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
     def defer_selection(rows):
         return {'defer': True, 'deferred_subjects': list(dict.fromkeys(_subject(action, row) for row in rows.values()))}
     defer = {'benefit': 'Preserve current jobs/resources/policy', 'risk': 'Unmet needs or illness may persist', 'cost': 'No new supplies/labor', 'inaction': 'Autonomous work continues', 'uncertainty': 'Future outcomes are unknown'}
+    if action in {'society_drug_policy','society_drug_entry'}:
+        risks = [{ 'pawn':r.get('pawn_id'), 'capacities':((r.get('person') or {}).get('drugs') or {}).get('capacities'),
+                   'drugs':[e.get('drug') for e in ((r.get('person') or {}).get('drugs') or {}).get('entries') or []
+                            if e.get('capacity_risk') and (e.get('allowed_joy') or e.get('scheduled'))]}
+                 for r in plans.values()]
+        risks = [r for r in risks if r['drugs']]
+        if risks:
+            defer = {'benefit':'Keep existing optional drug permissions; current work continues under either choice',
+                'cost':'No policy edit; future permitted doses consume stock and time',
+                'risk':f"Continued recreational sedation/appetite risk: {risks}; more doses can further impair injured or starving workers",
+                'inaction':'Unsafe recreational permissions remain; no automatic protection is inferred from waiting',
+                'uncertainty':'Changing policy does not reverse a current high; dependencies need their own protected treatment'}
     persons, person_effects = {}, {}
     for row in plans.values():
         pid = str(row['pawn_id'])
@@ -349,10 +417,22 @@ def choose(agent: Any, state: dict, action: str, snapshot: dict) -> tuple[dict, 
         person_effects.setdefault(pid, _effects(row, action, context))
     persons['defer'], person_effects['defer'] = 'Keep current jobs and policy', defer
     mood_facts = {str(row['pawn_id']): observations.mood_person(row.get('person') or {}) for row in plans.values()}
+    if action in {'society_drug_policy', 'society_drug_entry'}:
+        for row in plans.values():
+            person = row.get('person') or {}
+            drugs = person.get('drugs') or {}
+            mood_facts[str(row['pawn_id'])]['drug_capacity'] = {
+                'capacities': drugs.get('capacities'),
+                'risks': [{k:e.get(k) for k in ('drug','capacity_risk','capacity_effects','hunger_rate_offset')}
+                          for e in drugs.get('entries') or [] if e.get('capacity_risk')]}
     shared = {'action': action, 'live_people': len(persons)-1}
     mood_action = action in {'society_free_time', 'society_drug_policy', 'society_drug_entry'}
     person_state = {'comparison_facts': {'shared': shared, 'options': mood_facts}} if mood_action else {'decision_facts': shared}
-    pid, first = ask_laya_choice(agent, {**person_state, 'option_effects': person_effects}, action + '_person', 'Choose a live person or defer; compare actual needs, risks and costs. Recreation does not remove hunger, cold, grief or weapon penalties.', persons, detailed=True)
+    if action in {'society_drug_policy','society_drug_entry'} and len(persons)==2:
+        pid=next(k for k in persons if k!='defer')
+        first={'classification':'unique live drug-policy subject','resolved_without_model':True,'pawn_id':pid}
+    else:
+        pid, first = ask_laya_choice(agent, {**person_state, 'option_effects': person_effects}, action + '_person', 'Choose a live person or defer; compare actual needs, risks and costs. Recreation does not remove hunger, cold, grief or weapon penalties.', persons, detailed=True)
     if pid == 'defer':
         return defer_selection(plans), first
     plans = {k: row for k, row in plans.items() if str(row['pawn_id']) == pid}
@@ -412,7 +492,7 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
                 continue
             if action in {'society_drug_policy', 'society_drug_entry'}:
                 memory.setdefault('drug_deferred', {})[_subject(action, row)] = {
-                    'tick': tick, 'map_id': snapshot['map']['id'], 'state': _drug_guard(action, row.get('person') or {}, context)}
+                    **failure_record(tick,seconds=120), 'map_id': snapshot['map']['id'], 'state': _drug_guard(action, row.get('person') or {}, context)}
             else:
                 record = failure_record(tick, seconds=120) if action == 'society_medical_care' else {'tick': tick}
                 memory.setdefault('deferred', {})[_subject(action, row)] = {
@@ -447,7 +527,10 @@ def execute(client: Any, snapshot: dict, map_state: dict, action: str, selected:
         memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
         raise
     if isinstance(result, dict) and result.get("applied") is True:
-        memory.setdefault('issued', {})[_subject(action, row)] = {'tick': tick}
+        record = {'tick': tick}
+        if action in {'society_drug_policy', 'society_drug_entry'}:
+            record = {**failure_record(tick, seconds=120), 'clinical': _clinical(row)}
+        memory.setdefault('issued', {})[_subject(action, row)] = record
     else:
         memory.setdefault('failed', {})[_option(row)] = failure_record(tick, seconds=15)
     if not isinstance(result, dict) or not isinstance(result.get("applied"), bool):

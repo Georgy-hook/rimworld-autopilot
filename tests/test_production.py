@@ -138,6 +138,7 @@ class ProductionGoalTests(unittest.TestCase):
             context=snapshot['development']['production']
             context['recipe_context']={'options':[RecipeProductionTests().plan()]}
             context['logistics_context']={'options':[LogisticsProductionTests().plan()]}
+            context['repair_options']=[{'key':'4:2','worker_id':4,'building_id':2,'worker':'worker','label':'Cooler','component_count':1,'component_def':'ComponentIndustrial'}]
             p.prepare(snapshot,{})
             agent=Agent();p.choose(agent,state,action,snapshot)
             self.assertGreaterEqual(len(agent.calls),1,action)

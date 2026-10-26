@@ -51,6 +51,7 @@ class TerminalCareRegressions(unittest.TestCase):
     def test_new_self_tend_still_available_after_old_care_finishes(self):
         snap, doctor = self.care_snapshot()
         doctor.update(current_job='Wait', distance_to_nearest_opponent=12)
+        snap['combat']['hostiles'] = []
         self.assertIn(doctor, combat.self_tend_candidates(snap))
         action = bridge.plan_action(snap, {'choice': 'emergency_self_tend', 'medical_target_id': doctor['id']})
         self.assertTrue(any(c['endpoint'] == '/api/v1/pawn/medical/tend' for c in action['commands']))
@@ -58,6 +59,7 @@ class TerminalCareRegressions(unittest.TestCase):
     def test_medicine_inability_blocks_self_tend_but_priority_zero_does_not(self):
         snap, doctor = self.care_snapshot()
         doctor.update(current_job='Wait', distance_to_nearest_opponent=12)
+        snap['combat']['hostiles'] = []
         snap['colonists'] = [{'id': doctor['id'], 'skills': {'Medicine': {'disabled': False}},
                              'work_priorities': {'Doctor': {'priority': 0, 'disabled': False}}}]
         self.assertIn(doctor, combat.self_tend_candidates(snap))
@@ -167,6 +169,7 @@ class TerminalCareRegressions(unittest.TestCase):
         snap, doctor = self.care_snapshot()
         doctor.update(current_job='Wait', is_drafted=False, distance_to_nearest_opponent=12)
         snap['combat']['care_retreat_pawn_ids'] = [doctor['id']]
+        snap['combat']['hostiles'] = []
         snap['colonists'] = [{**doctor, 'work_priorities': {'Hauling': {'priority': 1}}}]
         self.assertIn(doctor, combat.self_tend_candidates(snap))
         self.assertIn(str(doctor['id']), director.worker_criteria(snap, 'Hauling'))

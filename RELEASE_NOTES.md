@@ -1,3 +1,32 @@
+# 0.0.9 — unreleased
+
+- Preserve selected combat control through bounded native deferrals, exact job
+  ownership and ordinary movement startup. A found path alone does not prove a
+  new withdrawal has started. Completed arrival receipts cannot close a later
+  withdrawal without new movement.
+- Coordinate finite covering-fire transfers, physician access and separate
+  firing positions. A covering gun's cooldown does not complete its movement
+  commitment; optional range changes retain actual remaining fire support.
+- Protect current and queued treatment, food/sleep recovery and safe return to
+  care. Bound native path searches, release owned paths and retain explicit
+  partial/error readback without repeating already accepted actions.
+- Extend native projectile/friendly-fire checks and isolated raid regression
+  coverage. Passed 1,663 Python tests and 61 native boundary suites. The latest
+  rush/ranged focus pair cleared with all defenders alive and stabilized, but
+  included downed defenders; sustained reliability and the complete eleven-case
+  series remain unqualified. See the
+  [combat candidate audit](docs/audits/combat-control-candidate-2026-10-26.md).
+
+- Keep wood, metals and stone on ground rather than shelves, including loaded
+  material derivatives. Separate hay, incubation, corpses, unfinished work,
+  hazardous goods and special biological/anomaly items from ordinary shelves.
+- Replace arbitrary shelf widening with reviewed profiles and a freshly
+  validated restriction that preserves safe existing settings. Require an
+  explicit profile for paid storage blueprints.
+- Reviewed 449 installed XML item definitions; passed 75 native assertions and
+  1414 Python tests. These changes are source changes, not a live campaign
+  migration. See the [shelf policy audit](docs/audits/shelf-item-policy-2026-10-11.md).
+
 # 0.0.8 — 11 October 2026
 
 - Recover locally from oversized comparisons while preserving complete protected

@@ -45,12 +45,21 @@ namespace RIMAPI.Models
         public bool HasShieldBelt { get; set; }
         public bool HasRangedWeapon { get; set; }
         public string CurrentJob { get; set; }
+        public bool IsWarmingUp { get; set; }
+        public int WarmupTicksLeft { get; set; }
+        public bool IsMoving { get; set; }
+        public string CombatPlan { get; set; }
+        public List<int> QueuedAttackTargetIds { get; set; } = new List<int>();
+        public int QueuedJobCount { get; set; }
         public bool? CurrentJobKillIncappedTarget { get; set; }
         public int? CurrentJobTargetId { get; set; }
         public int? CurrentJobTargetIdB { get; set; }
         public PositionDto CurrentJobTargetPosition { get; set; }
         public PositionDto CurrentJobCell { get; set; }
         public bool CareAtBedside { get; set; }
+        public bool HasCareJob { get; set; }
+        public bool CaregiverRecoveryActive { get; set; }
+        public bool CaregiverRecoveryProtected { get; set; }
         public int? CareTargetId { get; set; }
         public PositionDto CareTargetPosition { get; set; }
         public bool RangedAttackAvailable { get; set; }
@@ -72,7 +81,13 @@ namespace RIMAPI.Models
         public float CombatPower { get; set; }
         public float WeaponRange { get; set; }
         public List<int> ShootableOpponentIds { get; set; } = new List<int>();
+        public List<int> DefendedApproachTargetIds { get; set; } = new List<int>();
+        public float IncomingRangedExposure { get; set; }
         public float ArmorSharp { get; set; }
+        public float IncomingDamageFactor { get; set; }
+        public float BodySize { get; set; }
+        public bool MedicalWorkEnabled { get; set; }
+        public int? ObservedAttackTargetId { get; set; }
         public bool CarryingPlayerPawn { get; set; }
         public string CarriedPawnFaction { get; set; }
         public bool KidnappingIntent { get; set; }

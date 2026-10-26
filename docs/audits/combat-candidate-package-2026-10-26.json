@@ -1,0 +1,26 @@
+{
+  "app_version": "0.0.9",
+  "status": "unreleased candidate",
+  "source_commit": "0bfb24e650e8709972048fc77afa67b52b123fe4",
+  "assembly_path": "vendor/RIMAPI/1.6/Assemblies/RIMAPI.dll",
+  "assembly_sha256": "52af70b4ae760eed4ca0878b8349431b472c996fc2f988ee6328c2863cb4186c",
+  "assembly_bytes": 3147264,
+  "combat_lab": false,
+  "excluded_lab_symbols": [
+    "CombatLabController",
+    "CombatLabLifecycleProbe",
+    "CombatLabFixtureComponent",
+    "TestSelectionBudget",
+    "MemberReceipts"
+  ],
+  "validation": {
+    "python_tests": 1663,
+    "native_boundary_suites": 61,
+    "numeric_assertions": 1049,
+    "offline_routes": 315,
+    "normal_and_lab_builds": true,
+    "latest_original_focus_pair": "rush202 and ranged204: both stabilized; not clean, sustained reliability unqualified",
+    "full_eleven_case_requalification": false
+  },
+  "remaining_followup": "Response-write IOException on remote connection reset is retained separately; no claim of error-free transport."
+}

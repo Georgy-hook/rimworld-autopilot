@@ -1,10 +1,12 @@
-# Documentation index — 0.0.8
+# Documentation index — 0.0.8 and unreleased 0.0.9
 
 Version `0.0.8` follows the 6 October `v0.0.7` release with later corrections.
 A dated test result describes its tested
 revision and scenario; it does not establish the current build's runtime result.
 
 ## Current contracts
+
+- [0.0.9 combat control, care handoff and verification limits](audits/combat-control-candidate-2026-10-26.md)
 
 - [Storage layouts, floors, conditional insect heat enclosure and decision recovery](audits/storage-and-decision-recovery-2026-10-11.md)
 

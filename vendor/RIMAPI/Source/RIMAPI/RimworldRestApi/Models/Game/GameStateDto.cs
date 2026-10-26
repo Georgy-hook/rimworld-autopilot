@@ -12,6 +12,7 @@ namespace RIMAPI.Models
         public bool IsSettingsOpen { get; set; }
         public bool IsModSettingsOpen { get; set; }
         public int MapCount { get; set; }
+        public object FramePerformance { get; set; }
     }
 
     public class NewGameStartRequestDto

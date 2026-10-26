@@ -5,10 +5,28 @@ namespace RIMAPI.Models
     {
         public bool Available { get; set; } = true;
         public List<object> Patients { get; set; } = new List<object>();
+        public bool CombatReleaseTendsAvailable { get; set; } = true;
+        public List<CombatReleaseTendOptionDto> CombatReleaseTends { get; set; } = new List<CombatReleaseTendOptionDto>();
         public object Environment { get; set; }
         public List<ResilienceOptionDto> Options { get; set; } = new List<ResilienceOptionDto>();
         public List<ActiveNativeOrderDto> ActiveOrders { get; set; } = new List<ActiveNativeOrderDto>();
+        public List<object> AreaRestrictions { get; set; } = new List<object>();
     }
+    public class CombatReleaseTendOptionDto
+    {
+        public int DoctorId { get; set; }
+        public int PatientId { get; set; }
+        public int ReleaseCombatJobId { get; set; }
+        public string ExpectedCurrentJob { get; set; }
+        public float TravelTicks { get; set; }
+        public float LockedTicks { get; set; }
+        public float MedicalTendSpeed { get; set; }
+        public float MedicalTendQuality { get; set; }
+        public float? BleedoutTicks { get; set; }
+        public string Doctor { get; set; }
+        public string Patient { get; set; }
+    }
+
     public class ActiveNativeOrderDto
     {
         public string Kind { get; set; }

@@ -27,14 +27,16 @@
   </PropertyGroup>
 
   <!-- Embed the source git hash into AssemblyInformationalVersion. -->
-  <Target Name="SetSourceRevisionId" BeforeTargets="AddSourceRevisionToInformationalVersion">
+  <Target Name="SetSourceRevisionId" BeforeTargets="AddSourceRevisionToInformationalVersion"
+          Condition="'$(SourceRevisionId)' == ''">
     <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true"
           WorkingDirectory="$(MSBuildProjectDirectory)">
       <Output TaskParameter="ConsoleOutput" PropertyName="_GitRevisionRaw" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitRevisionExitCode" />
     </Exec>
     <PropertyGroup>
-      <SourceRevisionId Condition="'$(_GitRevisionRaw.Trim())' != ''">$(_GitRevisionRaw.Trim())</SourceRevisionId>
-      <SourceRevisionId Condition="'$(_GitRevisionRaw.Trim())' == ''">unknown</SourceRevisionId>
+      <SourceRevisionId Condition="'$(_GitRevisionExitCode)' == '0' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(_GitRevisionRaw.Trim())', '^[0-9a-fA-F]{7,40}$'))">$(_GitRevisionRaw.Trim())</SourceRevisionId>
+      <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
     </PropertyGroup>
   </Target>
 
@@ -59,5 +61,12 @@
       <HintPath>..\..\Libraries\Newtonsoft.Json.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
     </Reference>
+  </ItemGroup>
+  <!-- Laboratory endpoints exist only in an explicitly selected test build. -->
+  <PropertyGroup Condition="'$(CombatLab)' == 'true'">
+    <DefineConstants>$(DefineConstants);LAYA_COMBAT_LAB</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CombatLab)' == 'true'">
+    <Compile Include="$(MSBuildProjectDirectory)/../../../../tests/native_combat_lab/*.cs" />
   </ItemGroup>
 </Project>

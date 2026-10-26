@@ -91,12 +91,17 @@ class CombatContracts(unittest.TestCase):
                   "result": {"failed_command_index": 0, "error": "transport failed", "outcome_unknown": True}}
         self.assertTrue(director.combat_record_rejected(record))
 
-    def test_native_actual_kidnapper_guard_precedes_drafting(self):
+    def test_native_observed_abduction_guard_precedes_drafting(self):
         source = Path("vendor/RIMAPI/Source/RIMAPI/RimworldRestApi/Helpers/CombatTacticsHelper.cs").read_text()
-        guard = 'tactic == "intercept_kidnapper" && !CombatNativeHelper.Kidnapper(target)'
+        guard = 'tactic == "intercept_kidnapper" && !CombatNativeHelper.AbductionThreat(target)'
         self.assertLess(source.index(guard), source.index('pawn.drafter.Drafted = true'))
-        self.assertIn('(tactic == "focus_fire" && CombatNativeHelper.Kidnapper(target))', source)
+        self.assertTrue('(tactic == "focus_fire" && CombatNativeHelper.AbductionThreat(target))' in source, "Focus fire lost the native abduction interception branch")
         self.assertNotIn('(tactic == "focus_fire" && target.carryTracker?.CarriedThing is Pawn)', source)
+        interception=source[source.index('if (tactic == "intercept_kidnapper"\n'):source.index('if (PositioningTactics.Contains(tactic))')]
+        self.assertTrue('if (!CombatNativeHelper.AbductionThreat(target))' in interception,
+                        'The second execution guard still rejected a native pre-pickup attempt')
+        self.assertFalse('if (!(target.carryTracker?.CarriedThing is Pawn))' in interception,
+                         'Pre-pickup interception silently stopped behind an actual-carry-only guard')
 
 
 if __name__ == "__main__": unittest.main()

@@ -182,6 +182,15 @@ def pending_events(context: dict[str, Any], handled: set[str]) -> list[dict[str,
 def response_options(event: dict[str, Any], context: dict[str, Any]) -> dict[str, str]:
     family = str(event.get("family") or "unknown")
     options = dict(RESPONSE_OPTIONS.get(family, RESPONSE_OPTIONS["unknown"]))
+    # These labels currently have only a context-recording executor. Repeated
+    # selection must not promise schedule/power/containment work that cannot be
+    # performed. The normal development planner still sees the live condition.
+    for placeholder in ('power_emergency', 'weather_emergency', 'psychic_schedule_response',
+                        'contain_anomaly', 'use_opportunity'):
+        options.pop(placeholder, None)
+    if family in {'power_crisis', 'weather', 'psychic', 'anomaly', 'positive'}:
+        options['observe_event'] = ('Record this live condition and continue the normal care, food and defense planner; '
+                                    'no event-specific executor is available, and recording is not a completed remedy.')
     if family == "trade" and not context.get("trade_opportunities"):
         options.pop("trade_now", None)
     if family == "fire" and not any(

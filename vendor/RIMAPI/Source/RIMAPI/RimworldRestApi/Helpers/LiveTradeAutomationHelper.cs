@@ -101,15 +101,17 @@ namespace RIMAPI.Helpers
                     if (row == null) continue;
                     float price = row.GetPriceFor(TradeAction.PlayerSells);
                     int units = Math.Min(SafeSaleCount(row, map, new HashSet<string> { category }),
-                        (int)Math.Floor(traderSilver / price));
+                        (int)Math.Floor((traderSilver + spendLimit) / price));
                     if (units > 0) preview.SaleOptions.Add(new LiveTradeCategoryDto
                     {
                         Category = category, Example = row.Label, MaximumUnits = units, UnitPrice = price,
+                        Description = "Conditional barter capacity; a cash-only sale is limited by the trader's silver. Exact balanced native deal required.",
+                        CashOnlyMaximumUnits = Math.Min(units, (int)Math.Floor(traderSilver / price)),
                     });
                 }
                 if (SaleCategories.Contains(saleCategory))
                 {
-                    float traderSilverRemaining = traderSilver;
+                    float traderSilverRemaining = traderSilver + spendLimit;
                     var plannedCategories = new HashSet<string> { saleCategory };
                     foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade
                         && t.CountHeldBy(Transactor.Colony) > 0))
@@ -248,7 +250,8 @@ namespace RIMAPI.Helpers
                 };
 
                 var saleCategories = new HashSet<string>((request.SaleCategories ?? new List<string>()).Select(s => s.ToLowerInvariant()));
-                float traderSilverRemaining = deal.CurrencyTradeable?.CountHeldBy(Transactor.Trader) ?? 0;
+                float traderSilverRemaining = SaleCreditCeiling(deal.CurrencyTradeable?.CountHeldBy(Transactor.Trader) ?? 0,
+                    request.MaximumSpend, request.PurchasePriorities?.Any() ?? false);
                 foreach (Tradeable row in deal.AllTradeables.Where(t => t.TraderWillTrade && t.CountHeldBy(Transactor.Colony) > 0))
                 {
                     int surplus = SafeSaleCount(row, map, saleCategories);
@@ -263,14 +266,9 @@ namespace RIMAPI.Helpers
                     response.Sold.Add($"{row.Label} x{surplus}");
                 }
                 deal.UpdateCurrencyCount();
-                if (!deal.DoesTraderHaveEnoughSilver())
-                {
-                    foreach (Tradeable row in deal.AllTradeables.Where(t => t.CountToTransfer > 0)) row.ForceTo(0);
-                    response.Sold.Clear();
-                    response.SoldUnits = 0;
-                    response.ApproximateSaleValue = 0;
-                    deal.UpdateCurrencyCount();
-                }
+                // A sale and purchase form one native deal. A buyer with little
+                // silver can exchange goods or an offered person; do not erase
+                // the selected surplus before the purchase balances currency.
 
                 float spend = 0f;
                 bool selectedPersonPurchased = !request.PurchasePawnId.HasValue;
@@ -334,6 +332,8 @@ namespace RIMAPI.Helpers
                     TradeSession.Close();
                     return ApiResult<LiveTradeResponseDto>.Fail("The trader cannot afford the selected sale.");
                 }
+                if ((deal.CurrencyTradeable?.CountPostDealFor(Transactor.Colony) ?? 0) < Math.Max(0, request.MinimumSilverReserve))
+                { TradeSession.Close(); return ApiResult<LiveTradeResponseDto>.Fail("The final rounded trade balance violates the colony reserve."); }
                 response.Executed = deal.TryExecute(out bool actuallyTraded) && actuallyTraded;
                 TradeSession.Close();
                 if (!response.Executed)
@@ -425,7 +425,7 @@ namespace RIMAPI.Helpers
                 || (category == "animals" && row.ThingDef.race?.Animal == true)
                 || (category == "food" && (text.Contains("food") || text.Contains("meal")
                     || text.Contains("rice") || text.Contains("corn") || text.Contains("potato")))
-                || (category == "art" && text.Contains("sculpture"))
+                || (category == "art" && (text.Contains("sculpture") || IsFinishedArt(row)))
                 || (category == "apparel" && row.ThingDef.IsApparel)
                 || (category == "weapons" && row.ThingDef.IsWeapon)
                 || (category == "leather" && (text.Contains("leather") || text.Contains("wool")
@@ -443,6 +443,15 @@ namespace RIMAPI.Helpers
             else if (row.ThingDef.IsWeapon) reserve = 1;
             else if (row.ThingDef.race?.Animal == true) reserve = 2;
             return Math.Max(0, total - reserve);
+        }
+
+        public static float SaleCreditCeiling(int merchantSilver, int purchaseBudget, bool purchasing)
+            => Math.Max(0,merchantSilver) + (purchasing ? Math.Max(0,purchaseBudget) : 0);
+
+        public static bool IsFinishedArt(Tradeable row)
+        {
+            Thing inner = row.FirstThingColony?.GetInnerIfMinified();
+            return inner is ThingWithComps art && inner.def.category == ThingCategory.Building && art.GetComp<CompArt>() != null;
         }
 
         private static bool MatchesPriority(Tradeable row, string priority)

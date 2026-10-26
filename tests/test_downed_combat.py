@@ -49,6 +49,12 @@ class FinishDownedTests(unittest.TestCase):
                 self.assertFalse(finish.eligible({**self.holster,**change}))
         self.assertFalse(finish.eligible(self.holster, {'767'}))
 
+    def test_later_queue_not_available_for_optional_cleanup(self):
+        for evidence in ({'queued_job_count': 1}, {'queued_jobs': [{'job_id': 77, 'def': 'Wait'}]}):
+            with self.subTest(evidence=evidence):
+                self.setUp(); self.holster.update(evidence)
+                self.assertNotIn(self.holster, finish.available_fighters(self.snapshot, self.memory, 21897))
+
     @patch('colony_retry.time.time', return_value=1000)
     def test_eight_persisted_cycles_keep_real_job_without_duplicate_model_or_orders(self, clock):
         client=Client(self.snapshot)

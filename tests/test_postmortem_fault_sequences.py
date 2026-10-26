@@ -149,12 +149,17 @@ class FoodAndStorageSequences(unittest.TestCase):
         self.assertFalse(any((site[0]+x,site[1]+z) in forbidden for x in range(4) for z in range(3)))
         class Transport:
             def __init__(self):self.posts=[];self.success=False
+            def get(self,path,**kwargs):
+                self.asserted_path=path
+                return {'width':100,'height':100,'dry_foundation_grid':[10000,1],
+                        'mountain_roof_grid':[10000,0],'stockpile_available_grid':[10000,1]}
             def post(self,path,*,body):self.posts.append(body);return {'success':self.success}
         client=Transport();memory={'anchor':anchor,'issued':{}}
         self.assertFalse(d.execute_action(client,s,memory,'create_animal_corpse_dump',{})['applied'])
         self.assertNotIn('animal_corpse_dump',memory['issued'])
         client.success=True
         self.assertTrue(d.execute_action(client,s,memory,'create_animal_corpse_dump',{})['applied'])
+        self.assertEqual(client.asserted_path,'/api/v1/map/terrain')
         self.assertEqual((client.posts[-1]['allow_fresh'],client.posts[-1]['allow_rotten']),(True,False))
         s['development']['sustenance']['pens'][0].pop('cells')
         self.assertIsNone(storage.carcass_site(s,anchor))

@@ -284,6 +284,8 @@ namespace RIMAPI.Models
         public int MapId { get; set; }
         public int ZoneId { get; set; }
         public bool AllowSow { get; set; }
+        public string ExpectedPlantDef { get; set; }
+        public bool? ExpectedAllowSow { get; set; }
     }
 
     public class FogGridDto

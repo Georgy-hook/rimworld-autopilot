@@ -163,7 +163,7 @@ class PlanningSequenceTests(unittest.TestCase):
             self.assertEqual(record['decision']['choice'], 'continue_safe_colony_work')
             self.assertFalse(s['combat']['colonists'][0]['is_drafted'])
             self.assertTrue(director.staging_development_allowed(s, record))
-            self.assertIn('_combat_progress_feedback', record['snapshot'])
+            self.assertFalse(any(path.endswith('/tactic') for path,_ in client.posts))
 
     def test_changed_assault_reopens_defense_and_closes_safe_work(self):
         s = snapshot()

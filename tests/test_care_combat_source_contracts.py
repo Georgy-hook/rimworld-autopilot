@@ -28,19 +28,31 @@ class CareCombatSourceContracts(unittest.TestCase):
         self.assertRegex(target_lookup, r'FirstOrDefault\([^;]+!p\.Dead && !p\.Downed && CombatNativeHelper\.IsPlayerThreat\(p\)')
         self.assertIn('no fighters drafted', target_lookup)
 
+    def test_hostile_fire_telemetry_is_independent_of_colony_safety_policy(self):
+        source=(HELPERS.parent/'Services/Pawns/CombatService/CombatService.cs').read_text(encoding='utf-8')
+        field=source[source.index('ShootableOpponentIds ='):source.index('ArmorSharp =')]
+        self.assertIn('(hostile',field)
+        self.assertIn('CanHitTargetFrom(pawn.Position,other)==true',field)
+        self.assertIn(': CombatInterceptHelper.CanShootNow(pawn,other)',field)
+
     def test_stand_down_rechecks_pawns_and_active_structures(self):
         source = (HELPERS / 'CombatTacticsHelper.cs').read_text(encoding='utf-8')
         guard = source[source.index('if (tactic == "stand_down")'):source.index('List<Pawn> fighters')]
         self.assertLess(guard.index('Hostiles remain'), guard.index('pawn.drafter.Drafted = false'))
-        self.assertIn('!p.Dead && !p.Downed && CombatNativeHelper.IsPlayerThreat(p)', guard)
-        self.assertIn('Any(CombatNativeHelper.ActiveStructure)', guard)
+        self.assertIn('!p.Downed', guard)
+        self.assertIn('CombatNativeHelper.ActionableHostile(p, colonists, map)', guard)
+        native = (HELPERS / 'CombatNativeHelper.cs').read_text(encoding='utf-8')
+        self.assertIn('pawn == null || pawn.Dead || !pawn.Spawned', native)
+        self.assertIn('!b.Position.Fogged(map)', guard)
+        self.assertIn('CombatNativeHelper.ActiveStructure(b)', guard)
 
     def test_exact_tending_is_idempotent_before_other_care_rejection(self):
         source = (HELPERS.parent / 'Services/Pawns/PawnJobService/PawnJobService.cs').read_text(encoding='utf-8')
-        tend = source[source.index('public ApiResult AssignTendJob'):source.index('public ApiResult AssignBedRest')]
+        tend = source[source.index('public ApiResult<MedicalTendResultDto> AssignTendJob'):source.index('public ApiResult AssignBedRest')]
         exact = tend[tend.index('if (!reassign && doctor.CurJobDef'):tend.index('if (reassign)')]
         self.assertIn('doctor.CurJob.targetA.Thing == patient', exact)
-        self.assertIn('return ApiResult.Ok()', exact)
+        self.assertIn('return ApiResult<MedicalTendResultDto>.Ok(', exact)
+        self.assertIn('Applied=false,InProgress=true', exact)
         self.assertNotIn('AssignTendJob(doctor, patient)', exact)
         self.assertLess(tend.index('if (!reassign && doctor.CurJobDef'), tend.index('already providing patient care'))
 
@@ -64,7 +76,11 @@ class CareCombatSourceContracts(unittest.TestCase):
         source = (HELPERS / 'CombatNativeHelper.cs').read_text(encoding='utf-8')
         owner = source[source.index('public static bool HasCareRetreat'):source.index('public static List<int> CareRetreatPawnIds')]
         self.assertIn('record.Key == pawn', owner)
-        self.assertIn('record.Value == pawn.CurJob', owner)
+        # A pooled native Job now needs its original load ID as well as the
+        # exact object. Native queue/retreat contracts exercise the behaviour.
+        self.assertIn('record.Value.Value == pawn.CurJob', owner)
+        stamp = (HELPERS / 'CombatOrderHelper.cs').read_text(encoding='utf-8')
+        self.assertIn('job.loadID==id?job:null', stamp)
         self.assertIn('Find.Maps.Contains(pawn.Map)', owner)
         self.assertIn('!pawn.Dead && !pawn.Downed', owner)
         service = (HELPERS.parent / 'Services/Pawns/CombatService/CombatService.cs').read_text(encoding='utf-8')
